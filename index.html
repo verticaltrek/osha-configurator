@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOOKT - Configurateur de Ligne de Vie</title>
+    <!-- Google Fonts: Outfit & Chakra Petch for HOOKT typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@700;800;900&family=Outfit:wght@300;400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
+    <!-- FontAwesome: Vector icons for UI controls and headers -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="light-theme">
+
+
+    <!-- ==========================================
+         SPLASH / HOME SCREEN
+         ========================================== -->
+    <section id="home-screen" class="screen active">
+        <div class="home-glass-card">
+            <div class="brand-badge" id="home-brand-badge">
+                <i class="fa-solid fa-shield-halved"></i> <span>SÉCURITÉ EN HAUTEUR</span>
+            </div>
+            <h1 class="logo-title">HOOKT</h1>
+            <p id="home-subtitle" class="home-subtitle">Configurateur Intelligent de Lignes de Vie pour Toitures</p>
+            <p class="home-description" id="home-description">
+                Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (OSHA 1910.140 / 1926.502) pour les systèmes HOOKT New Pro, Light Pro et Long Range.
+            </p>
+
+            <button id="start-config-btn" class="btn btn-primary btn-hero">
+                <i class="fa-solid fa-sliders"></i> <span id="start-btn-text">Démarrer une Configuration</span>
+                <i class="fa-solid fa-arrow-right icon-arrow"></i>
+            </button>
+
+            <!-- Language switching wrapper -->
+            <div class="lang-select-wrapper">
+                <i class="fa-solid fa-globe"></i>
+                <select id="lang-select-home" class="select-lang">
+                    <option value="0">Français</option>
+                    <option value="1">English</option>
+                </select>
+            </div>
+        </div>
+    </section>
+
+    <!-- ==========================================
+         CONFIGURATION MODAL DIALOG
+         ========================================== -->
+    <div id="config-modal" class="modal">
+        <div class="modal-content glass-modal">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-compass-drafting"></i> <span id="config-modal-title">Paramètres de la
+                        Toiture</span></h2>
+                <button type="button" class="modal-close" id="modal-close-btn">&times;</button>
+            </div>
+            <form id="config-form">
+                <div class="form-grid">
+                    <!-- Forme du toit -->
+                    <div class="form-group full-width">
+                        <label id="lbl-shape" for="input-roof-shape">Forme / Typologie du Toit :</label>
+                        <select id="input-roof-shape" class="select-custom">
+                            <option value="flat" selected>Toit Plat (Terrasse Standard)</option>
+                            <option value="flat_overhead">Toit Plat (Overhead - Long/Super/Ultra Range uniquement)</option>
+                            <option value="sloped">Toit Incliné (Monopente avec pente)</option>
+                            <option value="triangle">Toit Triangulaire (Pignon / Double Pente)</option>
+                        </select>
+                    </div>
+
+                    <!-- Angle de pente -->
+                    <div class="form-group" id="group-roof-slope">
+                        <label id="lbl-slope" for="input-roof-slope">Pente du toit :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-roof-slope" min="0" max="75" value="0" step="any">
+                            <span class="unit">°</span>
+                        </div>
+                    </div>
+
+                    <!-- Longueur souhaitée de la Ligne de Vie -->
+                    <div class="form-group">
+                        <label id="lbl-line-len" for="input-line-length">Longueur Ligne de Vie :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-line-length" min="0.1" max="20000" value="15" step="any"
+                                required>
+                            <span class="unit" id="unit-line-len">m</span>
+                        </div>
+                    </div>
+
+                    <!-- Mode de Portée (Standard vs Personnalisé) -->
+                    <div class="form-group">
+                        <label id="lbl-span-mode" for="input-span-mode">Mode de Portée :</label>
+                        <select id="input-span-mode" class="select-custom">
+                            <option value="standard" selected>Standard (Automatique)</option>
+                            <option value="custom">Personnalisé (Saisie de portée)</option>
+                        </select>
+                    </div>
+
+                    <!-- Portée Personnalisée (affiché uniquement en mode personnalisé) -->
+                    <div class="form-group" id="group-custom-span" style="display: none;">
+                        <label id="lbl-custom-span" for="input-custom-span">Portée personnalisée :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-custom-span" min="0.1" max="20000" value="5.0" step="any">
+                            <span class="unit" id="unit-custom-span">m</span>
+                        </div>
+                    </div>
+
+                    <!-- Nombre d'utilisateurs -->
+                    <div class="form-group">
+                        <label id="lbl-users" for="input-users">Nombre d'utilisateurs (1 à 5) :</label>
+                        <select id="input-users" class="select-custom">
+                            <option value="1" selected>1 utilisateur</option>
+                            <option value="2">2 utilisateurs</option>
+                            <option value="3">3 utilisateurs</option>
+                            <option value="4">4 utilisateurs</option>
+                            <option value="5">5 utilisateurs</option>
+                        </select>
+                    </div>
+
+                    <!-- Effort d'arrêt max de l'opérateur / Arrest Force Limit -->
+                    <div class="form-group">
+                        <label id="lbl-worker-force" for="input-worker-force">Effort d'arrêt max (Arrest Force) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-worker-force" min="2.0" max="25.0" value="6.0" step="0.1" class="select-custom">
+                            <span class="unit" id="unit-worker-force">kN</span>
+                        </div>
+                    </div>
+
+                    <!-- Seconde Direction & Jonction -->
+                    <div class="form-group full-width margin-top-sm">
+                        <label class="checkbox-label" for="input-has-line2">
+                            <input type="checkbox" id="input-has-line2">
+                            <span id="lbl-has-line2-span"><i class="fa-solid fa-code-fork"></i> Activer une seconde direction (Ligne 2)</span>
+                        </label>
+                    </div>
+
+                    <div id="group-line2-options" class="form-grid full-width" style="display: none;">
+                        <div class="form-group">
+                            <label id="lbl-line2-len" for="input-line2-length">Longueur Ligne 2 :</label>
+                            <div class="input-with-unit">
+                                <input type="number" id="input-line2-length" min="0.1" max="20000" value="10" step="any">
+                                <span class="unit" id="unit-line2-len">m</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-buttons">
+                    <button type="button" id="config-cancel-btn" class="btn btn-secondary">Annuler</button>
+                    <button type="submit" id="config-submit-btn" class="btn btn-primary"><i
+                            class="fa-solid fa-check"></i> Valider et Générer 3D</button>
+                </div>
+            </form>
+
+        </div>
+    </div>
+
+    <!-- ==========================================
+         PRIMARY DASHBOARD WORKSPACE
+         ========================================== -->
+    <section id="dashboard-screen" class="screen">
+        <header class="app-header">
+            <div class="header-brand">
+                <span class="brand-logo">HOOKT</span>
+                <span class="brand-divider">|</span>
+                <span id="app-header-subtitle" class="brand-subtitle">Ligne de Vie Configurator 3D</span>
+            </div>
+
+            <div class="header-center-info">
+                <span class="roof-dims-badge" id="header-dims-display"><i class="fa-solid fa-ruler-combined"></i> 15m ×
+                    10m</span>
+                <span class="system-badge" id="header-system-display">NEW PRO</span>
+            </div>
+
+            <div class="header-actions">
+                <button type="button" id="reconfig-btn" class="btn btn-secondary btn-sm" title="Modifier dimensions">
+                    <i class="fa-solid fa-pen-to-square"></i> <span id="reconfig-btn-text">Dimensions</span>
+                </button>
+                <div class="lang-select-wrapper compact">
+                    <i class="fa-solid fa-globe"></i>
+                    <select id="lang-select-db" class="select-lang">
+                        <option value="0">FR</option>
+                        <option value="1">EN</option>
+                    </select>
+                </div>
+            </div>
+        </header>
+
+        <div class="dashboard-layout">
+            <!-- LEFT PANEL: 3D/2D WebGL Canvas Viewer -->
+            <div class="left-panel">
+                <div class="canvas-wrapper">
+                    <!-- Top canvas control toolbar -->
+                    <div class="canvas-toolbar">
+                        <div class="canvas-title-tag">
+                            <i class="fa-solid fa-cube"></i> <span id="canvas-title-text">Visualisation 3D / 2D</span>
+                        </div>
+
+                        <div class="view-mode-switch">
+                            <button type="button" id="btn-view-3d" class="toolbar-btn active"
+                                title="Vue Perspective 3D">
+                                <i class="fa-solid fa-cube"></i> <span id="btn-view-3d-text">3D</span>
+                            </button>
+                            <button type="button" id="btn-view-2d" class="toolbar-btn" title="Vue Dessus 2D">
+                                <i class="fa-solid fa-border-all"></i> <span id="btn-view-2d-text">2D Dessus</span>
+                            </button>
+                        </div>
+
+                        <div class="canvas-actions">
+                            <button type="button" id="btn-toggle-fall-sim" class="toolbar-btn active"
+                                title="Simuler Chute 3D & Annotations">
+                                <i class="fa-solid fa-person-falling"></i> <span id="btn-fall-sim-text">Chute 3D</span>
+                            </button>
+                            <button type="button" id="btn-reset-cam" class="toolbar-btn"
+                                title="Réinitialiser la caméra">
+                                <i class="fa-solid fa-arrows-to-dot"></i>
+                            </button>
+                            <button type="button" id="btn-fullscreen" class="toolbar-btn" title="Plein écran">
+                                <i class="fa-solid fa-expand"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Span Warning Alert -->
+                    <div id="canvas-warning" class="canvas-warning hidden">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        <span id="warning-text">La portée réelle dépasse la portée autorisée !</span>
+                    </div>
+
+                    <!-- 3D Callouts Canvas Overlay Container -->
+                    <div id="canvas-overlay" class="canvas-overlay-container"></div>
+
+                    <!-- Three.js Canvas Container -->
+                    <div id="canvas3d" class="canvas-viewport"></div>
+
+                    <!-- Canvas Bottom Legend -->
+                    <div class="canvas-legend">
+                        <div class="legend-item"><span class="legend-dot color-roof"></span> <span id="legend-roof">Roof Surface</span></div>
+                        <div class="legend-item"><span class="legend-dot color-anchor"></span> <span id="legend-anchor">Potelets d'Ancrage</span></div>
+                        <div class="legend-item"><span class="legend-dot color-cable"></span> <span id="legend-cable">Câble de Ligne de Vie</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: Configurator Settings & Calculations -->
+            <div class="right-panel">
+                <div class="sidebar-scroll">
+                    <!-- Section 1: System HOOKT & Components -->
+                    <div class="control-card">
+                        <h3 class="card-title"><i class="fa-solid fa-layer-group"></i> <span
+                                id="group-title-pieces">GAMME & COMPOSANTS HOOKT</span></h3>
+
+                        <div class="system-cards-grid">
+                            <div class="system-card active" data-system="NEW PRO">
+                                <div class="sys-card-header">
+                                    <span class="sys-name">NEW PRO</span>
+                                    <span class="sys-span-tag" id="sys-tag-newpro">Max 15m</span>
+                                </div>
+                                <p class="sys-desc" id="sys-desc-newpro">Système haute performance avec absorbeurs intégrés pour bac acier et
+                                    béton.</p>
+                            </div>
+                            <div class="system-card" data-system="LIGHT PRO">
+                                <div class="sys-card-header">
+                                    <span class="sys-name">LIGHT PRO</span>
+                                    <span class="sys-span-tag" id="sys-tag-lightpro">Max 15m</span>
+                                </div>
+                                <p class="sys-desc" id="sys-desc-lightpro">Solution légère et économique pour toitures tertiaires et
+                                    industrielles.</p>
+                            </div>
+                            <div class="system-card" data-system="LONG RANGE">
+                                <div class="sys-card-header">
+                                    <span class="sys-name" id="sys-name-longrange">LONG / SUPER / ULTRA RANGE</span>
+                                    <span class="sys-span-tag" id="sys-tag-longrange">Max 56m</span>
+                                </div>
+                                <p class="sys-desc" id="sys-desc-longrange">Ligne de vie pour très grandes portées (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m).</p>
+                            </div>
+                        </div>
+
+                        <div class="components-selector">
+                            <label class="section-label" id="lbl-components-selector"><i class="fa-solid fa-square-check"></i> PIÈCES DU SYSTÈME
+                                (COCHER POUR AFFICHER EN 3D) :</label>
+                            <div id="components-list" class="components-cards-list">
+                                <!-- Dynamic component cards with checkboxes rendered by JS -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Node Inspector Card (shown when an anchor node is selected) -->
+                    <div id="node-inspector-card" class="control-card inspector-card hidden">
+                        <h3 class="card-title"><i class="fa-solid fa-circle-dot"></i> <span id="node-inspector-title">INSPECTEUR & ORIENTATION 3D</span></h3>
+                        <div class="inspector-content">
+                            <div class="readout-row">
+                                <span class="row-label" id="lbl-node-id">Potelet sélectionné :</span>
+                                <span class="row-val" id="node-id-val">#1</span>
+                            </div>
+                            <div class="readout-row">
+                                <span class="row-label" id="lbl-node-coords">Coordonnées (X, Z) :</span>
+                                <span class="row-val" id="node-coords-val">X: 0.0m, Z: 0.0m</span>
+                            </div>
+                            <div class="readout-row">
+                                <span class="row-label" id="lbl-node-span">Distance au suivant :</span>
+                                <span class="row-val" id="node-span-val">0.0m</span>
+                            </div>
+
+                            <div class="form-group margin-top-sm">
+                                <label id="lbl-node-role" for="node-type-select">Rôle du Potelet :</label>
+                                <select id="node-type-select" class="select-custom">
+                                    <option value="extremite">Ancrage d'Extrémité (avec Absorbeur)</option>
+                                    <option value="intermediaire">Potelet Intermédiaire</option>
+                                    <option value="x_matrix">Platine X-MATRIX (Jonction Multi-Directionnelle)</option>
+                                    <option value="angle">Potelet d'Angle</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group margin-top-sm">
+                                <label id="lbl-node-comp" for="node-comp-select">Modèle 3D HOOKT Assigné :</label>
+                                <select id="node-comp-select" class="select-custom">
+                                    <!-- Populated dynamically -->
+                                </select>
+                            </div>
+
+                            <div class="form-group margin-top-sm">
+                                <label id="lbl-node-rot" for="node-rot-slider"><i class="fa-solid fa-arrows-rotate"></i> <span id="lbl-node-rot-text">Orientation 3D :</span>
+                                    <span id="node-rot-val" class="row-val">0°</span></label>
+                                <input type="range" id="node-rot-slider" min="0" max="360" value="0" step="5"
+                                    class="select-custom">
+                                <div class="rot-quick-btns margin-top-sm">
+                                    <button type="button" id="btn-rot-align-line" class="btn btn-secondary btn-sm"
+                                        title="Aligner au câble">
+                                        <i class="fa-solid fa-compass"></i> <span id="btn-align-text">Aligner Câble</span>
+                                    </button>
+                                    <button type="button" id="btn-rot-90" class="btn btn-secondary btn-sm"
+                                        title="Tourner +90°">
+                                        <i class="fa-solid fa-rotate-right"></i> +90°
+                                    </button>
+                                </div>
+                            </div>
+
+                            <button type="button" id="btn-delete-node"
+                                class="btn btn-secondary btn-full btn-sm margin-top-sm">
+                                <i class="fa-solid fa-trash-can"></i> <span id="btn-delete-text">Supprimer ce Potelet</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Section 3: Compliance & Mechanical Calculations -->
+                    <div class="control-card calc-card">
+                        <h3 class="card-title"><i class="fa-solid fa-calculator"></i> <span id="group-title-calc">NOTE
+                                DE CALCUL DE CONFORMITÉ</span></h3>
+
+                        <!-- Regulatory Norm Badge -->
+                        <div class="norm-badge-osha">
+                            <i class="fa-solid fa-shield-halved"></i> <span id="lbl-norm-badge">CONFORMITÉ RÉGLEMENTAIRE OSHA (1910.140 / 1926.502)</span>
+                        </div>
+
+                        <!-- OSHA Subtabs (Visible only for multi-span on OSHA) -->
+                        <div id="osha-subtabs" class="osha-subtabs" style="display: none;">
+                            <button type="button" id="subtab-span-unique" class="subtab-btn active">Portée Unique (2 ancrages)</button>
+                            <button type="button" id="subtab-span-multi" class="subtab-btn">Multi-Portée (4 ancrages)</button>
+                        </div>
+
+
+
+                        <!-- Readouts Grid -->
+                        <div class="calc-readouts">
+                            <div class="readout-grid-2col margin-bottom-sm">
+                                <div class="readout-box highlight-box no-margin">
+                                    <div class="readout-label" id="lbl-anchor-count">Potelets / Ancrages</div>
+                                    <div class="readout-val" id="val-anchor-count">--</div>
+                                </div>
+                                <div class="readout-box highlight-box no-margin">
+                                    <div class="readout-label" id="lbl-absorber-count">Absorbeurs</div>
+                                    <div class="readout-val" id="val-absorber-count">--</div>
+                                </div>
+                            </div>
+
+                            <div class="readout-grid-1col margin-bottom-sm">
+                                <div class="readout-subbox" style="width: 100%; box-sizing: border-box;">
+                                    <span class="sub-label" id="lbl-max-allowed-span-calc">Portée Max Aut. :</span>
+                                    <span class="sub-val" id="val-max-allowed-span">-- m</span>
+                                </div>
+                            </div>
+
+                            <div class="readout-divider"></div>
+
+                            <!-- Single Lifeline Calculation Results -->
+                            <div class="side-calc-block">
+                                <h4 class="side-title"><i class="fa-solid fa-route"></i> <span id="side-title-lifeline-text">Résultats sur la Ligne de Vie</span>
+                                </h4>
+                                <div class="readout-row">
+                                    <span class="row-label" id="lbl-total-line-len-row">Longueur développée :</span>
+                                    <span class="row-val" id="val-total-line-len">-- m</span>
+                                </div>
+                                <div class="readout-row">
+                                    <span class="row-label" id="lbl-span-l-row">Portée réelle max :</span>
+                                    <span class="row-val" id="val-span-l">-- m</span>
+                                </div>
+                                <div class="readout-row warning-text">
+                                    <span class="row-label" id="lbl-force-l-row">Effort longe :</span>
+                                    <span class="row-val" id="val-force-l">-- kN</span>
+                                </div>
+                                <div class="readout-row warning-yellow">
+                                    <span class="row-label" id="lbl-defl-l-row">Flèche maximale :</span>
+                                    <span class="row-val" id="val-defl-l">-- mm</span>
+                                </div>
+                                <div class="readout-row">
+                                    <span class="row-label" id="lbl-ext1-l-row">Force Extrémité 1 :</span>
+                                    <span class="row-val" id="val-ext1-l">-- kN</span>
+                                </div>
+                                <div class="readout-row">
+                                    <span class="row-label" id="lbl-ext2-l-row">Force Extrémité 2 :</span>
+                                    <span class="row-val" id="val-ext2-l">-- kN</span>
+                                </div>
+                                <div class="readout-row" id="row-angle-final" style="display: none;">
+                                    <span class="row-label" id="lbl-angle-final-row">Angle Final (pente sous charge) :</span>
+                                    <span class="row-val" id="val-angle-final">-- °</span>
+                                </div>
+                                <div class="readout-row" id="row-cone-slip" style="display: none;">
+                                    <span class="row-label" id="lbl-cone-slip-row">Glissement Cône Max :</span>
+                                    <span class="row-val" id="val-cone-slip">-- mm</span>
+                                </div>
+                                <div class="readout-row" id="row-ext3" style="display: none;">
+                                    <span class="row-label" id="lbl-ext3-l-row">Force Ancrage 3 :</span>
+                                    <span class="row-val" id="val-ext3-l">-- kN</span>
+                                </div>
+                                <div class="readout-row" id="row-ext4" style="display: none;">
+                                    <span class="row-label" id="lbl-ext4-l-row">Force Ancrage 4 :</span>
+                                    <span class="row-val" id="val-ext4-l">-- kN</span>
+                                </div>
+                                </div>
+                        </div>
+
+
+                        <!-- Action Buttons -->
+                        <div class="card-actions">
+                            <button type="button" id="export-pdf-btn" class="btn btn-indigo btn-full">
+                                <i class="fa-solid fa-file-pdf"></i> <span id="btn-text-export">Générer Rapport
+                                    (PDF)</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ==========================================
+         EXPLODED VIEW MODAL CAROUSEL
+         ========================================== -->
+    <div id="carousel-modal" class="modal">
+        <div class="modal-content glass-modal carousel-modal-content">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-layer-group"></i> <span id="carousel-title">Vue Éclatée</span></h2>
+                <button type="button" class="modal-close" id="carousel-close-btn">&times;</button>
+            </div>
+
+            <div class="carousel-container">
+                <button type="button" class="carousel-nav-btn prev" id="carousel-prev-btn">
+                    <i class="fa-solid fa-chevron-left"></i>
+                </button>
+                <div class="carousel-viewport">
+                    <div id="carousel-slides" class="carousel-slides">
+                        <!-- Dynamic exploded view images -->
+                    </div>
+                </div>
+                <button type="button" class="carousel-nav-btn next" id="carousel-next-btn">
+                    <i class="fa-solid fa-chevron-right"></i>
+                </button>
+            </div>
+
+            <div class="carousel-dots" id="carousel-dots">
+                <!-- Dynamic dots -->
+            </div>
+        </div>
+    </div>
+
+    <!-- ==========================================
+         SCRIPTS DEPENDENCIES
+         ========================================== -->
+    <!-- Three.js Libraries: Core Engine, Orbit Controls, OBJ Loader & GLTF Loader -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <!-- jsPDF & jsPDF-AutoTable for Client-Side PDF Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
+    <!-- Application Logic -->
+    <script src="app.js"></script>
+</body>
+
+</html>
