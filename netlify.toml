@@ -5,7 +5,7 @@
   for = "/*"
   [headers.values]
     Access-Control-Allow-Origin = "*"
-    X-Frame-Options = "SAMEORIGIN"
+    Content-Security-Policy = "frame-ancestors 'self' https://go-hookt.com https://www.go-hookt.com https://gohookt.com https://www.gohookt.com https://*.webflow.io"
 
 [[headers]]
   for = "/*.obj"
