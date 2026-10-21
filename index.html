@@ -13,7 +13,26 @@
     <!-- FontAwesome: Vector icons for UI controls and headers -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Stylesheet -->
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=v36">
+    <script>
+        function openConfigModal() {
+            const home = document.getElementById("home-screen");
+            const dash = document.getElementById("dashboard-screen");
+            const modal = document.getElementById("config-modal");
+            if (home) { home.classList.remove("active"); home.style.display = "none"; }
+            if (dash) { dash.classList.add("active"); dash.style.display = "flex"; }
+            const hasUrl = window.location.search && (window.location.search.includes("config") || window.location.search.includes("layout"));
+            if (modal && !hasUrl) { modal.classList.add("active"); modal.style.display = "flex"; }
+            if (typeof renderDynamicLayoutForm === "function") renderDynamicLayoutForm();
+            if (typeof update3DScene === "function") setTimeout(update3DScene, 100);
+        }
+        function closeConfigModal() {
+            const modal = document.getElementById("config-modal");
+            if (modal) { modal.classList.remove("active"); modal.style.display = "none"; }
+        }
+        window.openConfigModal = openConfigModal;
+        window.closeConfigModal = closeConfigModal;
+    </script>
 </head>
 
 <body class="light-theme">
@@ -30,10 +49,11 @@
             <h1 class="logo-title">HOOKT</h1>
             <p id="home-subtitle" class="home-subtitle">Configurateur Intelligent de Lignes de Vie pour Toitures</p>
             <p class="home-description" id="home-description">
-                Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (OSHA 1910.140 / 1926.502) pour les systèmes HOOKT New Pro, Light Pro et Long Range.
+                Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (EN 795-C,
+                OSHA) pour les systèmes HOOKT New Pro, Light Pro et Long Range.
             </p>
 
-            <button id="start-config-btn" class="btn btn-primary btn-hero">
+            <button type="button" id="start-config-btn" class="btn btn-primary btn-hero" onclick="openConfigModal()">
                 <i class="fa-solid fa-sliders"></i> <span id="start-btn-text">Démarrer une Configuration</span>
                 <i class="fa-solid fa-arrow-right icon-arrow"></i>
             </button>
@@ -50,109 +70,269 @@
     </section>
 
     <!-- ==========================================
-         CONFIGURATION MODAL DIALOG
+         CONFIGURATION MODAL DIALOG (OSHA 12 LAYOUTS)
          ========================================== -->
     <div id="config-modal" class="modal">
-        <div class="modal-content glass-modal">
+        <div class="modal-content glass-modal wide-modal">
             <div class="modal-header">
-                <h2><i class="fa-solid fa-compass-drafting"></i> <span id="config-modal-title">Paramètres de la
-                        Toiture</span></h2>
-                <button type="button" class="modal-close" id="modal-close-btn">&times;</button>
+                <h2><i class="fa-solid fa-compass-drafting"></i> <span id="config-modal-title">Paramètres Général & Configurations OSHA</span></h2>
+                <button type="button" class="modal-close" id="modal-close-btn" onclick="closeConfigModal()">&times;</button>
             </div>
             <form id="config-form">
+                <!-- Section 1: Informations Projet & Générales -->
+                <div class="modal-section-title"><i class="fa-solid fa-folder-open"></i> <span id="lbl-sec-project">Informations Projet & Système</span></div>
                 <div class="form-grid">
-                    <!-- Forme du toit -->
+                    <div class="form-group">
+                        <label id="lbl-proj-name" for="input-proj-name">Nom du Projet :</label>
+                        <input type="text" id="input-proj-name" class="input-text-custom" placeholder="ex: Toiture Usine HOOKT">
+                    </div>
+                    <div class="form-group">
+                        <label id="lbl-proj-loc" for="input-proj-loc">Lieu / Adresse :</label>
+                        <input type="text" id="input-proj-loc" class="input-text-custom" placeholder="ex: Bayonne, France">
+                    </div>
+                    <div class="form-group">
+                        <label id="lbl-proj-designer" for="input-proj-designer">Nom du Concepteur :</label>
+                        <input type="text" id="input-proj-designer" class="input-text-custom" placeholder="ex: Ingénieur Sécurité">
+                    </div>
+                    <div class="form-group">
+                        <label id="lbl-proj-hll" for="input-proj-hll">Nom(s) de(s) HLL :</label>
+                        <input type="text" id="input-proj-hll" class="input-text-custom" value="HLL-01">
+                    </div>
+
+                    <!-- Gamme de Système HOOKT -->
                     <div class="form-group full-width">
-                        <label id="lbl-shape" for="input-roof-shape">Forme / Typologie du Toit :</label>
-                        <select id="input-roof-shape" class="select-custom">
-                            <option value="flat" selected>Toit Plat (Terrasse Standard)</option>
-                            <option value="flat_overhead">Toit Plat (Overhead - Long/Super/Ultra Range uniquement)</option>
-                            <option value="sloped">Toit Incliné (Monopente avec pente)</option>
-                            <option value="triangle">Toit Triangulaire (Pignon / Double Pente)</option>
+                        <label id="lbl-product" for="select-product"><i class="fa-solid fa-shield-halved"></i> Gamme de Système HOOKT :</label>
+                        <select id="select-product" class="select-custom" style="font-weight: 600;">
+                            <option value="NEW PRO" selected>NEW PRO (Standard / Toitures plates & bacs | Max 15m | 5 pers.)</option>
+                            <option value="LIGHT PRO">LIGHT PRO (Toitures légères & tertiaires | Max 15m | 3 pers.)</option>
+                            <option value="LONG RANGE">LONG / SUPER / ULTRA RANGE (Overhead / Poteaux hauts | Max 56m | 3 pers.)</option>
                         </select>
                     </div>
 
-                    <!-- Angle de pente -->
-                    <div class="form-group" id="group-roof-slope">
-                        <label id="lbl-slope" for="input-roof-slope">Pente du toit :</label>
-                        <div class="input-with-unit">
-                            <input type="number" id="input-roof-slope" min="0" max="75" value="0" step="any">
-                            <span class="unit">°</span>
-                        </div>
-                    </div>
-
-                    <!-- Longueur souhaitée de la Ligne de Vie -->
+                    <!-- Système d'unités -->
                     <div class="form-group">
-                        <label id="lbl-line-len" for="input-line-length">Longueur Ligne de Vie :</label>
-                        <div class="input-with-unit">
-                            <input type="number" id="input-line-length" min="0.1" max="20000" value="15" step="any"
-                                required>
-                            <span class="unit" id="unit-line-len">m</span>
-                        </div>
-                    </div>
-
-                    <!-- Mode de Portée (Standard vs Personnalisé) -->
-                    <div class="form-group">
-                        <label id="lbl-span-mode" for="input-span-mode">Mode de Portée :</label>
-                        <select id="input-span-mode" class="select-custom">
-                            <option value="standard" selected>Standard (Automatique)</option>
-                            <option value="custom">Personnalisé (Saisie de portée)</option>
+                        <label id="lbl-unit-system" for="select-unit-system">Système d'unités :</label>
+                        <select id="select-unit-system" class="select-custom">
+                            <option value="metric" selected>Système Métrique (m, mm, kN)</option>
+                            <option value="imperial">Système US / Impérial (ft, lbf)</option>
                         </select>
                     </div>
 
-                    <!-- Portée Personnalisée (affiché uniquement en mode personnalisé) -->
-                    <div class="form-group" id="group-custom-span" style="display: none;">
-                        <label id="lbl-custom-span" for="input-custom-span">Portée personnalisée :</label>
-                        <div class="input-with-unit">
-                            <input type="number" id="input-custom-span" min="0.1" max="20000" value="5.0" step="any">
-                            <span class="unit" id="unit-custom-span">m</span>
-                        </div>
-                    </div>
-
-                    <!-- Nombre d'utilisateurs -->
+                    <!-- Application: Fall Arrest vs Restraint -->
                     <div class="form-group">
-                        <label id="lbl-users" for="input-users">Nombre d'utilisateurs (1 à 5) :</label>
-                        <select id="input-users" class="select-custom">
-                            <option value="1" selected>1 utilisateur</option>
-                            <option value="2">2 utilisateurs</option>
-                            <option value="3">3 utilisateurs</option>
-                            <option value="4">4 utilisateurs</option>
-                            <option value="5">5 utilisateurs</option>
+                        <label id="lbl-app-mode" for="select-app-mode">Application / Mode :</label>
+                        <select id="select-app-mode" class="select-custom">
+                            <option value="fall_arrest" selected>Fall Arrest (Anti-chute)</option>
+                            <option value="restraint">Restraint (Retenue / Maintien)</option>
                         </select>
                     </div>
 
-                    <!-- Effort d'arrêt max de l'opérateur / Arrest Force Limit -->
+                    <!-- Active users -->
                     <div class="form-group">
-                        <label id="lbl-worker-force" for="input-worker-force">Effort d'arrêt max (Arrest Force) :</label>
+                        <label id="lbl-users" for="input-users">Nombre d'utilisateurs max :</label>
                         <div class="input-with-unit">
-                            <input type="number" id="input-worker-force" min="2.0" max="25.0" value="6.0" step="0.1" class="select-custom">
-                            <span class="unit" id="unit-worker-force">kN</span>
+                            <input type="number" id="input-users" min="1" max="5" value="1" required>
+                            <span class="unit"><i class="fa-solid fa-user-ninja"></i></span>
                         </div>
                     </div>
 
-                    <!-- Seconde Direction & Jonction -->
-                    <div class="form-group full-width margin-top-sm">
-                        <label class="checkbox-label" for="input-has-line2">
-                            <input type="checkbox" id="input-has-line2">
-                            <span id="lbl-has-line2-span"><i class="fa-solid fa-code-fork"></i> Activer une seconde direction (Ligne 2)</span>
-                        </label>
+                    <!-- Coefficient de l'ingénieur (Spec V2_07 / Prompt 12) -->
+                    <div class="form-group" id="group-engineer-coefficient">
+                        <label id="lbl-engineer-coefficient" for="input-engineer-coefficient">Coefficient de l'ingénieur :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-engineer-coefficient" min="0.10" max="5.00" value="1.00" step="0.05" placeholder="1.00">
+                            <span class="unit"><i class="fa-solid fa-calculator"></i></span>
+                        </div>
+                        <small style="color:#64748b; font-size:0.75rem;" id="hint-engineer-coefficient">Ajuste les efforts calculés (défaut 1.00 = essais)</small>
                     </div>
 
-                    <div id="group-line2-options" class="form-grid full-width" style="display: none;">
-                        <div class="form-group">
-                            <label id="lbl-line2-len" for="input-line2-length">Longueur Ligne 2 :</label>
-                            <div class="input-with-unit">
-                                <input type="number" id="input-line2-length" min="0.1" max="20000" value="10" step="any">
-                                <span class="unit" id="unit-line2-len">m</span>
-                            </div>
+                    <!-- Arrest Load (Charge d'arrêt) -->
+                    <div class="form-group">
+                        <label id="lbl-arrest-load-mode" for="select-arrest-load-mode">Arrest Load (Charge d'arrêt) :</label>
+                        <select id="select-arrest-load-mode" class="select-custom">
+                            <option value="lump_sum" selected>Masse Globale (Lump Sum : M × F)</option>
+                            <option value="custom">Saisie Forfaitaire Libre (Ingénieur)</option>
+                            <option value="turbolite">Shortcut : TurboLite+ (Essais 4.5 kN)</option>
+                            <option value="falcon">Shortcut : Falcon+ (Essais 6.0 kN)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="group-arrest-load-val">
+                        <label id="lbl-arrest-load-val" for="input-arrest-load-val">Valeur Charge d'arrêt (kN) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-arrest-load-val" min="0.1" max="10000" value="6.0" step="any">
+                            <span class="unit" id="unit-arrest-load">kN</span>
+                        </div>
+                        <small id="hint-arrest-load" style="color:#64748b; font-size:0.75rem; display:block; margin-top:3px;"></small>
+                    </div>
+
+                    <!-- Élévation de la Ligne de Vie (Spec V2 - 02 & V2 - 07) -->
+                    <div class="form-group">
+                        <label id="lbl-hll-elevation-preset" for="select-hll-elevation-preset"><i class="fa-solid fa-arrows-up-down"></i> Élévation de la Ligne :</label>
+                        <select id="select-hll-elevation-preset" class="select-custom">
+                            <option value="knee" selected>Hauteur de genou (Défaut standard)</option>
+                            <option value="d_ring">Anneau D (1,5 m / 5 ft)</option>
+                            <option value="overhead">Overhead (3,0 m / 10 ft)</option>
+                            <option value="custom">Personnalisée (Saisie libre)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="group-hll-elevation-val">
+                        <label id="lbl-hll-elevation-val" for="input-hll-elevation-val">Hauteur Élévation :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-hll-elevation-val" min="0.2" max="100.0" value="0.45" step="any">
+                            <span class="unit" id="unit-hll-elevation">m</span>
+                        </div>
+                    </div>
+
+                    <!-- Connecting Device & Fall Calculation Inputs (Spec V2 - 04) -->
+                    <div class="form-group">
+                        <label id="lbl-connecting-device" for="select-connecting-device"><i class="fa-solid fa-link"></i> Dispositif de Connexion :</label>
+                        <select id="select-connecting-device" class="select-custom">
+                            <option value="srd" selected>SRD / Enrouleur à rappel automatique (SRL)</option>
+                            <option value="lanyard">Longe avec absorbeur d'énergie</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label id="lbl-fall-mode" for="select-fall-mode"><i class="fa-solid fa-bullseye"></i> Cas de Chute à Calculer :</label>
+                        <select id="select-fall-mode" class="select-custom">
+                            <option value="critical_case" selected>Cas Critique (Simule chaque portée et sort le pire cas)</option>
+                            <option value="selected_span">Portée Choisie (Calcul ciblé sur la portée active)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label id="lbl-body-pos" for="select-body-pos"><i class="fa-solid fa-person"></i> Position du Corps (Opérateur) :</label>
+                        <select id="select-body-pos" class="select-custom">
+                            <option value="standing" selected>Debout (Anneau D à 1,50 m / 5 ft)</option>
+                            <option value="kneeling">À genoux (+ 0,91 m / 3 ft au dégagement)</option>
+                            <option value="lying">Allongé (+ hauteur anneau D au dégagement)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label id="lbl-wws-elevation" for="input-wws-elevation">WWS Elevation (Alt. surface travail) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-wws-elevation" min="0.5" max="100.0" value="6.0" step="any">
+                            <span class="unit" id="unit-wws-elevation">m</span>
+                        </div>
+                    </div>
+
+                    <!-- Substrat & Supports (champ libre optionnel) -->
+                    <div class="form-group">
+                        <label id="lbl-substrate-info" for="input-substrate-info"><i class="fa-solid fa-cubes"></i> Substrat / Type de Support :</label>
+                        <input type="text" id="input-substrate-info" class="input-text-custom" placeholder="ex: Bac acier 0.75mm, Béton C25/30, Poutre HEB">
+                    </div>
+
+                    <!-- End buffer length (Readonly info) -->
+                    <div class="form-group full-width">
+                        <div class="info-readout-box">
+                            <i class="fa-solid fa-circle-info"></i>
+                            <span id="lbl-buffer-len-info">Buffer d'extrémité fixe : <strong>0.20 m</strong> (non modifiable par l'utilisateur)</span>
                         </div>
                     </div>
                 </div>
 
-                <div class="modal-buttons">
-                    <button type="button" id="config-cancel-btn" class="btn btn-secondary">Annuler</button>
-                    <button type="submit" id="config-submit-btn" class="btn btn-primary"><i
-                            class="fa-solid fa-check"></i> Valider et Générer 3D</button>
+                <!-- Section 1bis: Paramètres de Toiture & Surface de Pose (Spec V2 — 03) -->
+                <div class="modal-section-title margin-top-md"><i class="fa-solid fa-building"></i> <span id="lbl-sec-roof">Toiture & Surface de Pose (Spec V2 — 03)</span></div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label id="lbl-roof-type" for="select-roof-type">Typologie de Toiture :</label>
+                        <select id="select-roof-type" class="select-custom">
+                            <option value="flat" selected>Toiture Plate (Terrasse)</option>
+                            <option value="sloped">Toiture à Une Pente (Monopente)</option>
+                            <option value="triangle">Toiture à Deux Pentes (Double versant / Pignon)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label id="lbl-roof-length" for="input-roof-length">Longueur du Toit (L) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-roof-length" min="1.0" max="500.0" value="25.0" step="any">
+                            <span class="unit" id="unit-roof-len">m</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label id="lbl-roof-width" for="input-roof-width">Largeur du Toit (l) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-roof-width" min="1.0" max="500.0" value="15.0" step="any">
+                            <span class="unit" id="unit-roof-wid">m</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="group-roof-slope-1" style="display: none;">
+                        <label id="lbl-roof-slope-1" for="input-roof-slope-1">Angle Pente 1 (max 75°) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-roof-slope-1" min="0" max="75" value="15.0" step="any">
+                            <span class="unit">°</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="group-roof-slope-2" style="display: none;">
+                        <label id="lbl-roof-slope-2" for="input-roof-slope-2">Angle Pente 2 (Deux pentes, max 75°) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-roof-slope-2" min="0" max="75" value="15.0" step="any">
+                            <span class="unit">°</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="group-ridge-pos" style="display: none;">
+                        <label id="lbl-ridge-pos" for="input-ridge-pos">Position du Faîtage (depuis le bord) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-ridge-pos" min="0.5" max="500.0" value="7.5" step="any">
+                            <span class="unit" id="unit-ridge-pos">m</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label id="lbl-line-to-edge" for="input-line-to-edge">Distance Ligne / Bord de Toit :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-line-to-edge" min="0.1" max="50.0" value="2.0" step="any">
+                            <span class="unit" id="unit-line-to-edge">m</span>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label id="lbl-roof-height-ground" for="input-roof-height-ground">Hauteur Toit au-dessus du Sol :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-roof-height-ground" min="0.5" max="150.0" value="6.0" step="any">
+                            <span class="unit" id="unit-roof-height">m</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Sélection de Configuration de Pose (12 Layouts) -->
+                <div class="modal-section-title margin-top-md"><i class="fa-solid fa-diagram-project"></i> <span id="lbl-sec-layout">Configuration de Pose (12 Layouts OSHA)</span></div>
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label id="lbl-layout-type" for="select-layout-type">Configuration de pose :</label>
+                        <select id="select-layout-type" class="select-custom">
+                            <option value="single_span" selected>1. Single Span (Portée Unique)</option>
+                            <option value="multi_straight">2. Multi-span – Straight (Portées Alignées)</option>
+                            <option value="multi_bend_90">3. Multi-span – 90-Degree bend (Coudes à 90°)</option>
+                            <option value="multi_bend_var">4. Multi-span – Variable-Degree bend (Coudes Angles Variables)</option>
+                            <option value="multi_bend_multi90">5. Multi-span – Multiple 90-degree bends (Pourtour Toiture / Boucle)</option>
+                            <option value="multi_bend_circle">6. Multi-span – Variable-degree bends (Cercle / Réservoir / Polygone)</option>
+                            <option value="multi_bend_multivar">7. Multi-span – Multiple Variable bends (Parcours Ouvert)</option>
+                            <option value="slope_single">8. Single-span – Slope System (Portée Unique en Pente)</option>
+                            <option value="slope_multi">9. Multiple-span – Slope System (Portées Indépendantes en Pente)</option>
+                            <option value="slope_horizontal_comb">10. Multiple-span – Horizontal and Slope System (Combinaison Horizontale/Pente)</option>
+                            <option value="cross_spans">11. Cross-spans (Système en Croix - Exclusif NEW PRO)</option>
+                            <option value="grid_system">12. Grid Systems (Système en Grille - Exclusif LONG / SUPER / ULTRA RANGE)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Section 3: Saisie Géométrique Dynamique -->
+                <div id="layout-dynamic-container" class="layout-dynamic-wrapper">
+                    <!-- Populated dynamically by JS -->
+                </div>
+
+                <div class="modal-buttons margin-top-md">
+                    <button type="button" id="config-cancel-btn" class="btn btn-secondary" onclick="closeConfigModal()">Annuler</button>
+                    <button type="submit" id="config-submit-btn" class="btn btn-primary"><i class="fa-solid fa-check"></i> Valider et Générer 3D</button>
                 </div>
             </form>
 
@@ -177,8 +357,12 @@
             </div>
 
             <div class="header-actions">
-                <button type="button" id="reconfig-btn" class="btn btn-secondary btn-sm" title="Modifier dimensions">
+                <button type="button" id="reconfig-btn" class="btn btn-secondary btn-sm" onclick="openConfigModal()" title="Modifier dimensions">
                     <i class="fa-solid fa-pen-to-square"></i> <span id="reconfig-btn-text">Dimensions</span>
+                </button>
+                <!-- Unit Switch Button (Spec V2 — 06) -->
+                <button type="button" id="btn-toggle-unit-system" class="unit-toggle-btn" onclick="toggleUnitSystem()" title="Basculer Système d'Unités (Métrique / US)">
+                    <i class="fa-solid fa-scale-balanced"></i> <span id="btn-unit-text">MÉTRIQUE</span>
                 </button>
                 <div class="lang-select-wrapper compact">
                     <i class="fa-solid fa-globe"></i>
@@ -186,6 +370,23 @@
                         <option value="0">FR</option>
                         <option value="1">EN</option>
                     </select>
+                </div>
+                <!-- User Profile & Access Control Widget (Spec V2 - 01) -->
+                <div id="user-profile-widget" class="user-profile-widget">
+                    <div class="user-badge" id="user-profile-badge" title="Utilisateur connecté">
+                        <i class="fa-solid fa-user-shield"></i>
+                        <span id="user-name-display" class="user-name">Non connecté</span>
+                        <span id="user-role-badge" class="badge-role badge-role-installer">INVITÉ</span>
+                    </div>
+                    <button type="button" id="btn-open-admin-pip" class="btn btn-warning btn-sm" style="display: none;" onclick="AuthModule.openAdminModal()" title="Gestion des Accès PIP">
+                        <i class="fa-solid fa-shield-halved"></i> <span>Admin PIP</span>
+                    </button>
+                    <button type="button" id="btn-open-projects" class="btn btn-secondary btn-sm" onclick="ProjectStorageModule.openProjectsModal()" title="Projets sauvegardés">
+                        <i class="fa-solid fa-folder-open"></i> <span>Projets</span>
+                    </button>
+                    <button type="button" id="btn-auth-logout" class="btn btn-secondary btn-sm btn-icon" onclick="AuthModule.handleLogout()" title="Se déconnecter">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>
                 </div>
             </div>
         </header>
@@ -211,13 +412,43 @@
                         </div>
 
                         <div class="canvas-actions">
-                            <button type="button" id="btn-toggle-fall-sim" class="toolbar-btn active"
-                                title="Simuler Chute 3D & Annotations">
-                                <i class="fa-solid fa-person-falling"></i> <span id="btn-fall-sim-text">Chute 3D</span>
+                            <div class="elevation-quick-wrapper">
+                                <label for="select-hll-elevation-toolbar">
+                                    <i class="fa-solid fa-arrows-up-down" style="color:#0284c7;"></i> <span id="lbl-elevation-tb">Élévation :</span>
+                                </label>
+                                <select id="select-hll-elevation-toolbar" class="elevation-quick-select">
+                                    <option value="knee" selected>Genou (0,45 m)</option>
+                                    <option value="d_ring">Anneau D (1,50 m)</option>
+                                    <option value="overhead">Overhead (3,0 m)</option>
+                                    <option value="custom">Personnalisée...</option>
+                                </select>
+                            </div>
+                            <button type="button" id="btn-undo" class="toolbar-btn" title="Annuler (Ctrl+Z)" disabled>
+                                <i class="fa-solid fa-rotate-left"></i>
+                            </button>
+                            <button type="button" id="btn-redo" class="toolbar-btn" title="Rétablir (Ctrl+Y)" disabled>
+                                <i class="fa-solid fa-rotate-right"></i>
                             </button>
                             <button type="button" id="btn-reset-cam" class="toolbar-btn"
                                 title="Réinitialiser la caméra">
                                 <i class="fa-solid fa-arrows-to-dot"></i>
+                            </button>
+                            <button type="button" id="btn-toggle-grid" class="toolbar-btn active"
+                                title="Masquer/Afficher Grille">
+                                <i class="fa-solid fa-table-cells"></i>
+                            </button>
+                            <button type="button" id="btn-toggle-anchor-labels" class="toolbar-btn active"
+                                title="Afficher/Masquer les étiquettes d'ancrage (A1, A2...)">
+                                <i class="fa-solid fa-tag"></i> <span style="font-size:0.75rem; margin-left:3px; font-weight:600;">Ancrages</span>
+                            </button>
+                            <button type="button" id="btn-toggle-span-labels" class="toolbar-btn active"
+                                title="Afficher/Masquer les longueurs de portée (S1, S2...)">
+                                <i class="fa-solid fa-ruler-horizontal"></i> <span style="font-size:0.75rem; margin-left:3px; font-weight:600;">Longueurs</span>
+                            </button>
+                            <!-- Cotes 3D Permanentes (Spec V2 — 03) -->
+                            <button type="button" id="btn-toggle-dimensions" class="toolbar-btn active"
+                                title="Afficher/Masquer les Cotes 3D permanentes (Spec V2 — 03)">
+                                <i class="fa-solid fa-ruler-combined"></i> <span style="font-size:0.75rem; margin-left:3px; font-weight:600;" id="lbl-btn-cotes">Cotes</span>
                             </button>
                             <button type="button" id="btn-fullscreen" class="toolbar-btn" title="Plein écran">
                                 <i class="fa-solid fa-expand"></i>
@@ -231,9 +462,6 @@
                         <span id="warning-text">La portée réelle dépasse la portée autorisée !</span>
                     </div>
 
-                    <!-- 3D Callouts Canvas Overlay Container -->
-                    <div id="canvas-overlay" class="canvas-overlay-container"></div>
-
                     <!-- Three.js Canvas Container -->
                     <div id="canvas3d" class="canvas-viewport"></div>
 
@@ -242,6 +470,7 @@
                         <div class="legend-item"><span class="legend-dot color-roof"></span> <span id="legend-roof">Roof Surface</span></div>
                         <div class="legend-item"><span class="legend-dot color-anchor"></span> <span id="legend-anchor">Potelets d'Ancrage</span></div>
                         <div class="legend-item"><span class="legend-dot color-cable"></span> <span id="legend-cable">Câble de Ligne de Vie</span></div>
+                        <div class="legend-item"><span class="legend-dot color-labels"></span> <span id="legend-labels">Étiquettes & Longueurs</span></div>
                     </div>
                 </div>
             </div>
@@ -255,28 +484,26 @@
                                 id="group-title-pieces">GAMME & COMPOSANTS HOOKT</span></h3>
 
                         <div class="system-cards-grid">
-                            <div class="system-card active" data-system="NEW PRO">
+                            <div class="system-card" data-system="NEW PRO">
                                 <div class="sys-card-header">
                                     <span class="sys-name">NEW PRO</span>
-                                    <span class="sys-span-tag" id="sys-tag-newpro">Max 15m</span>
+                                    <span class="sys-span-tag" id="sys-tag-newpro">Max 15m | 5 pers. max</span>
                                 </div>
-                                <p class="sys-desc" id="sys-desc-newpro">Système haute performance avec absorbeurs intégrés pour bac acier et
-                                    béton.</p>
+                                <p class="sys-desc" id="sys-desc-newpro">Système haute performance avec absorbeurs intégrés pour bac acier et béton (portée max 15m, 5 utilisateurs max).</p>
                             </div>
                             <div class="system-card" data-system="LIGHT PRO">
                                 <div class="sys-card-header">
                                     <span class="sys-name">LIGHT PRO</span>
-                                    <span class="sys-span-tag" id="sys-tag-lightpro">Max 15m</span>
+                                    <span class="sys-span-tag" id="sys-tag-lightpro">Max 15m | 3 pers. max</span>
                                 </div>
-                                <p class="sys-desc" id="sys-desc-lightpro">Solution légère et économique pour toitures tertiaires et
-                                    industrielles.</p>
+                                <p class="sys-desc" id="sys-desc-lightpro">Solution légère et économique pour toitures tertiaires et industrielles (portée max 15m, 3 utilisateurs max).</p>
                             </div>
                             <div class="system-card" data-system="LONG RANGE">
                                 <div class="sys-card-header">
                                     <span class="sys-name" id="sys-name-longrange">LONG / SUPER / ULTRA RANGE</span>
-                                    <span class="sys-span-tag" id="sys-tag-longrange">Max 56m</span>
+                                    <span class="sys-span-tag" id="sys-tag-longrange">10m - 56m | 3 pers. max</span>
                                 </div>
-                                <p class="sys-desc" id="sys-desc-longrange">Ligne de vie pour très grandes portées (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m).</p>
+                                <p class="sys-desc" id="sys-desc-longrange">Ligne de vie grandes portées : Long Range (10-20m), Super Range (20-34m), Ultra Range (34-56m) — 3 utilisateurs max.</p>
                             </div>
                         </div>
 
@@ -289,24 +516,97 @@
                         </div>
                     </div>
 
-                    <!-- Node Inspector Card (shown when an anchor node is selected) -->
+                    <!-- Section SRL (Mandatory - Spec V2 — 04) -->
+                    <div class="control-card srl-section-card" id="srl-selection-card">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <h3 class="card-title" style="margin:0;"><i class="fa-solid fa-life-ring" style="color:#0284c7;"></i> <span id="srl-section-title">ÉQUIPEMENT SRL (OBLIGATOIRE)</span></h3>
+                            <span class="badge-role badge-role-installer" id="srl-status-badge">NON SÉLECTIONNÉ</span>
+                        </div>
+                        <p style="font-size:0.75rem; color:#64748b; margin:6px 0 10px;">
+                            <span id="srl-section-sub">Sélectionnez le dispositif antichute à rappel automatique (SRL). Requis pour valider le calcul et éditer le rapport.</span>
+                        </p>
+
+                        <div class="srl-cards-grid">
+                            <div class="srl-card" id="card-srl-turbolite" data-srl="turbo_light_9ft" onclick="selectSrlModel('turbo_light_9ft')">
+                                <div class="srl-card-header">
+                                    <span class="srl-name">Turbo Light 9 ft</span>
+                                    <span class="badge-srl-class badge-srl-class1">CLASSE 1</span>
+                                </div>
+                                <ul class="srl-specs-list">
+                                    <li><span>MAD :</span> <strong>1.40 m (4.6 ft)</strong></li>
+                                    <li><span>Rétracté :</span> <strong>0.60 m (2.0 ft)</strong></li>
+                                    <li><span>Arrest Load :</span> <strong>4.5 kN (TurboLite+)</strong></li>
+                                    <li><span>Hauteur min :</span> <strong>≥ Anneau D (1.5 m)</strong></li>
+                                </ul>
+                            </div>
+
+                            <div class="srl-card" id="card-srl-falcon" data-srl="falcon_leading_edge" onclick="selectSrlModel('falcon_leading_edge')">
+                                <div class="srl-card-header">
+                                    <span class="srl-name">Falcon Leading-Edge</span>
+                                    <span class="badge-srl-class badge-srl-class2">CLASSE 2</span>
+                                </div>
+                                <ul class="srl-specs-list">
+                                    <li><span>MAD :</span> <strong>1.80 m (5.9 ft)</strong></li>
+                                    <li><span>Rétracté :</span> <strong>0.80 m (2.6 ft)</strong></li>
+                                    <li><span>Arrest Load :</span> <strong>6.0 kN (Falcon+)</strong></li>
+                                    <li><span>Usage :</span> <strong>Tous niveaux & bord</strong></li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <!-- SRL Warning Alert Box (e.g. Class 1 violation on knee elevation) -->
+                        <div id="srl-alert-warning" class="srl-alert-box" style="display: none;">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                            <div id="srl-alert-text">Avertissement SRL</div>
+                        </div>
+                    </div>
+
+                    <!-- Node & Span Inspector Card (shown when an anchor node or span is selected) -->
                     <div id="node-inspector-card" class="control-card inspector-card hidden">
-                        <h3 class="card-title"><i class="fa-solid fa-circle-dot"></i> <span id="node-inspector-title">INSPECTEUR & ORIENTATION 3D</span></h3>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <h3 class="card-title" style="margin:0;"><i class="fa-solid fa-circle-dot" style="color:#0284c7;"></i> <span id="node-inspector-title">INSPECTEUR & ÉDITION 3D</span></h3>
+                            <button type="button" class="btn-table-icon" id="btn-close-inspector" title="Fermer"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
                         <div class="inspector-content">
                             <div class="readout-row">
-                                <span class="row-label" id="lbl-node-id">Potelet sélectionné :</span>
+                                <span class="row-label" id="lbl-node-id">Élément sélectionné :</span>
                                 <span class="row-val" id="node-id-val">#1</span>
                             </div>
                             <div class="readout-row">
-                                <span class="row-label" id="lbl-node-coords">Coordonnées (X, Z) :</span>
-                                <span class="row-val" id="node-coords-val">X: 0.0m, Z: 0.0m</span>
-                            </div>
-                            <div class="readout-row">
-                                <span class="row-label" id="lbl-node-span">Distance au suivant :</span>
-                                <span class="row-val" id="node-span-val">0.0m</span>
+                                <span class="row-label" id="lbl-node-coords">Coordonnées (X, Y, Z) :</span>
+                                <span class="row-val" id="node-coords-val">X: 0.0m, Y: 0.0m, Z: 0.0m</span>
                             </div>
 
-                            <div class="form-group margin-top-sm">
+                            <!-- Direct Geometry Editing for selected Span/Anchor -->
+                            <div id="inspector-geom-fields" style="background:#f8fafc; padding:10px; border-radius:6px; border:1px solid #e2e8f0; margin-top:8px;">
+                                <div class="form-group" id="group-insp-length">
+                                    <label for="insp-length-val" style="font-size:0.78rem; font-weight:600;"><i class="fa-solid fa-ruler-horizontal"></i> Longueur portée (<span id="unit-dist-insp">m</span>) :</label>
+                                    <input type="number" id="insp-length-val" class="input-text-custom" step="any" min="0.1" style="padding:4px 8px; height:30px; font-size:0.85rem;">
+                                </div>
+                                <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap:6px; margin-top:6px;">
+                                    <div class="form-group" id="group-insp-bend">
+                                        <label for="insp-bend-val" style="font-size:0.78rem; font-weight:600;"><i class="fa-solid fa-turn-up"></i> Coude (°) :</label>
+                                        <input type="number" id="insp-bend-val" class="input-text-custom" step="any" min="-180" max="180" style="padding:4px 8px; height:30px; font-size:0.85rem;">
+                                    </div>
+                                    <div class="form-group" id="group-insp-slope">
+                                        <label for="insp-slope-val" style="font-size:0.78rem; font-weight:600;"><i class="fa-solid fa-chart-line"></i> Pente (max 75°) :</label>
+                                        <input type="number" id="insp-slope-val" class="input-text-custom" step="any" min="-75" max="75" style="padding:4px 8px; height:30px; font-size:0.85rem;">
+                                    </div>
+                                </div>
+                                <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
+                                    <button type="button" id="btn-insp-set-fall" class="btn btn-secondary btn-sm" style="flex:1;" title="Activer comme portée de chute pour le calcul d'effort">
+                                        <i class="fa-solid fa-crosshairs" style="color:#ef4444;"></i> <span id="btn-insp-fall-text">Portée de chute</span>
+                                    </button>
+                                    <button type="button" id="btn-insp-split" class="btn btn-secondary btn-sm" title="Couper cette portée en deux">
+                                        <i class="fa-solid fa-scissors"></i> Scinder
+                                    </button>
+                                    <button type="button" id="btn-insp-insert-after" class="btn btn-secondary btn-sm" title="Insérer une portée après">
+                                        <i class="fa-solid fa-plus"></i> Insérer
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="form-group margin-top-sm" id="group-node-role">
                                 <label id="lbl-node-role" for="node-type-select">Rôle du Potelet :</label>
                                 <select id="node-type-select" class="select-custom">
                                     <option value="extremite">Ancrage d'Extrémité (avec Absorbeur)</option>
@@ -316,14 +616,14 @@
                                 </select>
                             </div>
 
-                            <div class="form-group margin-top-sm">
+                            <div class="form-group margin-top-sm" id="group-node-comp">
                                 <label id="lbl-node-comp" for="node-comp-select">Modèle 3D HOOKT Assigné :</label>
                                 <select id="node-comp-select" class="select-custom">
                                     <!-- Populated dynamically -->
                                 </select>
                             </div>
 
-                            <div class="form-group margin-top-sm">
+                            <div class="form-group margin-top-sm" id="group-node-rot">
                                 <label id="lbl-node-rot" for="node-rot-slider"><i class="fa-solid fa-arrows-rotate"></i> <span id="lbl-node-rot-text">Orientation 3D :</span>
                                     <span id="node-rot-val" class="row-val">0°</span></label>
                                 <input type="range" id="node-rot-slider" min="0" max="360" value="0" step="5"
@@ -341,8 +641,8 @@
                             </div>
 
                             <button type="button" id="btn-delete-node"
-                                class="btn btn-secondary btn-full btn-sm margin-top-sm">
-                                <i class="fa-solid fa-trash-can"></i> <span id="btn-delete-text">Supprimer ce Potelet</span>
+                                class="btn btn-secondary btn-full btn-sm margin-top-sm btn-danger-hover">
+                                <i class="fa-solid fa-trash-can"></i> <span id="btn-delete-text">Supprimer ce Potelet / Portée</span>
                             </button>
                         </div>
                     </div>
@@ -352,18 +652,27 @@
                         <h3 class="card-title"><i class="fa-solid fa-calculator"></i> <span id="group-title-calc">NOTE
                                 DE CALCUL DE CONFORMITÉ</span></h3>
 
-                        <!-- Regulatory Norm Badge -->
-                        <div class="norm-badge-osha">
-                            <i class="fa-solid fa-shield-halved"></i> <span id="lbl-norm-badge">CONFORMITÉ RÉGLEMENTAIRE OSHA (1910.140 / 1926.502)</span>
+                        <!-- Fall Simulation Mode Tabs (Spec V2 — 04) -->
+                        <div class="fall-mode-tabs">
+                            <button type="button" class="fall-mode-tab active" id="tab-mode-critical" onclick="setFallCalculationMode('critical_case')">
+                                <i class="fa-solid fa-bolt"></i> <span id="lbl-tab-mode-critical">Cas Critique (Simulation Tous)</span>
+                            </button>
+                            <button type="button" class="fall-mode-tab" id="tab-mode-selected" onclick="setFallCalculationMode('selected_span')">
+                                <i class="fa-solid fa-crosshairs"></i> <span id="lbl-tab-mode-selected">Portée Choisie</span>
+                            </button>
                         </div>
 
-                        <!-- OSHA Subtabs (Visible only for multi-span on OSHA) -->
+                        <!-- Regulatory Norm Tabs -->
+                        <div class="norm-tabs">
+                            <button type="button" id="tab-en795" class="tab-btn active">EN 795-C</button>
+                            <button type="button" id="tab-osha" class="tab-btn">OSHA</button>
+                        </div>
+
+                        <!-- OSHA Subtabs (Visible only when OSHA tab is active) -->
                         <div id="osha-subtabs" class="osha-subtabs" style="display: none;">
                             <button type="button" id="subtab-span-unique" class="subtab-btn active">Portée Unique (2 ancrages)</button>
-                            <button type="button" id="subtab-span-multi" class="subtab-btn">Multi-Portée (4 ancrages)</button>
+                            <button type="button" id="subtab-span-multi" class="subtab-btn">Multi-Portée</button>
                         </div>
-
-
 
                         <!-- Readouts Grid -->
                         <div class="calc-readouts">
@@ -378,8 +687,12 @@
                                 </div>
                             </div>
 
-                            <div class="readout-grid-1col margin-bottom-sm">
-                                <div class="readout-subbox" style="width: 100%; box-sizing: border-box;">
+                            <div class="readout-grid-2col">
+                                <div class="readout-subbox">
+                                    <span class="sub-label" id="lbl-engineer-coef-calc">Coef. Ingénieur :</span>
+                                    <span class="sub-val" id="val-engineer-coef">1.00</span>
+                                </div>
+                                <div class="readout-subbox">
                                     <span class="sub-label" id="lbl-max-allowed-span-calc">Portée Max Aut. :</span>
                                     <span class="sub-val" id="val-max-allowed-span">-- m</span>
                                 </div>
@@ -391,6 +704,13 @@
                             <div class="side-calc-block">
                                 <h4 class="side-title"><i class="fa-solid fa-route"></i> <span id="side-title-lifeline-text">Résultats sur la Ligne de Vie</span>
                                 </h4>
+
+                                <!-- Critical Span Notification Badge (Spec V2 - 04 & 05) -->
+                                <div class="readout-row" id="row-critical-span" style="background:#fef2f2; padding:4px 8px; border-radius:6px; margin-bottom:6px;">
+                                    <span class="row-label" style="color:#b91c1c; font-weight:700;"><i class="fa-solid fa-triangle-exclamation"></i> <span id="lbl-critical-span-tag">Portée Critique :</span></span>
+                                    <span class="row-val badge-critical-span" id="val-critical-span">S1 (Tension Max)</span>
+                                </div>
+
                                 <div class="readout-row">
                                     <span class="row-label" id="lbl-total-line-len-row">Longueur développée :</span>
                                     <span class="row-val" id="val-total-line-len">-- m</span>
@@ -399,45 +719,159 @@
                                     <span class="row-label" id="lbl-span-l-row">Portée réelle max :</span>
                                     <span class="row-val" id="val-span-l">-- m</span>
                                 </div>
-                                <div class="readout-row warning-text">
-                                    <span class="row-label" id="lbl-force-l-row">Effort longe :</span>
+                                <div class="readout-row warning-text" id="row-force-l" style="display:none;">
+                                    <span class="row-label" id="lbl-force-l-row">Tension max :</span>
                                     <span class="row-val" id="val-force-l">-- kN</span>
                                 </div>
                                 <div class="readout-row warning-yellow">
                                     <span class="row-label" id="lbl-defl-l-row">Flèche maximale :</span>
                                     <span class="row-val" id="val-defl-l">-- mm</span>
                                 </div>
+
+                                <!-- Spec V2 - 05: System Pretension, Sag & Intermediate Post Load -->
                                 <div class="readout-row">
-                                    <span class="row-label" id="lbl-ext1-l-row">Force Extrémité 1 :</span>
-                                    <span class="row-val" id="val-ext1-l">-- kN</span>
+                                    <span class="row-label" id="lbl-pretension-row">Prétension Câble (P0) :</span>
+                                    <span class="row-val" id="val-pretension">100 kg (0.98 kN)</span>
                                 </div>
                                 <div class="readout-row">
-                                    <span class="row-label" id="lbl-ext2-l-row">Force Extrémité 2 :</span>
-                                    <span class="row-val" id="val-ext2-l">-- kN</span>
+                                    <span class="row-label" id="lbl-initial-sag-row">Affaissement Initial :</span>
+                                    <span class="row-val to-be-provided-badge" id="val-initial-sag">Donnée à renseigner</span>
                                 </div>
-                                <div class="readout-row" id="row-angle-final" style="display: none;">
-                                    <span class="row-label" id="lbl-angle-final-row">Angle Final (pente sous charge) :</span>
-                                    <span class="row-val" id="val-angle-final">-- °</span>
+                                <div class="readout-row">
+                                    <span class="row-label" id="lbl-max-inter-load-row">Charge Intermédiaire Max :</span>
+                                    <span class="row-val" id="val-max-inter-load">6.00 kN</span>
                                 </div>
-                                <div class="readout-row" id="row-cone-slip" style="display: none;">
-                                    <span class="row-label" id="lbl-cone-slip-row">Glissement Cône Max :</span>
-                                    <span class="row-val" id="val-cone-slip">-- mm</span>
+
+                                <!-- Dynamic Anchor Forces Distribution Container -->
+                                <div id="anchor-forces-container" class="anchor-forces-container">
+                                    <div class="readout-row" id="row-ext1">
+                                        <span class="row-label" id="lbl-ext1-l-row">Force Extrémité 1 :</span>
+                                        <span class="row-val" id="val-ext1-l">-- kN</span>
+                                    </div>
+                                    <div class="readout-row" id="row-ext2">
+                                        <span class="row-label" id="lbl-ext2-l-row">Force Extrémité 2 :</span>
+                                        <span class="row-val" id="val-ext2-l">-- kN</span>
+                                    </div>
+                                    <div class="readout-row" id="row-angle-final" style="display: none;">
+                                        <span class="row-label" id="lbl-angle-final-row">Angle Final (pente sous charge) :</span>
+                                        <span class="row-val" id="val-angle-final">-- °</span>
+                                    </div>
+                                    <div class="readout-row" id="row-cone-slip" style="display: none;">
+                                        <span class="row-label" id="lbl-cone-slip-row">Glissement Cône Max :</span>
+                                        <span class="row-val" id="val-cone-slip">-- mm</span>
+                                    </div>
+                                    <div class="readout-row" id="row-ext3" style="display: none;">
+                                        <span class="row-label" id="lbl-ext3-l-row">Force Ancrage 3 :</span>
+                                        <span class="row-val" id="val-ext3-l">-- kN</span>
+                                    </div>
+                                    <div class="readout-row" id="row-ext4" style="display: none;">
+                                        <span class="row-label" id="lbl-ext4-l-row">Force Ancrage 4 :</span>
+                                        <span class="row-val" id="val-ext4-l">-- kN</span>
+                                    </div>
+                                    <!-- Dynamic content rendered for Multi-span (6 pts), Cross (4 branches), Grid -->
+                                    <div id="dynamic-anchor-distribution-content"></div>
                                 </div>
-                                <div class="readout-row" id="row-ext3" style="display: none;">
-                                    <span class="row-label" id="lbl-ext3-l-row">Force Ancrage 3 :</span>
-                                    <span class="row-val" id="val-ext3-l">-- kN</span>
+
+                                <!-- Spec V2 - 05: Resolved Corner Forces (Efforts de Coin) -->
+                                <div id="corner-forces-container" class="corner-forces-container" style="display:none;">
+                                    <h4 class="side-title" style="margin-bottom:6px;"><i class="fa-solid fa-arrows-split-up-and-left"></i> <span id="lbl-corner-forces-title">Efforts de Coin Résolus</span></h4>
+                                    <div id="corner-forces-content"></div>
                                 </div>
-                                <div class="readout-row" id="row-ext4" style="display: none;">
-                                    <span class="row-label" id="lbl-ext4-l-row">Force Ancrage 4 :</span>
-                                    <span class="row-val" id="val-ext4-l">-- kN</span>
+
+                                <!-- Spec V2 - 04 & 05: Total Fall Clearance Breakdown -->
+                                <div id="clearance-breakdown-box" class="clearance-breakdown-box">
+                                    <h4 class="side-title" style="margin-bottom:6px; color:#15803d;"><i class="fa-solid fa-shield-halved"></i> <span id="lbl-clearance-title">Dégagement de Chute Requis</span></h4>
+                                    <div class="readout-row" style="font-size:0.75rem;">
+                                        <span id="lbl-clr-defl">Flèche sous charge :</span>
+                                        <span id="clr-val-defl">-- m</span>
+                                    </div>
+                                    <div class="readout-row" style="font-size:0.75rem;">
+                                        <span id="lbl-clr-mad">Arrêt SRL (MAD) :</span>
+                                        <span id="clr-val-mad">-- m</span>
+                                    </div>
+                                    <div class="readout-row" style="font-size:0.75rem;">
+                                        <span id="lbl-clr-body">Corps / Anneau D :</span>
+                                        <span id="clr-val-body">-- m</span>
+                                    </div>
+                                    <div class="readout-row" style="font-size:0.75rem;">
+                                        <span id="lbl-clr-margin">Marge de sécurité :</span>
+                                        <span id="clr-val-margin">0.60 m (2.0 ft)</span>
+                                    </div>
+                                    <div class="clearance-total-row">
+                                        <span id="lbl-clearance-total">Dégagement Total :</span>
+                                        <span id="val-total-clearance">-- m</span>
+                                    </div>
                                 </div>
+
+                                <!-- Buffer recoil & Safety Factor (Unprovided formulas) -->
+                                <div class="readout-row margin-top-xs">
+                                    <span class="row-label" id="lbl-buffer-recoil-row">Recul du Buffer :</span>
+                                    <span class="row-val to-be-provided-badge" id="val-buffer-recoil">Donnée à renseigner</span>
                                 </div>
-                        </div>
+                                <div class="readout-row">
+                                    <span class="row-label" id="lbl-safety-factor-row">Facteur de Sécurité :</span>
+                                    <span class="row-val to-be-provided-badge" id="val-safety-factor">Donnée à renseigner</span>
+                                </div>
+                            </div>
+
+                            <!-- Section Tableaux Ancrages & Portées (Note de calcul - Source Unique) -->
+                            <div class="readout-divider"></div>
+                            <div class="labels-tables-section" id="labels-tables-section">
+                                <div class="table-title-sm" style="justify-content: space-between;">
+                                    <span><i class="fa-solid fa-location-dot" style="color: #0284c7;"></i> <span id="lbl-anchors-table-title">Tableau des Ancrages</span></span>
+                                    <span id="badge-total-anchors-count" class="badge-tag-id anchor-badge">0 ancrage</span>
+                                </div>
+                                <div class="labels-table-wrapper">
+                                    <table class="labels-table" id="table-system-anchors">
+                                        <thead>
+                                            <tr>
+                                                <th>Étiquette</th>
+                                                <th>Type</th>
+                                                <th>Portées</th>
+                                                <th>Effort</th>
+                                                <th>Remarque</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tbody-system-anchors">
+                                            <!-- Rempli dynamiquement -->
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div class="table-title-sm margin-top-xs" style="margin-top: 10px; justify-content: space-between; align-items: center;">
+                                    <span>
+                                        <i class="fa-solid fa-ruler-horizontal" style="color: #0284c7;"></i> 
+                                        <span id="lbl-spans-table-title">Tableau des Portées</span>
+                                        <span class="badge-critical-indicator" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:0.68rem; padding:1px 6px; border-radius:4px; font-weight:700; margin-left:6px;">Valeurs Critiques</span>
+                                    </span>
+                                    <span id="badge-total-spans-count" class="badge-tag-id span-badge">0 portée</span>
+                                </div>
+                                <div id="spans-table-subtitle" style="font-size: 0.72rem; color: #64748b; margin-top: 2px; margin-bottom: 6px; font-weight: 500; display: flex; align-items: center; gap: 5px;">
+                                    <i class="fa-solid fa-circle-info" style="color: #0284c7; font-size: 0.75rem;"></i>
+                                    <span id="lbl-spans-table-desc">Récapitulatif des valeurs critiques par portée (flèche maximale et effort au cas le plus défavorable)</span>
+                                </div>
+                                <div class="labels-table-wrapper">
+                                    <table class="labels-table" id="table-system-spans">
+                                        <thead>
+                                            <tr>
+                                                <th id="th-spans-id">Étiquette</th>
+                                                <th id="th-spans-ends">Extrémités</th>
+                                                <th id="th-spans-len">Longueur</th>
+                                                <th id="th-spans-defl">Flèche</th>
+                                                <th id="th-spans-effort">Effort Ancrage</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="tbody-system-spans">
+                                            <!-- Rempli dynamiquement -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
 
 
                         <!-- Action Buttons -->
                         <div class="card-actions">
-                            <button type="button" id="export-pdf-btn" class="btn btn-indigo btn-full">
+                            <button type="button" id="export-pdf-btn" class="btn btn-indigo btn-full" onclick="generatePDFReport()">
                                 <i class="fa-solid fa-file-pdf"></i> <span id="btn-text-export">Générer Rapport
                                     (PDF)</span>
                             </button>
@@ -479,6 +913,342 @@
     </div>
 
     <!-- ==========================================
+         AUTHENTICATION OVERLAY (SPEC V2 - 01)
+         ========================================== -->
+    <div id="auth-overlay" class="auth-overlay active">
+        <div class="auth-card glass-modal">
+            <div class="auth-header">
+                <div class="brand-badge"><i class="fa-solid fa-shield-halved"></i> <span>PIP GLOBAL SAFETY × HOOKT</span></div>
+                <h2>Connexion Sécurisée</h2>
+                <p class="auth-subtitle">Accès strictement réservé aux utilisateurs et installateurs approuvés.</p>
+            </div>
+
+            <!-- Generic Alert Message (Never reveals email presence) -->
+            <div id="login-error-alert" class="login-alert hidden">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span id="login-error-text">Accès réservé aux utilisateurs approuvés.</span>
+            </div>
+
+            <form id="auth-login-form" class="auth-form" onsubmit="AuthModule.handleLoginSubmit(event)">
+                <div class="form-group">
+                    <label for="auth-email"><i class="fa-solid fa-envelope"></i> Adresse e-mail professionnelle :</label>
+                    <input type="email" id="auth-email" class="input-text-custom" placeholder="nom@entreprise.com" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="auth-password"><i class="fa-solid fa-lock"></i> Mot de passe :</label>
+                    <input type="password" id="auth-password" class="input-text-custom" placeholder="••••••••••••" required autocomplete="current-password">
+                </div>
+                <div class="auth-remember-row">
+                    <label class="remember-label">
+                        <input type="checkbox" id="auth-remember" checked> Se souvenir de cette session (30 jours)
+                    </label>
+                </div>
+                <button type="submit" id="btn-auth-login" class="btn btn-primary btn-full btn-hero">
+                    <i class="fa-solid fa-arrow-right-to-bracket"></i> <span>Accéder au Configurateur</span>
+                </button>
+            </form>
+
+            <div class="auth-footer-notice">
+                <i class="fa-solid fa-circle-info"></i> Inscription sur invitation uniquement par les administrateurs PIP.
+            </div>
+
+            <!-- Demo / Evaluation Quick-Select for V2 Review -->
+            <div class="auth-demo-bar">
+                <div class="demo-bar-title"><i class="fa-solid fa-vial"></i> Comptes d'évaluation Spec V2 :</div>
+                <div class="demo-btns-grid">
+                    <button type="button" class="btn-demo-acc" onclick="AuthModule.fillDemoCredentials('admin@pip.com', 'PipAdmin2026!')">
+                        <strong>Admin PIP</strong> <span>(admin@pip.com)</span>
+                    </button>
+                    <button type="button" class="btn-demo-acc" onclick="AuthModule.fillDemoCredentials('installateur@hookt.fr', 'Installer2026!')">
+                        <strong>Installateur 1</strong> <span>(Marc - Acrobat)</span>
+                    </button>
+                    <button type="button" class="btn-demo-acc" onclick="AuthModule.fillDemoCredentials('lucas@hauteurpro.com', 'Lucas2026!')">
+                        <strong>Installateur 2</strong> <span>(Lucas - Hauteur Pro)</span>
+                    </button>
+                    <button type="button" class="btn-demo-acc" onclick="AuthModule.fillDemoCredentials('suspendu@externe.fr', 'Suspendu2026!')">
+                        <strong>Suspendu</strong> <span>(Accès révoqué)</span>
+                    </button>
+                    <button type="button" class="btn-demo-acc" onclick="AuthModule.openInviteModalWithDemo()">
+                        <strong>Activer Invitation</strong> <span>(Lien 7j)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==========================================
+         ONE-TIME INVITATION ACTIVATION MODAL
+         ========================================== -->
+    <div id="activation-modal" class="modal">
+        <div class="modal-content glass-modal activation-modal-content">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-key"></i> <span>Activation de Compte Utilisateur</span></h2>
+                <button type="button" class="modal-close" onclick="AuthModule.closeActivationModal()">&times;</button>
+            </div>
+            <div class="activation-body">
+                <div class="info-readout-box margin-bottom-md">
+                    <i class="fa-solid fa-shield-halved"></i>
+                    <div>
+                        <strong>Bienvenue sur le portail HOOKT / PIP.</strong><br>
+                        Veuillez définir votre mot de passe pour activer votre accès. Ce lien est à usage unique et valable 7 jours.
+                    </div>
+                </div>
+                <div id="activation-error-alert" class="login-alert hidden">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <span id="activation-error-text">Erreur</span>
+                </div>
+                <form id="activation-form" onsubmit="AuthModule.handleActivationSubmit(event)">
+                    <input type="hidden" id="activation-token-input">
+                    <div class="form-group">
+                        <label>Adresse e-mail :</label>
+                        <input type="text" id="activation-email-preview" class="input-text-custom readonly-input" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label>Nom & Société :</label>
+                        <input type="text" id="activation-user-preview" class="input-text-custom readonly-input" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="activation-new-password">Nouveau mot de passe (min. 8 caractères) :</label>
+                        <input type="password" id="activation-new-password" class="input-text-custom" required placeholder="••••••••••••">
+                    </div>
+                    <div class="form-group">
+                        <label for="activation-confirm-password">Confirmer le mot de passe :</label>
+                        <input type="password" id="activation-confirm-password" class="input-text-custom" required placeholder="••••••••••••">
+                    </div>
+                    <div class="modal-buttons margin-top-md">
+                        <button type="button" class="btn btn-secondary" onclick="AuthModule.closeActivationModal()">Annuler</button>
+                        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> Activer mon accès</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==========================================
+         ADMIN PIP MANAGEMENT MODAL
+         ========================================== -->
+    <div id="admin-pip-modal" class="modal">
+        <div class="modal-content glass-modal wide-modal admin-modal-content">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-user-shield"></i> <span>Administration PIP — Gestion des Accès & Sécurité</span></h2>
+                <button type="button" class="modal-close" onclick="AuthModule.closeAdminModal()">&times;</button>
+            </div>
+
+            <!-- Admin Tabs Navigation -->
+            <div class="norm-tabs admin-tabs">
+                <button type="button" class="tab-btn active" id="tab-btn-users" onclick="AuthModule.switchAdminTab('users')">
+                    <i class="fa-solid fa-users"></i> Liste des Accès (Allow-List)
+                </button>
+                <button type="button" class="tab-btn" id="tab-btn-invite" onclick="AuthModule.switchAdminTab('invite')">
+                    <i class="fa-solid fa-user-plus"></i> Inviter un Utilisateur
+                </button>
+                <button type="button" class="tab-btn" id="tab-btn-audit" onclick="AuthModule.switchAdminTab('audit')">
+                    <i class="fa-solid fa-clock-rotate-left"></i> Journal d'Audit
+                </button>
+                <button type="button" class="tab-btn" id="tab-btn-projects" onclick="AuthModule.switchAdminTab('projects')">
+                    <i class="fa-solid fa-folder-tree"></i> Tous les Projets
+                </button>
+            </div>
+
+            <!-- Tab 1: Users Allow-List -->
+            <div id="admin-tab-users" class="admin-tab-pane">
+                <div class="admin-kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-num" id="kpi-total-users">0</div>
+                        <div class="kpi-lbl">Total Utilisateurs</div>
+                    </div>
+                    <div class="kpi-card kpi-success">
+                        <div class="kpi-num" id="kpi-active-users">0</div>
+                        <div class="kpi-lbl">Comptes Actifs</div>
+                    </div>
+                    <div class="kpi-card kpi-warning">
+                        <div class="kpi-num" id="kpi-invited-users">0</div>
+                        <div class="kpi-lbl">Invitations en attente</div>
+                    </div>
+                    <div class="kpi-card kpi-danger">
+                        <div class="kpi-num" id="kpi-suspended-users">0</div>
+                        <div class="kpi-lbl">Comptes Suspendus</div>
+                    </div>
+                </div>
+
+                <div class="table-actions-bar">
+                    <input type="text" id="admin-user-search" class="input-text-custom search-input" placeholder="Rechercher par nom, email, société..." oninput="AuthModule.renderUsersTable()">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="AuthModule.switchAdminTab('invite')">
+                        <i class="fa-solid fa-plus"></i> Nouvelle Invitation
+                    </button>
+                </div>
+
+                <div class="labels-table-wrapper admin-table-scroll">
+                    <table class="labels-table admin-table" id="table-admin-users">
+                        <thead>
+                            <tr>
+                                <th>Utilisateur</th>
+                                <th>Société</th>
+                                <th>Rôle</th>
+                                <th>Statut</th>
+                                <th>Dernière Connexion</th>
+                                <th>Expiration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-admin-users">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab 2: Invite User -->
+            <div id="admin-tab-invite" class="admin-tab-pane" style="display: none;">
+                <form id="admin-invite-form" class="admin-invite-form" onsubmit="AuthModule.handleInviteSubmit(event)">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="inv-email">Adresse e-mail professionnelle :</label>
+                            <input type="email" id="inv-email" class="input-text-custom" required placeholder="contact@entreprise.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="inv-nom">Nom complet :</label>
+                            <input type="text" id="inv-nom" class="input-text-custom" required placeholder="ex: Jean Dupont">
+                        </div>
+                        <div class="form-group">
+                            <label for="inv-company">Société / Entreprise :</label>
+                            <input type="text" id="inv-company" class="input-text-custom" required placeholder="ex: BTP Sécurité SAS">
+                        </div>
+                        <div class="form-group">
+                            <label for="inv-role">Rôle attribué :</label>
+                            <select id="inv-role" class="select-custom">
+                                <option value="installer" selected>Installateur (Projets isolés)</option>
+                                <option value="admin">Administrateur PIP (Gestion complète)</option>
+                            </select>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="inv-expiry">Date d'expiration d'accès optionnelle (laisser vide si permanent) :</label>
+                            <input type="date" id="inv-expiry" class="input-text-custom">
+                        </div>
+                    </div>
+                    <div class="modal-buttons margin-top-md">
+                        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i> Générer le lien d'invitation (7 jours)</button>
+                    </div>
+                </form>
+
+                <div id="invite-result-box" class="invite-result-box hidden margin-top-md">
+                    <h4><i class="fa-solid fa-circle-check" style="color:#10b981;"></i> Invitation générée avec succès</h4>
+                    <p>Transmettez ce lien à l'utilisateur. Il est à usage unique et expire dans 7 jours :</p>
+                    <div class="invite-link-copy-row">
+                        <input type="text" id="invite-link-output" class="input-text-custom readonly-input" readonly>
+                        <button type="button" class="btn btn-secondary" onclick="AuthModule.copyInviteLink()"><i class="fa-solid fa-copy"></i> Copier</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: Audit Log -->
+            <div id="admin-tab-audit" class="admin-tab-pane" style="display: none;">
+                <div class="table-actions-bar">
+                    <span class="text-muted"><i class="fa-solid fa-shield-halved"></i> Traçabilité de chaque action : connexions, invitations, suspensions, générations PDF.</span>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="AuthModule.renderAuditTable()"><i class="fa-solid fa-rotate"></i> Actualiser</button>
+                </div>
+                <div class="labels-table-wrapper admin-table-scroll">
+                    <table class="labels-table admin-table" id="table-admin-audit">
+                        <thead>
+                            <tr>
+                                <th>Date & Heure</th>
+                                <th>Utilisateur</th>
+                                <th>Rôle</th>
+                                <th>Action</th>
+                                <th>Détails de l'événement</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-admin-audit">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab 4: All Projects -->
+            <div id="admin-tab-projects" class="admin-tab-pane" style="display: none;">
+                <div class="table-actions-bar">
+                    <span class="text-muted"><i class="fa-solid fa-folder-tree"></i> Vue d'ensemble de tous les projets configurés par l'ensemble des installateurs.</span>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="AuthModule.renderAdminProjectsTable()"><i class="fa-solid fa-rotate"></i> Actualiser</button>
+                </div>
+                <div class="labels-table-wrapper admin-table-scroll">
+                    <table class="labels-table admin-table" id="table-admin-projects">
+                        <thead>
+                            <tr>
+                                <th>Projet</th>
+                                <th>Installateur / Société</th>
+                                <th>Date Création</th>
+                                <th>Gamme</th>
+                                <th>Configuration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-admin-projects">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==========================================
+         PROJECTS MANAGEMENT MODAL (ISOLATION)
+         ========================================== -->
+    <div id="projects-modal" class="modal">
+        <div class="modal-content glass-modal wide-modal projects-modal-content">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-folder-open"></i> <span id="projects-modal-title">Gestion des Projets</span></h2>
+                <button type="button" class="modal-close" onclick="ProjectStorageModule.closeProjectsModal()">&times;</button>
+            </div>
+
+            <!-- Save Current Configuration -->
+            <div class="save-project-section">
+                <div class="modal-section-title"><i class="fa-solid fa-floppy-disk"></i> Enregistrer la Configuration Actuelle</div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="save-proj-name">Nom du Projet :</label>
+                        <input type="text" id="save-proj-name" class="input-text-custom" placeholder="ex: Toiture Entrepôt Sud">
+                    </div>
+                    <div class="form-group">
+                        <label for="save-proj-location">Lieu / Adresse :</label>
+                        <input type="text" id="save-proj-location" class="input-text-custom" placeholder="ex: Lyon, France">
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary margin-top-sm" onclick="ProjectStorageModule.handleSaveCurrentProject()">
+                    <i class="fa-solid fa-check"></i> Enregistrer ce Projet
+                </button>
+            </div>
+
+            <div class="readout-divider"></div>
+
+            <!-- Projects List -->
+            <div class="modal-section-title"><i class="fa-solid fa-list-check"></i> <span id="projects-list-title">Mes Projets Enregistrés</span></div>
+            <p id="projects-isolation-notice" class="text-muted" style="font-size:0.85rem; margin-bottom:10px;">
+                <i class="fa-solid fa-lock"></i> Seuls vos propres projets vous sont accessibles.
+            </p>
+
+            <div class="labels-table-wrapper admin-table-scroll">
+                <table class="labels-table" id="table-user-projects">
+                    <thead>
+                        <tr>
+                            <th>Nom du Projet</th>
+                            <th>Lieu</th>
+                            <th>Date</th>
+                            <th>Gamme HOOKT</th>
+                            <th>Configuration</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-user-projects">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==========================================
          SCRIPTS DEPENDENCIES
          ========================================== -->
     <!-- Three.js Libraries: Core Engine, Orbit Controls, OBJ Loader & GLTF Loader -->
@@ -490,7 +1260,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
     <!-- Application Logic -->
-    <script src="app.js"></script>
+    <script src="app.js?v=v39"></script>
 </body>
 
 </html>
