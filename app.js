@@ -17,6 +17,8 @@ const ENGINEER_COEF_APPLIES_TO = ["forces"];
 const SLOPE_MAX_DEG = 75;
 const END_BUFFER_LENGTH = 0.20;
 const FALL_TEST_REFERENCE_FACTOR = 2.0;
+const MAD_WARN_M = 2.0; // Spec V2 — 08: Seuil d'avertissement MAD > 2.0m
+const DEPRECATED_CONFIGS = ["3", "4", "5", "7", "9", "10", "multi_bend_90", "multi_bend_var", "multi_bend_multi90", "multi_bend_multivar", "slope_multi", "slope_horizontal_comb"];
 if (typeof window !== "undefined") {
     window.ELEVATION_TO_FALL_FACTOR = ELEVATION_TO_FALL_FACTOR;
     window.FALL_FACTOR_TOLERANCE_M = FALL_FACTOR_TOLERANCE_M;
@@ -24,6 +26,8 @@ if (typeof window !== "undefined") {
     window.SLOPE_MAX_DEG = SLOPE_MAX_DEG;
     window.END_BUFFER_LENGTH = END_BUFFER_LENGTH;
     window.FALL_TEST_REFERENCE_FACTOR = FALL_TEST_REFERENCE_FACTOR;
+    window.MAD_WARN_M = MAD_WARN_M;
+    window.DEPRECATED_CONFIGS = DEPRECATED_CONFIGS;
 }
 
 function getEffectiveDRingHeight(bodyPosition) {
@@ -114,11 +118,39 @@ function calculateCornerEffort(bendNode, tensionInKn = 10.0, tensionOutKn = 10.0
 }
 window.calculateCornerEffort = calculateCornerEffort;
 
+// System helper functions for product identification and normalization
+function isCore(product) {
+    const p = (product || (typeof state !== "undefined" ? state.product : "") || "").toUpperCase();
+    return p === "CORE" || p.includes("LIGHT");
+}
+
+function isPro(product) {
+    const p = (product || (typeof state !== "undefined" ? state.product : "") || "").toUpperCase();
+    return p === "PRO" || p === "NEW PRO" || p.includes("NEW");
+}
+
+function isExtreme(product) {
+    const p = (product || (typeof state !== "undefined" ? state.product : "") || "").toUpperCase();
+    return p === "EXTREME" || p.includes("RANGE") || p.includes("LONG") || p.includes("SUPER") || p.includes("ULTRA");
+}
+
+function normalizeProduct(p) {
+    if (!p) return "CORE";
+    if (isCore(p)) return "CORE";
+    if (isExtreme(p)) return "EXTREME";
+    if (isPro(p)) return "PRO";
+    return p;
+}
+window.isCore = isCore;
+window.isPro = isPro;
+window.isExtreme = isExtreme;
+window.normalizeProduct = normalizeProduct;
+
 // Full Anchor Forces Table Generator across all N anchors (Spec V2 - 05)
-function generateAllAnchorsTable(spans, fallSpanIdx = 0, tensionMidKn = 12.0, product = "NEW PRO") {
+function generateAllAnchorsTable(spans, fallSpanIdx = 0, tensionMidKn = 12.0, product = "CORE") {
     const totalSpans = spans ? spans.length : 1;
-    const totalAnchors = totalSpans + 1;
-    const isRange = (product || "").includes("RANGE");
+    const totalLogicalAnchors = totalSpans + 1;
+    const isRange = isExtreme(product);
     const pretensionP0Kn = isRange ? 5.88 : 0.98; // 600 kg vs 100 kg
 
     const anchors = [];
@@ -127,54 +159,87 @@ function generateAllAnchorsTable(spans, fallSpanIdx = 0, tensionMidKn = 12.0, pr
     const fallA1 = fallSpanIdx;
     const fallA2 = fallSpanIdx + 1;
 
-    for (let i = 0; i < totalAnchors; i++) {
-        const anchorId = `A${i + 1}`;
+    let bendsBefore = 0;
+
+    for (let i = 0; i < totalLogicalAnchors; i++) {
         let type = "intermediaire";
         let role = "Potelet Intermédiaire";
-        let effortKn = pretensionP0Kn;
+        let baseEffortKn = pretensionP0Kn;
         let remark = "Tension nominale câble (P0)";
 
         if (i === 0) {
             type = "extremite";
             role = "Ancrage d'extrémité (avec absorbeur)";
-            // End anchor attenuated
-            effortKn = parseFloat((tensionMidKn * 0.75).toFixed(2));
+            baseEffortKn = parseFloat((tensionMidKn * 0.75).toFixed(2));
             remark = "Extrémité départ ligne";
-        } else if (i === totalAnchors - 1) {
+        } else if (i === totalLogicalAnchors - 1) {
             type = "extremite";
             role = "Ancrage d'extrémité (avec absorbeur)";
-            effortKn = parseFloat((tensionMidKn * 0.75).toFixed(2));
+            baseEffortKn = parseFloat((tensionMidKn * 0.75).toFixed(2));
             remark = "Extrémité fin ligne";
         } else if (i === fallA1 || i === fallA2) {
             type = "chute";
             role = "Ancrage de la portée de chute";
-            effortKn = parseFloat(tensionMidKn.toFixed(2));
+            baseEffortKn = parseFloat(tensionMidKn.toFixed(2));
             remark = "Sous tension maximale directe";
         } else if (Math.abs(i - fallA1) === 1 || Math.abs(i - fallA2) === 1) {
             type = "adjacent";
             role = "Potelet adjacent direct";
-            effortKn = parseFloat((tensionMidKn * 0.495).toFixed(2)); // Règle 1 K=0.495
+            baseEffortKn = parseFloat((tensionMidKn * 0.495).toFixed(2)); // Règle 1 K=0.495
             remark = "Atténuation Règle 1 (K=0.495)";
         } else {
             type = "intermediaire_hors_fenetre";
             role = "Potelet intermédiaire hors fenêtre";
-            effortKn = pretensionP0Kn;
+            baseEffortKn = pretensionP0Kn;
             remark = "Tension câble P0";
         }
 
-        // Adjacent spans
-        const adj = [];
-        if (i > 0) adj.push(`S${i}`);
-        if (i < totalSpans) adj.push(`S${i + 1}`);
+        const effKn = Math.max(pretensionP0Kn, parseFloat((baseEffortKn * Math.pow(0.5, bendsBefore)).toFixed(2)));
 
-        anchors.push({
-            id: anchorId,
-            type,
-            role,
-            adjacentSpans: adj,
-            effortKn,
-            remark
-        });
+        // Spec V2 — 17: Coude > 40° -> Ancrage double A#a / A#b avec même valeur d'effort
+        let isDouble = false;
+        if (i >= 1 && i < totalLogicalAnchors - 1 && spans && spans[i - 1]) {
+            const bDeg = Math.abs(parseFloat(spans[i - 1].bendDeg || spans[i - 1].bend_after_deg || (spans[i - 1].bend90 ? 90 : 0)) || 0);
+            if (bDeg > 40) isDouble = true;
+        }
+
+        if (isDouble) {
+            const adjA = [];
+            if (i > 0) adjA.push(`S${i}`);
+            const adjB = [];
+            if (i < totalSpans) adjB.push(`S${i + 1}`);
+
+            anchors.push({
+                id: `A${i + 1}a`,
+                type: "double",
+                role: "Ancrage double",
+                adjacentSpans: adjA,
+                effortKn: effKn,
+                remark: "Ancrage double"
+            });
+            anchors.push({
+                id: `A${i + 1}b`,
+                type: "double",
+                role: "Ancrage double",
+                adjacentSpans: adjB,
+                effortKn: effKn,
+                remark: "Ancrage double"
+            });
+            bendsBefore++;
+        } else {
+            const adj = [];
+            if (i > 0) adj.push(`S${i}`);
+            if (i < totalSpans) adj.push(`S${i + 1}`);
+
+            anchors.push({
+                id: `A${i + 1}`,
+                type,
+                role,
+                adjacentSpans: adj,
+                effortKn: effKn,
+                remark
+            });
+        }
     }
 
     return anchors;
@@ -186,7 +251,7 @@ function getEngineeringOutputs(st = state, fallResults = {}) {
     return {
         systemDesign: (st.appMode === "restraint") ? "Retenue (Restraint)" : "Arrêt de chute (Fall Arrest)",
         nbUsers: st.nbUsers || 1,
-        cablePretension: (st.product === "LONG RANGE" || (st.product && st.product.includes("RANGE"))) 
+        cablePretension: isExtreme(st.product) 
             ? "600 kg (5.88 kN / 1 323 lb)" 
             : "100 kg (0.98 kN / 220 lb)",
         initialSag: "Donnée à renseigner", // Spec V2_05: pas de formule fournie -> "Donnée à renseigner"
@@ -265,56 +330,206 @@ const AnchorEffortDistributionModule = {
     // Helper automatisé pour dériver la règle 2 depuis state.spans et la portée de chute
     calculateRule2_FromSpans(sixPoints, spans = [], fallSpanIdx = 0) {
         if (!spans || spans.length === 0) return [...sixPoints];
-        const hasBend40 = spans.some(sp => sp.bend90 || Math.abs(sp.bendDeg || 0) > this.config.BEND_THRESHOLD_DEG);
-        if (!hasBend40) return [...sixPoints];
-
-        const res = [...sixPoints];
-        const n = spans.length;
-        const fIdx = Math.max(0, Math.min(n - 1, fallSpanIdx));
-
-        // Right side from fall span
-        let bendsRight = 0;
-        for (let i = fIdx; i < n; i++) {
-            const sp = spans[i];
-            if (sp && (sp.bend90 || Math.abs(sp.bendDeg || 0) > this.config.BEND_THRESHOLD_DEG)) {
-                bendsRight++;
-                if (i === fIdx) {
-                    res[4] *= Math.pow(this.config.BEND_FACTOR_AFTER, bendsRight);
-                    res[5] *= Math.pow(this.config.BEND_FACTOR_AFTER, bendsRight);
-                } else {
-                    res[5] *= Math.pow(this.config.BEND_FACTOR_AFTER, bendsRight);
-                }
-            }
+        const hasBend40 = spans.some(sp => sp && (sp.bend90 || Math.abs(parseFloat(sp.bendDeg || sp.bend_after_deg || 0)) > this.config.BEND_THRESHOLD_DEG));
+        if (hasBend40) {
+            // Spec V2 — 17 replaces Rule 2 for bends > 40° with double anchor A#a / A#b and line-level 0.5 attenuation in getAdaptedMultiSpanResults
+            return [...sixPoints];
         }
-
-        // Left side from fall span
-        let bendsLeft = 0;
-        for (let i = fIdx - 1; i >= 0; i--) {
-            const sp = spans[i];
-            if (sp && (sp.bend90 || Math.abs(sp.bendDeg || 0) > this.config.BEND_THRESHOLD_DEG)) {
-                bendsLeft++;
-                if (i === fIdx - 1) {
-                    res[1] *= Math.pow(this.config.BEND_FACTOR_AFTER, bendsLeft);
-                    res[0] *= Math.pow(this.config.BEND_FACTOR_AFTER, bendsLeft);
-                } else {
-                    res[0] *= Math.pow(this.config.BEND_FACTOR_AFTER, bendsLeft);
-                }
-            }
-        }
-
-        return res;
+        return [...sixPoints];
     },
 
     // ADAPTATION MULTI-PORTÉE AU NOMBRE RÉEL D'ANCRAGES (V2 : TOUS LES ANCRAGES DE LA LIGNE)
     // - Affiche TOUS les ancrages de la ligne (pas seulement 6).
     // - Les 6 ancrages dans la fenêtre autour de la chute reçoivent les efforts de la règle 1 & 2.
     // - Les ancrages hors fenêtre portent la tension nominale du câble P0 (1.00 kN par défaut).
-    getAdaptedMultiSpanResults(sixPointsWithBends, totalAnchors = 6, lang = 0, fallSpanIdx = 0, p0Value = null) {
+    // - Spec V2 — 17 : Coudes > 40° créent un ancrage double A#a / A#b (même effort, un seul compté dans la fenêtre, x0.5 après).
+    getAdaptedMultiSpanResults(sixPointsWithBends, totalAnchors = 6, lang = 0, fallSpanIdx = 0, p0Value = null, spansArg = null) {
         const l = (lang === 1 || lang === 2) ? lang : 0;
-        const total = Math.max(2, totalAnchors || 2);
         const res = [...sixPointsWithBends];
         const p0 = (p0Value !== null && p0Value !== undefined) ? p0Value : (this.config.CABLE_PRETENSION_P0 || 1.0);
 
+        let appState = null;
+        try { if (typeof state !== "undefined") appState = state; } catch (e) {}
+        if (!appState && typeof window !== "undefined" && window.state) appState = window.state;
+        const effectiveSpans = spansArg || (appState?.spans || null);
+        const hasBend40 = effectiveSpans && Array.isArray(effectiveSpans) && effectiveSpans.some(sp => sp && (sp.bend90 || Math.abs(parseFloat(sp.bendDeg || sp.bend_after_deg || 0)) > this.config.BEND_THRESHOLD_DEG));
+
+        // Spec V2 — 17 : Coudes supérieurs à 40°, ancrage double A#a / A#b
+        if (hasBend40 && effectiveSpans && effectiveSpans.length > 0) {
+            const nbSpans = effectiveSpans.length;
+            const nbLogical = nbSpans + 1;
+            const fIdx = Math.max(0, Math.min(nbSpans - 1, fallSpanIdx || 0));
+
+            // Determine base value for each logical anchor node 0..nbLogical-1 from the 6-anchor rule
+            let baseVals = [];
+            let isAttenuatedNode = [];
+
+            if (nbLogical === 6) {
+                baseVals = [...res];
+                isAttenuatedNode = [true, false, false, false, false, true];
+            } else if (nbLogical === 2) {
+                baseVals = [res[1], res[2]];
+                isAttenuatedNode = [false, false];
+            } else if (nbLogical === 3) {
+                if (fIdx === 0) {
+                    baseVals = [res[1], res[2], res[3]];
+                    isAttenuatedNode = [false, false, false];
+                } else {
+                    baseVals = [res[0], res[1], res[2]];
+                    isAttenuatedNode = [true, false, false];
+                }
+            } else if (nbLogical === 4) {
+                if (fIdx === 0) {
+                    baseVals = [res[1], res[2], res[3], res[4]];
+                    isAttenuatedNode = [false, false, false, false];
+                } else {
+                    baseVals = [res[0], res[1], res[2], res[3]];
+                    isAttenuatedNode = [true, false, false, false];
+                }
+            } else if (nbLogical === 5) {
+                if (fIdx === 0) {
+                    baseVals = [res[1], res[2], res[3], res[4], res[5]];
+                    isAttenuatedNode = [false, false, false, false, true];
+                } else {
+                    baseVals = [res[0], res[1], res[2], res[3], res[4]];
+                    isAttenuatedNode = [true, false, false, false, false];
+                }
+            } else {
+                // nbLogical > 6: sliding 6-anchor window
+                const winStart = Math.max(0, Math.min(nbLogical - 6, fIdx - 2));
+                const winEnd = winStart + 5;
+                for (let idx = 0; idx < nbLogical; idx++) {
+                    if (idx >= winStart && idx <= winEnd) {
+                        const sixIdx = idx - winStart;
+                        baseVals.push(res[sixIdx]);
+                        isAttenuatedNode.push(sixIdx === 0 || sixIdx === 5);
+                    } else {
+                        baseVals.push(p0);
+                        isAttenuatedNode.push(false);
+                    }
+                }
+            }
+
+            const points = [];
+            let bendsBefore = 0;
+
+            for (let idx = 0; idx < nbLogical; idx++) {
+                const ancNum = idx + 1;
+                const baseVal = (baseVals[idx] !== undefined) ? baseVals[idx] : p0;
+                const effKn = Math.max(p0, parseFloat((baseVal * Math.pow(0.5, bendsBefore)).toFixed(2)));
+
+                const isExtLeft = (idx === 0);
+                const isExtRight = (idx === nbLogical - 1);
+                const isFall = (idx === fIdx || idx === fIdx + 1);
+
+                // Node idx is a bend > 40° if the span preceding it has bend > 40°
+                let isDouble = false;
+                if (idx >= 1 && idx < nbLogical - 1) {
+                    const sp = effectiveSpans[idx - 1];
+                    if (sp) {
+                        const bDeg = Math.abs(parseFloat(sp.bendDeg || sp.bend_after_deg || (sp.bend90 ? 90 : 0)) || 0);
+                        if (bDeg > this.config.BEND_THRESHOLD_DEG) {
+                            isDouble = true;
+                        }
+                    }
+                }
+
+                if (isDouble) {
+                    const doubleRem = isFall
+                        ? ["Ancrage double (chute)", "Double fall anchor", "Anclaje doble (caída)"][l]
+                        : ["Ancrage double", "Double anchor", "Anclaje doble"][l];
+
+                    // Point A#a
+                    points.push({
+                        id: `A${ancNum}a`,
+                        label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}a`,
+                        pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}a`,
+                        val: effKn,
+                        isAttenuated: false,
+                        isExtremity: false,
+                        isP0: false,
+                        isFallAnchor: isFall,
+                        isDoubleAnchor: true,
+                        remarque: doubleRem,
+                        sixIndex: idx
+                    });
+
+                    // Point A#b
+                    points.push({
+                        id: `A${ancNum}b`,
+                        label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}b`,
+                        pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}b`,
+                        val: effKn,
+                        isAttenuated: false,
+                        isExtremity: false,
+                        isP0: false,
+                        isFallAnchor: isFall,
+                        isDoubleAnchor: true,
+                        remarque: doubleRem,
+                        sixIndex: idx
+                    });
+
+                    // Subsequent anchors receive the 0.5 reduction
+                    bendsBefore++;
+                } else {
+                    let rem = "-";
+                    if (isFall) {
+                        rem = ["Ancrage de chute S" + (fIdx + 1), "Fall Anchor S" + (fIdx + 1), "Anclaje de caída S" + (fIdx + 1)][l];
+                    } else if (isAttenuatedNode[idx]) {
+                        rem = ["Atténué - Règle 1", "Attenuated - Rule 1", "Atenuado - Regla 1"][l];
+                    } else if (isExtLeft || isExtRight) {
+                        rem = ["Extrémité", "End Anchor", "Extremo"][l];
+                    } else if (bendsBefore > 0) {
+                        rem = ["Après coude", "After bend", "Después de curva"][l];
+                    } else {
+                        rem = ["Intermédiaire", "Intermediate", "Intermedio"][l];
+                    }
+
+                    points.push({
+                        id: `A${ancNum}`,
+                        label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}`,
+                        pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}`,
+                        val: effKn,
+                        isAttenuated: Boolean(isAttenuatedNode[idx]),
+                        isExtremity: (isExtLeft || isExtRight),
+                        isP0: false,
+                        isFallAnchor: isFall,
+                        isDoubleAnchor: false,
+                        remarque: rem,
+                        sixIndex: idx
+                    });
+                }
+            }
+
+            const uiSubtitle = [
+                "Répartition des efforts aux ancrages :",
+                "Anchor Load Distribution:",
+                "Distribución de Cargas a los Anclajes:"
+            ][l];
+
+            const pdfSubtitle = [
+                "Répartition Multi-Portée OSHA",
+                "OSHA Multi-Span Load Distribution",
+                "Distribución Multi-Luz OSHA"
+            ][l];
+
+            const pdfColHeader = [
+                "Indicateur / Ancrage OSHA",
+                "OSHA Indicator / Anchor",
+                "Indicador / Anclaje OSHA"
+            ][l];
+
+            return {
+                count: points.length,
+                totalAnchors: points.length,
+                points: points,
+                uiSubtitle: uiSubtitle,
+                pdfSubtitle: pdfSubtitle,
+                pdfColHeader: pdfColHeader
+            };
+        }
+
+        const total = Math.max(2, totalAnchors || 2);
         let points = [];
 
         if (total === 2) {
@@ -955,9 +1170,27 @@ const AnchorEffortDistributionModule = {
                       adapt6.points.map(p => p.val.toFixed(2)).join(";") === "5.00;10.00;20.00;18.00;9.00;4.50";
         tests.push({ name: "Adaptation 6 ancrages (Règle 1 6-points)", pass: pass9, got: adapt6.points.map(p => `${p.id}:${p.val.toFixed(2)}`), exp: ["A0:5.00", "A1:10.00", "A2:20.00", "A3:18.00", "A4:9.00", "A5:4.50"] });
 
+        // Test 10 (Spec V2 — 17): Coude 60° à l'ancrage A2 -> A1:5.00, A2a:10.00, A2b:10.00, A3:10.00, A4:9.00, A5:4.50, A6:2.25
+        const spansExample17 = [
+            { length: 10, bendDeg: 60 },
+            { length: 10, bendDeg: 0 },
+            { length: 10, bendDeg: 0 },
+            { length: 10, bendDeg: 0 },
+            { length: 10, bendDeg: 0 }
+        ];
+        // 5 spans -> 6 logical anchors. Fall on S3 (idx 2)
+        const adapt17 = this.getAdaptedMultiSpanResults(exp1, 6, 0, 2, 0.98, spansExample17);
+        const exp17Vals = ["A1:5.00", "A2a:10.00", "A2b:10.00", "A3:10.00", "A4:9.00", "A5:4.50", "A6:2.25"];
+        const got17Vals = adapt17.points.map(p => `${p.id}:${p.val.toFixed(2)}`);
+        const pass10 = (adapt17.count === 7) &&
+                       adapt17.points.length === 7 &&
+                       got17Vals.join(";") === exp17Vals.join(";");
+        tests.push({ name: "Spec V2 — 17 (Coude 60° ancrage double A2a/A2b)", pass: pass10, got: got17Vals, exp: exp17Vals });
+
         return tests;
     }
 };
+window.AnchorEffortDistributionModule = AnchorEffortDistributionModule;
 
 // Exécution immédiate des tests de conformité
 const anchorSelfTestResults = AnchorEffortDistributionModule.runSelfTests();
@@ -1983,7 +2216,7 @@ const ProjectStorageModule = (function () {
             name: (projectMeta && projectMeta.name) || (state.projectInfo && state.projectInfo.name) || "Projet Ligne de Vie",
             location: (projectMeta && projectMeta.location) || (state.projectInfo && state.projectInfo.location) || "",
             layoutType: (configPayload && configPayload.layoutType) || state.layoutType || "single_span",
-            product: (configPayload && configPayload.product) || state.product || "NEW PRO",
+            product: (configPayload && configPayload.product) || state.product || "CORE",
             createdAt: new Date().toISOString(),
             configPayload: configPayload || {
                 layoutType: state.layoutType,
@@ -1994,9 +2227,22 @@ const ProjectStorageModule = (function () {
                 appMode: state.appMode,
                 norm: state.norm,
                 nbUsers: state.nbUsers,
-                fallFactor: state.fallFactor,
+                fallFactor: state.fallFactor || state.engineerCoefficient || 1.00,
+                engineerCoefficient: state.fallFactor || state.engineerCoefficient || 1.00,
                 roofShape: state.roofShape,
-                roofSlope: state.roofSlope
+                roofSlope: state.roofSlope,
+                // Spec V2 — 09 / Prompt 15 fields:
+                madM: state.madM,
+                madUnit: state.madUnit,
+                customMad: state.customMad,
+                arrestForceKn: state.arrestForceKn,
+                arrestForceLbf: state.arrestForceLbf,
+                arrestForceUnit: state.arrestForceUnit,
+                connectingDevice: state.connectingDevice,
+                selectedSrlId: state.selectedSrlId,
+                customDeviceName: state.customDeviceName,
+                customDeviceClass: state.customDeviceClass,
+                customDeviceLengthM: state.customDeviceLengthM
             }
         };
 
@@ -2122,7 +2368,15 @@ const ProjectStorageModule = (function () {
             }
 
             const c = proj.configPayload;
-            if (c.layoutType) state.layoutType = c.layoutType;
+            if (c.layoutType) {
+                if (typeof DEPRECATED_CONFIGS !== "undefined" && DEPRECATED_CONFIGS.includes(c.layoutType)) {
+                    state.layoutType = "multi_straight";
+                    state.hasConvertedDeprecatedConfig = true;
+                    alert(["ℹ️ Ce projet a été converti vers la configuration 2 (Multi-portée) sans perte de données (portées, coudes et pentes conservés).", "ℹ️ This project was converted to Configuration 2 (Multi-span) with no data loss (spans, bends and slopes preserved)."][state.lang || 0]);
+                } else {
+                    state.layoutType = c.layoutType;
+                }
+            }
             if (c.product) state.product = c.product;
             if (c.spans) state.spans = c.spans;
             if (c.projectInfo) state.projectInfo = { ...c.projectInfo };
@@ -2130,16 +2384,81 @@ const ProjectStorageModule = (function () {
             if (c.appMode) state.appMode = c.appMode;
             if (c.norm) state.norm = c.norm;
             if (c.nbUsers) state.nbUsers = c.nbUsers;
-            if (c.fallFactor) state.fallFactor = c.fallFactor;
 
-            // Sync layout dropdown
+            // Prompt 15: Fall factor
+            if (c.fallFactor !== undefined) {
+                state.fallFactor = c.fallFactor;
+                state.engineerCoefficient = c.fallFactor;
+            } else if (c.engineerCoefficient !== undefined) {
+                state.fallFactor = c.engineerCoefficient;
+                state.engineerCoefficient = c.engineerCoefficient;
+            }
+
+            // Prompt 15: MAD & Arrest force
+            if (c.madM !== undefined) {
+                state.madM = c.madM;
+                state.customMad = c.madM;
+            }
+            if (c.madUnit) state.madUnit = c.madUnit;
+            if (c.arrestForceKn !== undefined) {
+                state.arrestForceKn = c.arrestForceKn;
+                state.arrestForceLbf = (typeof c.arrestForceLbf === "number") ? c.arrestForceLbf : Math.round(c.arrestForceKn * UnitsModule.KN_TO_LBF);
+            }
+            if (c.arrestForceUnit) state.arrestForceUnit = c.arrestForceUnit;
+            if (c.connectingDevice) state.connectingDevice = c.connectingDevice;
+
+            if (c.retractedLengthM !== undefined) state.retractedLengthM = c.retractedLengthM;
+            if (c.retractedLengthUnit) state.retractedLengthUnit = c.retractedLengthUnit;
+            if (c.isRetractedLengthModified !== undefined) state.isRetractedLengthModified = c.isRetractedLengthModified;
+
+            // Backward compatibility: old SRL names map to TurboLite+ and Falcon+
+            if (c.selectedSrlId) {
+                state.selectedSrlId = c.selectedSrlId;
+            } else if (c.srl_model && (c.srl_model.includes("Turbo") || c.srl_model.includes("turbo"))) {
+                state.selectedSrlId = "turbo_light_9ft";
+            } else if (c.srl_model && (c.srl_model.includes("Falcon") || c.srl_model.includes("falcon"))) {
+                state.selectedSrlId = "falcon_leading_edge";
+            }
+            if (c.customDeviceName !== undefined) state.customDeviceName = c.customDeviceName;
+            if (c.customDeviceClass !== undefined) state.customDeviceClass = c.customDeviceClass;
+            if (c.customDeviceLengthM !== undefined) state.customDeviceLengthM = c.customDeviceLengthM;
+
+            // Sync layout & product dropdowns
             const layoutSel = document.getElementById("select-layout-type");
             if (layoutSel) layoutSel.value = state.layoutType;
 
             const prodSel = document.getElementById("select-product");
             if (prodSel) prodSel.value = state.product;
 
+            // Sync Prompt 15 DOM inputs
+            const inMad = document.getElementById("input-srl-mad");
+            const selMadUnit = document.getElementById("select-mad-unit");
+            if (inMad && selMadUnit) {
+                selMadUnit.value = state.madUnit || "m";
+                inMad.value = (state.madUnit === "in") ? (state.madM / 0.0254).toFixed(1) : state.madM.toFixed(2);
+            }
+            const inAf = document.getElementById("input-arrest-force");
+            const selAfUnit = document.getElementById("select-arrest-force-unit");
+            if (inAf && selAfUnit) {
+                selAfUnit.value = state.arrestForceUnit || "lbf";
+                inAf.value = (state.arrestForceUnit === "kN") ? state.arrestForceKn.toFixed(2) : state.arrestForceLbf.toFixed(0);
+            }
+            const selDev = document.getElementById("select-connecting-device");
+            if (selDev) selDev.value = state.connectingDevice;
+            const inCustomName = document.getElementById("input-custom-device-name");
+            if (inCustomName) inCustomName.value = state.customDeviceName || "";
+            const selCustomCls = document.getElementById("select-custom-device-class");
+            if (selCustomCls) selCustomCls.value = state.customDeviceClass || 2;
+            const inCustomLen = document.getElementById("input-custom-device-length");
+            if (inCustomLen) inCustomLen.value = state.customDeviceLengthM || 0.60;
+            const inEng = document.getElementById("input-engineer-coefficient");
+            if (inEng) inEng.value = (state.fallFactor || 1.0).toFixed(2);
+
             closeProjectsModal();
+            if (typeof updateMadEquivalentUI === "function") updateMadEquivalentUI();
+            if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
+            if (typeof updateConnectingDeviceUI === "function") updateConnectingDeviceUI();
+            if (typeof validateSrlSelection === "function") validateSrlSelection();
             if (typeof renderDynamicLayoutForm === "function") renderDynamicLayoutForm();
             if (typeof update3DScene === "function") update3DScene();
             alert(`✅ Projet "${proj.name}" chargé avec succès dans le configurateur 3D.`);
@@ -2189,13 +2508,19 @@ const urlConfigMap = {
     "11": "cross_spans",
     "12": "grid_system"
 };
-const initialLayoutType = (urlParams && (urlParams.get("layout") || urlConfigMap[urlParams.get("config")])) || "single_span";
+const rawInitialLayout = (urlParams && (urlParams.get("layout") || urlConfigMap[urlParams.get("config")])) || "single_span";
+const isDeprecatedInitial = DEPRECATED_CONFIGS.includes(rawInitialLayout);
+const initialLayoutType = isDeprecatedInitial ? "multi_straight" : rawInitialLayout;
 
 // Global Application State (OSHA 12 Layouts Version)
 const state = {
     // OSHA 12-Layout Configuration State
-    layoutType: initialLayoutType, // 1 of 12 layouts
+    layoutType: initialLayoutType, // 1 of 6 simplified active layouts
+    showStairs: true,              // Spec V2 — 08: Bascule affichage escaliers (par défaut active)
+    customMad: undefined,          // Spec V2 — 08: MAD modifiable
+    hasConvertedDeprecatedConfig: isDeprecatedInitial,
     unitSystem: "metric",      // "metric" | "imperial"
+    norm: "OSHA",              // "OSHA" | "EN 795" (Norme réglementaire)
     appMode: "fall_arrest",    // "fall_arrest" | "restraint"
     projectInfo: {
         name: "",
@@ -2222,7 +2547,8 @@ const state = {
     // HLL Elevation presets (Spec V2 - 02)
     hllElevationPreset: "knee", // "knee" (0.45m) | "d_ring" (1.50m) | "overhead" (3.00m) | "custom"
     hllElevation: 0.45,
-    engineerCoefficient: 1.00, // Spec V2 — 07 / Prompt 12: Engineer coefficient (0.10 to 5.00)
+    engineerCoefficient: 1.00, // Spec V2 — 07 & Spec V2 — 09 / Prompt 15: Fall Factor (0.10 to 5.00, default 1.00)
+    fallFactor: 1.00,
     selectedFallSpanId: null, // Stable tracking of fall span by UID
 
     // Spec V2 - 03: Roof as primary input & dimensions
@@ -2236,11 +2562,25 @@ const state = {
     roof_height_above_ground: 6.0,
     show_dimensions: true,
 
-    // Spec V2 - 04: SRL mandatory selection & calculation inputs
-    selectedSrlId: null, // "turbo_light_9ft" | "falcon_leading_edge"
-    connectingDevice: "srd", // "srd" | "lanyard"
+    // Spec V2 — 09 / Prompt 15 & Spec V2 — 10 / Prompt 16: Retracted Length, MAD, Arrest Force, Devices
+    retractedLengthM: 0.60,          // Stored in meters (mandatory free entry > 0)
+    retractedLengthUnit: "m",        // "m" | "ft" | "in"
+    isRetractedLengthModified: false,// True when user changed value from catalog preset
+    madM: 1.10,                      // Stored in meters (mandatory free entry > 0)
+    madUnit: "m",                    // "m" | "in"
+    isMadModified: false,
+    customMad: 1.10,                 // Compatible alias for clearance logic
+    arrestForceKn: 4.5,              // Stored in kN (mandatory free entry > 0 and <= 5000 lbf)
+    arrestForceLbf: 1012,            // in lbf
+    arrestForceUnit: "lbf",          // "lbf" | "kN"
+    isArrestForceModified: false,
+    selectedSrlId: null,             // "turbo_light_9ft" | "falcon_leading_edge"
+    connectingDevice: "srd",         // "srd" | "custom_srd" | "lanyard" | "custom_lanyard"
+    customDeviceName: "",            // Free name for custom device
+    customDeviceClass: 2,            // 1 | 2 for custom SRL
+    customDeviceLengthM: 0.60,       // Retracted length or lanyard length in meters
     fallCalculationMode: "critical_case", // "critical_case" | "selected_span"
-    bodyPosition: "standing", // "standing" | "kneeling" | "lying"
+    bodyPosition: "standing",        // "standing" | "kneeling" | "lying"
     dRingHeightM: 1.50,
     wwsElevationM: 6.0,
     substrateInfo: "",
@@ -2321,9 +2661,19 @@ const state = {
     roofShape: "flat",
     roofSlope: 0,
     nbUsers: 1,
-    fallFactor: FALL_TEST_REFERENCE_FACTOR, // 2.0 (Physical drop test reference)
-    engineerCoefficient: 1.00, // Spec V2 — 07 / Prompt 12: Engineer coefficient
-    product: (initialLayoutType === "grid_system") ? "LONG RANGE" : "NEW PRO",
+    fallFactor: 1.00, // Spec V2 — 09 / Prompt 15: Fall Factor default 1.00
+    engineerCoefficient: 1.00, // Synced alias
+    madM: 1.10,
+    madUnit: "m",
+    customMad: 1.10,
+    arrestForceKn: 4.5,
+    arrestForceLbf: 1012,
+    arrestForceUnit: "lbf",
+    connectingDevice: "srd",
+    customDeviceName: "",
+    customDeviceClass: 2,
+    customDeviceLengthM: 0.60,
+    product: (initialLayoutType === "grid_system") ? "EXTREME" : "CORE",
     norm: "EN 795",
     oshaSpanMode: "unique",
     viewMode: "3d",
@@ -2333,7 +2683,7 @@ const state = {
     showAnchorLabels: true,
     showSpanLabels: true,
     lang: 0,
-    mountingType: "mini_omega",
+    mountingType: (initialLayoutType === "grid_system") ? "overhead" : "standard",
     checkedComponents: {},
     colors: {
         roof: "#cbd5e1",
@@ -2362,13 +2712,21 @@ class LayoutHistoryManager {
 
     pushSnapshot(stateObj) {
         const snapshot = JSON.stringify({
-            spans: (stateObj.spans || []).map(s => ({ ...s })),
+            spans: (stateObj.spans || []).map(s => ({ ...s, xMatrixBranches: (s.xMatrixBranches || []).map(b => ({ ...b, spans: (b.spans || []).map(sub => ({ ...sub })) })) })),
             selectedFallSpanId: stateObj.selectedFallSpanId,
             startBendDeg: stateObj.startBendDeg || 0,
             hllElevationPreset: stateObj.hllElevationPreset,
             hllElevation: stateObj.hllElevation,
             engineerCoefficient: stateObj.engineerCoefficient || 1.00,
-            fallFactor: stateObj.fallFactor,
+            fallFactor: stateObj.fallFactor || 1.00,
+            madM: stateObj.madM,
+            madUnit: stateObj.madUnit,
+            arrestForceKn: stateObj.arrestForceKn,
+            arrestForceUnit: stateObj.arrestForceUnit,
+            connectingDevice: stateObj.connectingDevice,
+            customDeviceName: stateObj.customDeviceName,
+            customDeviceClass: stateObj.customDeviceClass,
+            customDeviceLengthM: stateObj.customDeviceLengthM,
             layoutType: stateObj.layoutType,
             roofSlope: stateObj.roofSlope,
             product: stateObj.product
@@ -2382,13 +2740,21 @@ class LayoutHistoryManager {
     undo(stateObj) {
         if (this.undoStack.length === 0) return null;
         const currentSnapshot = JSON.stringify({
-            spans: (stateObj.spans || []).map(s => ({ ...s })),
+            spans: (stateObj.spans || []).map(s => ({ ...s, xMatrixBranches: (s.xMatrixBranches || []).map(b => ({ ...b, spans: (b.spans || []).map(sub => ({ ...sub })) })) })),
             selectedFallSpanId: stateObj.selectedFallSpanId,
             startBendDeg: stateObj.startBendDeg || 0,
             hllElevationPreset: stateObj.hllElevationPreset,
             hllElevation: stateObj.hllElevation,
             engineerCoefficient: stateObj.engineerCoefficient || 1.00,
-            fallFactor: stateObj.fallFactor,
+            fallFactor: stateObj.fallFactor || 1.00,
+            madM: stateObj.madM,
+            madUnit: stateObj.madUnit,
+            arrestForceKn: stateObj.arrestForceKn,
+            arrestForceUnit: stateObj.arrestForceUnit,
+            connectingDevice: stateObj.connectingDevice,
+            customDeviceName: stateObj.customDeviceName,
+            customDeviceClass: stateObj.customDeviceClass,
+            customDeviceLengthM: stateObj.customDeviceLengthM,
             layoutType: stateObj.layoutType,
             roofSlope: stateObj.roofSlope,
             product: stateObj.product
@@ -2402,13 +2768,21 @@ class LayoutHistoryManager {
     redo(stateObj) {
         if (this.redoStack.length === 0) return null;
         const currentSnapshot = JSON.stringify({
-            spans: (stateObj.spans || []).map(s => ({ ...s })),
+            spans: (stateObj.spans || []).map(s => ({ ...s, xMatrixBranches: (s.xMatrixBranches || []).map(b => ({ ...b, spans: (b.spans || []).map(sub => ({ ...sub })) })) })),
             selectedFallSpanId: stateObj.selectedFallSpanId,
             startBendDeg: stateObj.startBendDeg || 0,
             hllElevationPreset: stateObj.hllElevationPreset,
             hllElevation: stateObj.hllElevation,
             engineerCoefficient: stateObj.engineerCoefficient || 1.00,
-            fallFactor: stateObj.fallFactor,
+            fallFactor: stateObj.fallFactor || 1.00,
+            madM: stateObj.madM,
+            madUnit: stateObj.madUnit,
+            arrestForceKn: stateObj.arrestForceKn,
+            arrestForceUnit: stateObj.arrestForceUnit,
+            connectingDevice: stateObj.connectingDevice,
+            customDeviceName: stateObj.customDeviceName,
+            customDeviceClass: stateObj.customDeviceClass,
+            customDeviceLengthM: stateObj.customDeviceLengthM,
             layoutType: stateObj.layoutType,
             roofSlope: stateObj.roofSlope,
             product: stateObj.product
@@ -2602,6 +2976,14 @@ const LayoutEditorModule = (function() {
 
     function setSpanSlope(index, slopeDeg) {
         const val = parseFloat(slopeDeg) || 0;
+        if (val !== 0 && (state.norm === "EN 795" || state.norm === "EN")) {
+            alert(["⚠️ Norme EN 795 : Les pentes ne sont pas autorisées selon la norme EN 795 (autorisées uniquement en norme OSHA). La pente a été désactivée.", "⚠️ EN 795 Standard: Slopes are not permitted under EN 795 (allowed only under OSHA). Slope has been disabled."][state.lang || 0]);
+            state.spans[index].slopeDeg = 0;
+            state.spans[index].slope_deg = 0;
+            state.spans[index].isSloped = false;
+            refreshUI();
+            return false;
+        }
         if (Math.abs(val) > SLOPE_MAX_DEG) {
             alert(`⚠️ Pente maximale autorisée : ${SLOPE_MAX_DEG}° !\nLa valeur saisie (${val}°) dépasse la limite stricte de sécurité autorisée.`);
             refreshUI();
@@ -2634,23 +3016,26 @@ const LayoutEditorModule = (function() {
     function setHllElevation(preset, customValue = null) {
         recordState("set_hll_elevation");
         state.hllElevationPreset = preset;
-        const isRange = state.product && state.product.includes("RANGE");
+        const isRange = isExtreme(state.product);
         if (preset === "knee") {
             state.hllElevation = 0.45;
         } else if (preset === "d_ring") {
             state.hllElevation = 1.50; // 1.50m (Anneau D)
         } else if (preset === "overhead") {
-            state.hllElevation = isRange ? 3.00 : 1.80; // 1.80m pour New PRO & Light PRO, 3.00m pour Range
+            state.hllElevation = isRange ? 3.00 : 1.80; // 1.80m pour PRO & CORE, 3.00m pour EXTREME
         } else if (preset === "custom") {
             state.hllElevation = Math.max(0.2, parseFloat(customValue) || (isRange ? 3.00 : 1.80));
         }
-        // Spec V2 — 07 / Prompt 12: Baseline results are single test reference (knee / severe drop test)
-        state.fallFactor = FALL_TEST_REFERENCE_FACTOR; // 2.0 (essais)
+        if (state.norm === "EN 795" || state.norm === "EN") {
+            state.fallFactor = computeFallFactorFromElevation(preset, state.hllElevation, state.bodyPosition);
+        } else {
+            state.fallFactor = (typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00;
+        }
 
         syncElevationInputsUI();
         if (typeof validateSrlSelection === "function") validateSrlSelection();
         if (typeof update3DScene === "function") update3DScene();
-        if (typeof calculateAndRenderOutputs === "function") calculateAndRenderOutputs();
+        if (typeof updateCalculationsUI === "function") updateCalculationsUI();
     }
 
     function setEngineerCoefficient(val) {
@@ -2659,11 +3044,14 @@ const LayoutEditorModule = (function() {
         num = Math.max(0.10, Math.min(5.00, num));
         recordState("set_engineer_coefficient");
         state.engineerCoefficient = num;
+        if (state.norm === "OSHA") {
+            state.fallFactor = num;
+        }
         const engInp = document.getElementById("input-engineer-coefficient");
         if (engInp) engInp.value = num.toFixed(2);
         const valEngCoef = document.getElementById("val-engineer-coef");
         if (valEngCoef) valEngCoef.textContent = num.toFixed(2);
-        if (typeof calculateAndRenderOutputs === "function") calculateAndRenderOutputs();
+        if (typeof updateCalculationsUI === "function") updateCalculationsUI();
     }
 
     function checkPostExtensionWarning() {
@@ -2676,9 +3064,9 @@ const LayoutEditorModule = (function() {
                 warnTxt.textContent = `⚠️ Élévation très élevée (${elev.toFixed(2)} m) : vérifier le dimensionnement des poteaux hauts et du haubanage.`;
                 warnEl.classList.remove("hidden");
             }
-        } else if (elev > 0.55 && state.product !== "LONG RANGE") {
+        } else if (elev > 0.55 && !isExtreme(state.product)) {
             if (warnEl && warnTxt) {
-                warnTxt.textContent = `ℹ️ Configuration ${state.hllElevationPreset === 'd_ring' ? 'Anneau D (1,50 m)' : 'Overhead (1,80 m)'} : Modèle de potelet spécifique ${elev.toFixed(2)} m sélectionné sur ${state.product}.`;
+                warnTxt.textContent = `ℹ️ Configuration ${state.hllElevationPreset === 'd_ring' ? 'Anneau D (1,50 m)' : 'Overhead (1,80 m)'} : Modèle de potelet spécifique ${elev.toFixed(2)} m sélectionné sur ${normalizeProduct(state.product)}.`;
                 warnEl.classList.remove("hidden");
             }
         } else {
@@ -2694,9 +3082,9 @@ const LayoutEditorModule = (function() {
         const valGrp = document.getElementById("group-hll-elevation-val");
         const valInp = document.getElementById("input-hll-elevation-val");
         const tbSel = document.getElementById("select-hll-elevation-toolbar");
-        const isRange = state.product && state.product.includes("RANGE");
+        const isRange = isExtreme(state.product);
 
-        // Adapt options for Range vs New PRO / Light PRO
+        // Adapt options for Extreme vs Pro / Core
         if (sel) {
             const optKnee = sel.querySelector('option[value="knee"]');
             const optDRing = sel.querySelector('option[value="d_ring"]');
@@ -2743,13 +3131,27 @@ const LayoutEditorModule = (function() {
         }
 
         // Spec V2 — 07 / Prompt 12: Sync Engineer coefficient and elevation inputs
+        const isOSHA = (state.norm === "OSHA");
+        const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+        const l = (parseInt(state.lang) === 1 || parseInt(state.lang) === 2) ? parseInt(state.lang) : 0;
         const engInp = document.getElementById("input-engineer-coefficient");
-        if (engInp && state.engineerCoefficient !== undefined) {
-            engInp.value = parseFloat(state.engineerCoefficient).toFixed(2);
+        const hintEng = document.getElementById("hint-engineer-coefficient");
+        if (engInp) {
+            if (isOSHA) {
+                engInp.disabled = false;
+                engInp.value = parseFloat(state.engineerCoefficient !== undefined ? state.engineerCoefficient : 1.00).toFixed(2);
+                if (hintEng) hintEng.textContent = ["Ajuste les efforts calculés (défaut 1.00 = essais)", "Adjusts calculated forces (default 1.00 = tests)", "Ajusta las fuerzas calculadas (defecto 1.00 = pruebas)"][l];
+            } else {
+                engInp.disabled = true;
+                engInp.value = String(enFF);
+                if (hintEng) hintEng.textContent = ["Déduit de l'élévation de ligne (0, 1 ou 2)", "Deduced from lifeline elevation (0, 1 or 2)", "Deducido de la elevación (0, 1 o 2)"][l];
+            }
         }
         const valEngCoef = document.getElementById("val-engineer-coef");
-        if (valEngCoef && state.engineerCoefficient !== undefined) {
-            valEngCoef.textContent = parseFloat(state.engineerCoefficient).toFixed(2);
+        if (valEngCoef) {
+            valEngCoef.textContent = isOSHA
+                ? parseFloat(state.engineerCoefficient !== undefined ? state.engineerCoefficient : 1.00).toFixed(2)
+                : String(enFF);
         }
 
         checkPostExtensionWarning();
@@ -2767,6 +3169,14 @@ const LayoutEditorModule = (function() {
             state.hllElevation = prev.hllElevation;
             if (prev.engineerCoefficient !== undefined) state.engineerCoefficient = prev.engineerCoefficient;
             if (prev.fallFactor !== undefined) state.fallFactor = prev.fallFactor;
+            if (prev.madM !== undefined) { state.madM = prev.madM; state.customMad = prev.madM; }
+            if (prev.madUnit !== undefined) state.madUnit = prev.madUnit;
+            if (prev.arrestForceKn !== undefined) state.arrestForceKn = prev.arrestForceKn;
+            if (prev.arrestForceUnit !== undefined) state.arrestForceUnit = prev.arrestForceUnit;
+            if (prev.connectingDevice !== undefined) state.connectingDevice = prev.connectingDevice;
+            if (prev.customDeviceName !== undefined) state.customDeviceName = prev.customDeviceName;
+            if (prev.customDeviceClass !== undefined) state.customDeviceClass = prev.customDeviceClass;
+            if (prev.customDeviceLengthM !== undefined) state.customDeviceLengthM = prev.customDeviceLengthM;
             if (prev.layoutType) state.layoutType = prev.layoutType;
             if (prev.roofSlope !== undefined) state.roofSlope = prev.roofSlope;
             refreshUI();
@@ -2786,6 +3196,14 @@ const LayoutEditorModule = (function() {
             state.hllElevation = next.hllElevation;
             if (next.engineerCoefficient !== undefined) state.engineerCoefficient = next.engineerCoefficient;
             if (next.fallFactor !== undefined) state.fallFactor = next.fallFactor;
+            if (next.madM !== undefined) { state.madM = next.madM; state.customMad = next.madM; }
+            if (next.madUnit !== undefined) state.madUnit = next.madUnit;
+            if (next.arrestForceKn !== undefined) state.arrestForceKn = next.arrestForceKn;
+            if (next.arrestForceUnit !== undefined) state.arrestForceUnit = next.arrestForceUnit;
+            if (next.connectingDevice !== undefined) state.connectingDevice = next.connectingDevice;
+            if (next.customDeviceName !== undefined) state.customDeviceName = next.customDeviceName;
+            if (next.customDeviceClass !== undefined) state.customDeviceClass = next.customDeviceClass;
+            if (next.customDeviceLengthM !== undefined) state.customDeviceLengthM = next.customDeviceLengthM;
             if (next.layoutType) state.layoutType = next.layoutType;
             if (next.roofSlope !== undefined) state.roofSlope = next.roofSlope;
             refreshUI();
@@ -2875,9 +3293,10 @@ const LayoutEditorModule = (function() {
                 const val = parseFloat(e.target.value);
                 if (!isNaN(val) && val >= 0.10 && val <= 5.00) {
                     state.engineerCoefficient = val;
+                    if (state.norm === "OSHA") state.fallFactor = val;
                     const valEngCoef = document.getElementById("val-engineer-coef");
                     if (valEngCoef) valEngCoef.textContent = val.toFixed(2);
-                    if (typeof calculateAndRenderOutputs === "function") calculateAndRenderOutputs();
+                    if (typeof updateCalculationsUI === "function") updateCalculationsUI();
                 }
             });
             engCoefInp.addEventListener("change", (e) => {
@@ -2893,9 +3312,12 @@ const LayoutEditorModule = (function() {
             bodyPosSel.addEventListener("change", (e) => {
                 recordState("set_body_position");
                 state.bodyPosition = e.target.value;
+                if (state.norm === "EN 795" || state.norm === "EN") {
+                    state.fallFactor = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+                }
                 syncElevationInputsUI();
                 if (typeof validateSrlSelection === "function") validateSrlSelection();
-                if (typeof calculateAndRenderOutputs === "function") calculateAndRenderOutputs();
+                if (typeof updateCalculationsUI === "function") updateCalculationsUI();
             });
         }
 
@@ -2919,6 +3341,7 @@ const LayoutEditorModule = (function() {
         setSpanLength,
         setHllElevation,
         setEngineerCoefficient,
+        syncElevationInputsUI,
         selectFallSpan,
         undo,
         redo,
@@ -2928,6 +3351,7 @@ const LayoutEditorModule = (function() {
 })();
 if (typeof window !== "undefined") {
     window.LayoutEditorModule = LayoutEditorModule;
+    window.syncElevationInputsUI = LayoutEditorModule.syncElevationInputsUI;
     window.state = state;
 }
 
@@ -3116,18 +3540,18 @@ function updateUnitLabelsInDOM() {
     }
 
     // Update system cards tags & descriptions in right panel
-    const sysTagNewPro = document.getElementById("sys-tag-newpro");
-    if (sysTagNewPro) sysTagNewPro.textContent = isUS ? "Max 49.2 ft | 5 users" : (isEn ? "Max 15 m | 5 users" : "Max 15m | 5 pers.");
-    
-    const sysTagLightPro = document.getElementById("sys-tag-lightpro");
-    if (sysTagLightPro) sysTagLightPro.textContent = isUS ? "Max 49.2 ft | 3 users" : (isEn ? "Max 15 m | 3 users" : "Max 15m | 3 pers.");
-    
-    const sysTagLongRange = document.getElementById("sys-tag-longrange");
-    if (sysTagLongRange) sysTagLongRange.textContent = isUS ? "Max 183.7 ft | 3 users" : (isEn ? "Max 56 m | 3 users" : "Max 56m | 3 pers.");
+    const sysTagCore = document.getElementById("sys-tag-core") || document.getElementById("sys-tag-lightpro");
+    if (sysTagCore) sysTagCore.textContent = isUS ? "Max 49.2 ft | 3 users" : (isEn ? "Max 15 m | 3 users" : "Max 15m | 3 pers.");
 
-    const sysDescLongRange = document.getElementById("sys-desc-longrange");
-    if (sysDescLongRange) {
-        sysDescLongRange.textContent = isUS
+    const sysTagPro = document.getElementById("sys-tag-pro") || document.getElementById("sys-tag-newpro");
+    if (sysTagPro) sysTagPro.textContent = isUS ? "Max 49.2 ft | 5 users" : (isEn ? "Max 15 m | 5 users" : "Max 15m | 5 pers.");
+    
+    const sysTagExtreme = document.getElementById("sys-tag-extreme") || document.getElementById("sys-tag-longrange");
+    if (sysTagExtreme) sysTagExtreme.textContent = isUS ? "Max 183.7 ft | 3 users" : (isEn ? "Max 56 m | 3 users" : "Max 56m | 3 pers.");
+
+    const sysDescExtreme = document.getElementById("sys-desc-extreme") || document.getElementById("sys-desc-longrange");
+    if (sysDescExtreme) {
+        sysDescExtreme.textContent = isUS
             ? "Lifeline for long spans (Long Range 32.8-65.6 ft, Super Range 65.6-111.5 ft, Ultra Range 111.5-183.7 ft)."
             : (isEn 
                 ? "Lifeline for long spans (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m)."
@@ -3137,23 +3561,23 @@ function updateUnitLabelsInDOM() {
     // Modal select-product options
     const selProd = document.getElementById("select-product");
     if (selProd) {
-        const optNew = selProd.querySelector("option[value='NEW PRO']");
-        const optLight = selProd.querySelector("option[value='LIGHT PRO']");
-        const optLong = selProd.querySelector("option[value='LONG RANGE']");
-        if (optNew) {
-            optNew.textContent = isUS
-                ? (isEn ? "NEW PRO (Standard / Flat roofs & trapezoidal | Max 49.2 ft | 5 users)" : "NEW PRO (Standard / Toitures plates & bacs | Max 49.2 ft | 5 pers.)")
-                : (isEn ? "NEW PRO (Standard / Flat roofs & trapezoidal | Max 15 m | 5 users)" : "NEW PRO (Standard / Toitures plates & bacs | Max 15m | 5 pers.)");
+        const optCore = selProd.querySelector("option[value='CORE']") || selProd.querySelector("option[value='LIGHT PRO']");
+        const optPro = selProd.querySelector("option[value='PRO']") || selProd.querySelector("option[value='NEW PRO']");
+        const optExtreme = selProd.querySelector("option[value='EXTREME']") || selProd.querySelector("option[value='LONG RANGE']");
+        if (optCore) {
+            optCore.textContent = isUS
+                ? (isEn ? "CORE (Lightweight & commercial roofs | Max 49.2 ft | 3 users)" : "CORE (Toitures légères & tertiaires | Max 49.2 ft | 3 pers.)")
+                : (isEn ? "CORE (Lightweight & commercial roofs | Max 15 m | 3 users)" : "CORE (Toitures légères & tertiaires | Max 15m | 3 pers.)");
         }
-        if (optLight) {
-            optLight.textContent = isUS
-                ? (isEn ? "LIGHT PRO (Lightweight & commercial roofs | Max 49.2 ft | 3 users)" : "LIGHT PRO (Toitures légères & tertiaires | Max 49.2 ft | 3 pers.)")
-                : (isEn ? "LIGHT PRO (Lightweight & commercial roofs | Max 15 m | 3 users)" : "LIGHT PRO (Toitures légères & tertiaires | Max 15m | 3 pers.)");
+        if (optPro) {
+            optPro.textContent = isUS
+                ? (isEn ? "PRO (Standard / Flat roofs & trapezoidal | Max 49.2 ft | 5 users)" : "PRO (Standard / Toitures plates & bacs | Max 49.2 ft | 5 pers.)")
+                : (isEn ? "PRO (Standard / Flat roofs & trapezoidal | Max 15 m | 5 users)" : "PRO (Standard / Toitures plates & bacs | Max 15m | 5 pers.)");
         }
-        if (optLong) {
-            optLong.textContent = isUS
-                ? (isEn ? "LONG / SUPER / ULTRA RANGE (Overhead / Tall posts | Max 183.7 ft | 3 users)" : "LONG / SUPER / ULTRA RANGE (Overhead / Poteaux hauts | Max 183.7 ft | 3 pers.)")
-                : (isEn ? "LONG / SUPER / ULTRA RANGE (Overhead / Tall posts | Max 56 m | 3 users)" : "LONG / SUPER / ULTRA RANGE (Overhead / Poteaux hauts | Max 56m | 3 pers.)");
+        if (optExtreme) {
+            optExtreme.textContent = isUS
+                ? (isEn ? "EXTREME (Overhead / Tall posts | Max 183.7 ft | 3 users)" : "EXTREME (Overhead / Poteaux hauts | Max 183.7 ft | 3 pers.)")
+                : (isEn ? "EXTREME (Overhead / Tall posts | Max 56 m | 3 users)" : "EXTREME (Overhead / Poteaux hauts | Max 56m | 3 pers.)");
         }
     }
 
@@ -3257,6 +3681,76 @@ window.setUnitSystem = setUnitSystem;
 window.toggleUnitSystem = toggleUnitSystem;
 window.updateUnitLabelsInDOM = updateUnitLabelsInDOM;
 
+function setNorm(nextNorm, skipRender = false) {
+    const isEN = (nextNorm === "EN 795" || nextNorm === "EN");
+    state.norm = isEN ? "EN 795" : "OSHA";
+    const isOSHA = (state.norm === "OSHA");
+
+    if (isEN) {
+        state.fallFactor = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+    } else {
+        state.fallFactor = (typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00;
+    }
+    if (typeof syncElevationInputsUI === "function") {
+        syncElevationInputsUI();
+    } else if (typeof LayoutEditorModule !== "undefined" && typeof LayoutEditorModule.syncElevationInputsUI === "function") {
+        LayoutEditorModule.syncElevationInputsUI();
+    }
+
+    // Sync select in roof parameterization
+    const rNormSel = document.getElementById("select-roof-norm");
+    if (rNormSel) rNormSel.value = isOSHA ? "OSHA" : "EN 795";
+
+    // Sync tabs in right sidebar
+    const tabEN = document.getElementById("tab-en795");
+    const tabOSHA = document.getElementById("tab-osha");
+    const subtabUnique = document.getElementById("subtab-span-unique");
+    const subtabMulti = document.getElementById("subtab-span-multi");
+    const oshaSubtabs = document.getElementById("osha-subtabs");
+
+    if (tabEN && tabOSHA) {
+        if (isOSHA) {
+            tabOSHA.classList.add("active");
+            tabEN.classList.remove("active");
+        } else {
+            tabEN.classList.add("active");
+            tabOSHA.classList.remove("active");
+        }
+    }
+
+    if (oshaSubtabs) {
+        const isMultiSpanAllowed = isOSHA && (isPro(state.product) || isCore(state.product));
+        oshaSubtabs.style.display = (isOSHA && isMultiSpanAllowed) ? "flex" : "none";
+    }
+
+    if (!isOSHA) {
+        state.oshaSpanMode = "unique";
+        if (subtabUnique) subtabUnique.classList.add("active");
+        if (subtabMulti) subtabMulti.classList.remove("active");
+
+        // Inform if roof has slopes (forbidden under EN 795)
+        const hint = document.getElementById("hint-roof-norm-en");
+        const rTypeSel = document.getElementById("select-roof-type");
+        const curType = rTypeSel ? rTypeSel.value : (state.roof_type || "flat");
+        if (hint) {
+            hint.style.display = (curType === "sloped" || curType === "triangle") ? "block" : "none";
+        }
+    } else {
+        const hint = document.getElementById("hint-roof-norm-en");
+        if (hint) hint.style.display = "none";
+    }
+
+    if (!skipRender) {
+        if (typeof update3DScene === "function") update3DScene();
+        if (typeof updateCalculationsUI === "function") {
+            const maxSpan = Calculator.getMaxSpan(state.product);
+            const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+            updateCalculationsUI(layout, maxSpan);
+        }
+    }
+}
+if (typeof window !== "undefined") window.setNorm = setNorm;
+
 // ==========================================
 // SPEC V2 — 10 : LUMP SUM / MASSE GLOBALE (M × F)
 // ==========================================
@@ -3272,8 +3766,11 @@ if (typeof window !== "undefined") {
 }
 
 function getSrlBaseArrestForceKn() {
+    if (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn) && state.arrestForceKn > 0) {
+        return state.arrestForceKn;
+    }
     if (state.selectedSrlId && typeof SRL_CATALOG !== "undefined" && SRL_CATALOG[state.selectedSrlId]) {
-        return SRL_CATALOG[state.selectedSrlId].arrest_load_preset_kn || 6.0;
+        return SRL_CATALOG[state.selectedSrlId].preset_force_kn || SRL_CATALOG[state.selectedSrlId].arrest_load_preset_kn || 6.0;
     }
     if (state.arrestLoadMode === "turbolite") return 4.5;
     return 6.0;
@@ -3282,9 +3779,12 @@ function getSrlBaseArrestForceKn() {
 function computeLumpArrestLoad(nbUsers, baseForceKn) {
     const u = Math.max(1, Math.min(5, parseInt(nbUsers) || 1));
     const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
-    const f = (typeof baseForceKn === "number" && baseForceKn > 0) ? baseForceKn : getSrlBaseArrestForceKn();
-    const totalKn = parseFloat((m * f).toFixed(3));
-    const totalLbf = Math.round(totalKn * (typeof UnitsModule !== "undefined" ? UnitsModule.KN_TO_LBF : 224.8089));
+    const fKn = (typeof baseForceKn === "number" && baseForceKn > 0) ? baseForceKn : getSrlBaseArrestForceKn();
+    const fLbf = (typeof state.arrestForceLbf === "number" && state.arrestForceLbf > 0 && Math.abs(fKn - state.arrestForceKn) < 0.001)
+        ? state.arrestForceLbf
+        : (fKn * (typeof UnitsModule !== "undefined" ? UnitsModule.KN_TO_LBF : 224.808943));
+    const totalKn = parseFloat((m * fKn).toFixed(3));
+    const totalLbf = parseFloat((m * fLbf).toFixed(1));
     return {
         factorM: m,
         isProvisional: (u === 5),
@@ -3352,86 +3852,672 @@ if (typeof window !== "undefined") {
     window.recalculateLumpSumArrestLoad = recalculateLumpSumArrestLoad;
 }
 
+function validateArrestLoad(valueKn, isCustomInput = false) {
+    const knToLbf = (typeof UnitsModule !== "undefined") ? UnitsModule.KN_TO_LBF : 224.8089;
+    const val = (typeof valueKn === "number") ? valueKn : parseFloat(valueKn);
+    const isEn = (parseInt(state.lang) === 1);
+    if (isNaN(val) || val <= 0) {
+        return {
+            valid: false,
+            lbf: 0,
+            message: isEn ? "⚠️ Arrest load must be strictly greater than 0." : "⚠️ La charge d'arrêt doit être strictement supérieure à 0."
+        };
+    }
+    const lbf = val * knToLbf;
+    // Allow 1 lbf to 5000 lbf inclusive (with tolerance 0.99 to 5000.5)
+    if (lbf < 0.99 || lbf > 5000.5) {
+        return {
+            valid: false,
+            lbf: Math.round(lbf),
+            message: isEn
+                ? `⚠️ Arrest load out of bounds: ${Math.round(lbf)} lbf is outside the allowed range [1 lbf, 5000 lbf] (0.004 kN to 22.24 kN).`
+                : `⚠️ Charge d'arrêt hors limites : ${Math.round(lbf)} lbf est en dehors de la plage autorisée [1 lbf, 5 000 lbf] (0,004 kN à 22,24 kN).`
+        };
+    }
+    return {
+        valid: true,
+        lbf: Math.round(lbf),
+        message: ""
+    };
+}
+if (typeof window !== "undefined") {
+    window.validateArrestLoad = validateArrestLoad;
+}
+
 // ==========================================
-// SPEC V2 — 04 : SRL CATALOG & SELECTION ENGINE
 // ==========================================
+// SPEC V2 — 04, SPEC V2 — 09 / PROMPT 15 & SPEC V2 — 10 / PROMPT 16 : SRL CATALOG & CONNECTING DEVICE ENGINE
+// ==========================================
+const RETRACTED_WARN_M = 3.0; // Warning threshold > 3.0 m (Spec V2 — 10)
+
 const SRL_CATALOG = {
     "turbo_light_9ft": {
         id: "turbo_light_9ft",
-        name: "Turbo Light 9 ft",
+        name: "TurboLite+",
         manufacturer: "Miller / Honeywell",
-        classe: 1,
-        retracted_len: 0.60, // 24 in (0.60m)
-        mad: 1.40,          // 55 in (1.40m)
-        arrest_load_preset_kn: 4.5,
-        arrest_load_preset_lbf: 1012,
+        classe: 2,
+        retracted_length_m: 0.60, // 24 in (0.60m)
+        retracted_len: 0.60,      // alias for backward compat
         working_len: 2.74,
+        default_arrest_force_kn: 4.5,
+        default_arrest_force_lbf: 1012,
         cad_model: "box_placeholder_turbolite.glb"
     },
     "falcon_leading_edge": {
         id: "falcon_leading_edge",
-        name: "Falcon Leading-Edge",
+        name: "Falcon+",
         manufacturer: "Miller / Honeywell",
         classe: 2,
-        retracted_len: 0.80, // 31 in (0.80m)
-        mad: 1.80,          // 71 in (1.80m)
-        arrest_load_preset_kn: 6.0,
-        arrest_load_preset_lbf: 1349,
+        retracted_length_m: 0.80, // 31 in (0.80m)
+        retracted_len: 0.80,      // alias for backward compat
         working_len: 6.0,
+        default_arrest_force_kn: 6.0,
+        default_arrest_force_lbf: 1349,
         cad_model: "box_placeholder_falcon.glb"
     }
 };
 
+/**
+ * Unit conversion for retracted length with rounding drift prevention (Criterion 4)
+ * Saisir 2,0 ft puis passer l'unité en m affiche 0,61 m, sans dérive d'arrondi au retour en ft (2,0 ft).
+ */
+function convertRetractedLength(value, fromUnit, toUnit) {
+    if (isNaN(value) || value <= 0) return "";
+    if (fromUnit === toUnit) return String(value);
+
+    // Convert fromUnit -> meters
+    let inM = 0;
+    if (fromUnit === "m") {
+        inM = value;
+    } else if (fromUnit === "ft") {
+        inM = value * 0.3048;
+    } else if (fromUnit === "in") {
+        inM = value * 0.0254;
+    }
+
+    // Convert meters -> toUnit with rounding drift prevention
+    if (toUnit === "m") {
+        return inM.toFixed(2);
+    } else if (toUnit === "ft") {
+        const rawFt = inM / 0.3048;
+        const roundedFt1 = Math.round(rawFt * 10) / 10;
+        if (Math.abs(rawFt - roundedFt1) < 0.015) {
+            return roundedFt1.toFixed(1);
+        }
+        return rawFt.toFixed(1);
+    } else if (toUnit === "in") {
+        const rawIn = inM / 0.0254;
+        const roundedIn1 = Math.round(rawIn * 10) / 10;
+        if (Math.abs(rawIn - roundedIn1) < 0.02) {
+            return roundedIn1.toFixed(1);
+        }
+        return rawIn.toFixed(1);
+    }
+    return inM.toFixed(2);
+}
+
+function updateRetractedLengthEquivalentUI() {
+    const lenInp = document.getElementById("input-srl-retracted-length");
+    const unitSel = document.getElementById("select-retracted-length-unit");
+    const eqDisplay = document.getElementById("retracted-length-equivalent-display");
+    const warnBox = document.getElementById("retracted-warning-box");
+    const warnTxt = document.getElementById("retracted-warning-text");
+    const isEn = (parseInt(state.lang) === 1);
+    if (!lenInp) return;
+
+    const unit = unitSel ? unitSel.value : (state.retractedLengthUnit || "m");
+    state.retractedLengthUnit = unit;
+    const rawVal = parseFloat(lenInp.value);
+
+    if (isNaN(rawVal) || rawVal <= 0) {
+        if (eqDisplay) eqDisplay.textContent = unit === "m" ? "(-- ft)" : "(-- m)";
+        if (warnBox) warnBox.style.display = "none";
+        state.retractedLengthM = null;
+        updateRetractedLengthModifiedState();
+        return;
+    }
+
+    let valM = 0;
+    let eqStr = "";
+    if (unit === "m") {
+        valM = rawVal;
+        const ftVal = valM / 0.3048;
+        const roundedFt = Math.round(ftVal * 10) / 10;
+        const finalFt = Math.abs(ftVal - roundedFt) < 0.015 ? roundedFt : ftVal;
+        eqStr = `(${finalFt.toFixed(1)} ft)`;
+    } else if (unit === "ft") {
+        valM = rawVal * 0.3048;
+        eqStr = `(${valM.toFixed(2)} m)`;
+    } else if (unit === "in") {
+        valM = rawVal * 0.0254;
+        eqStr = `(${valM.toFixed(2)} m)`;
+    }
+
+    if (eqDisplay) eqDisplay.textContent = eqStr;
+    state.retractedLengthM = valM;
+    state.customDeviceLengthM = valM;
+
+    if (warnBox) {
+        const isWarn = (valM > (typeof RETRACTED_WARN_M !== "undefined" ? RETRACTED_WARN_M : 3.0));
+        warnBox.style.display = isWarn ? "block" : "none";
+        if (warnTxt && isWarn) {
+            const isLanyard = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
+            if (isEn) {
+                warnTxt.textContent = `Warning: ${isLanyard ? "Lanyard" : "Retracted"} length exceeds 3.0 m (9.8 ft).`;
+            } else {
+                warnTxt.textContent = `Avertissement : Longueur ${isLanyard ? "de la longe" : "rétractée"} supérieure à 3,0 m (9.8 ft).`;
+            }
+        }
+    }
+
+    updateRetractedLengthModifiedState();
+}
+
+function updateRetractedLengthModifiedState() {
+    const badgeMod = document.getElementById("badge-retracted-modified");
+    const btnReset = document.getElementById("btn-reset-retracted-length");
+
+    if (state.connectingDevice === "srd" && state.selectedSrlId) {
+        const srl = SRL_CATALOG[state.selectedSrlId];
+        const catalogM = srl ? srl.retracted_length_m : null;
+        if (catalogM !== null && catalogM !== undefined && typeof state.retractedLengthM === "number") {
+            const isModified = Math.abs(state.retractedLengthM - catalogM) > 0.005;
+            state.isRetractedLengthModified = isModified;
+            if (badgeMod) badgeMod.style.display = isModified ? "inline-block" : "none";
+            if (btnReset) btnReset.style.display = isModified ? "inline-block" : "none";
+            return;
+        }
+    }
+    state.isRetractedLengthModified = false;
+    if (badgeMod) badgeMod.style.display = "none";
+    if (btnReset) btnReset.style.display = "none";
+}
+
+function resetRetractedLength() {
+    if (state.connectingDevice === "srd" && state.selectedSrlId) {
+        const srl = SRL_CATALOG[state.selectedSrlId];
+        if (srl && srl.retracted_length_m !== null && srl.retracted_length_m !== undefined) {
+            const lenInp = document.getElementById("input-srl-retracted-length");
+            const unitSel = document.getElementById("select-retracted-length-unit");
+            const unit = unitSel ? unitSel.value : (state.retractedLengthUnit || "m");
+            if (lenInp) {
+                if (unit === "m") {
+                    lenInp.value = srl.retracted_length_m.toFixed(2);
+                } else if (unit === "ft") {
+                    const ft = srl.retracted_length_m / 0.3048;
+                    const rFt = Math.round(ft * 10) / 10;
+                    lenInp.value = (Math.abs(ft - rFt) < 0.015 ? rFt : ft).toFixed(1);
+                } else if (unit === "in") {
+                    const inch = srl.retracted_length_m / 0.0254;
+                    const rIn = Math.round(inch * 10) / 10;
+                    lenInp.value = (Math.abs(inch - rIn) < 0.02 ? rIn : inch).toFixed(1);
+                }
+            }
+            state.retractedLengthM = srl.retracted_length_m;
+            state.isRetractedLengthModified = false;
+            updateRetractedLengthEquivalentUI();
+            validateSrlSelection();
+            if (typeof updateCalculationsUI === "function") {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
+        }
+    }
+}
+
+function updateSrlCardsDisplay() {
+    const isEn = (parseInt(state.lang) === 1);
+    const turboData = SRL_CATALOG["turbo_light_9ft"];
+    const falconData = SRL_CATALOG["falcon_leading_edge"];
+
+    const valTurbo = document.getElementById("val-card-turbolite-retracted");
+    const valFalcon = document.getElementById("val-card-falcon-retracted");
+    const lblTurbo = document.getElementById("lbl-card-turbolite-retracted");
+    const lblFalcon = document.getElementById("lbl-card-falcon-retracted");
+
+    const badgeTurbo = document.getElementById("badge-turbolite-class");
+    const badgeFalcon = document.getElementById("badge-falcon-class");
+    const classTxt = isEn ? "Class 2" : "Classe 2";
+    if (badgeTurbo) badgeTurbo.textContent = classTxt;
+    if (badgeFalcon) badgeFalcon.textContent = classTxt;
+
+    if (lblTurbo) lblTurbo.textContent = isEn ? "Retracted:" : "Rétracté :";
+    if (lblFalcon) lblFalcon.textContent = isEn ? "Retracted:" : "Rétracté :";
+
+    if (valTurbo) {
+        if (turboData && turboData.retracted_length_m !== null && turboData.retracted_length_m !== undefined) {
+            const ft = (turboData.retracted_length_m / 0.3048).toFixed(1);
+            valTurbo.textContent = `${turboData.retracted_length_m.toFixed(2)} m (${ft} ft)`;
+        } else {
+            valTurbo.textContent = isEn ? "Data to provide" : "Donnée à renseigner";
+        }
+    }
+
+    if (valFalcon) {
+        if (falconData && falconData.retracted_length_m !== null && falconData.retracted_length_m !== undefined) {
+            const ft = (falconData.retracted_length_m / 0.3048).toFixed(1);
+            valFalcon.textContent = `${falconData.retracted_length_m.toFixed(2)} m (${ft} ft)`;
+        } else {
+            valFalcon.textContent = isEn ? "Data to provide" : "Donnée à renseigner";
+        }
+    }
+}
+
+function updateMadEquivalentUI() {
+    const madInp = document.getElementById("input-srl-mad");
+    const madUnitSel = document.getElementById("select-mad-unit");
+    const eqDisplay = document.getElementById("mad-equivalent-display");
+    const warnBox = document.getElementById("mad-warning-box");
+    if (!madInp) return;
+
+    const unit = madUnitSel ? madUnitSel.value : (state.madUnit || "m");
+    state.madUnit = unit;
+    const rawVal = parseFloat(madInp.value);
+
+    if (isNaN(rawVal) || rawVal <= 0) {
+        if (eqDisplay) eqDisplay.textContent = unit === "in" ? "(-- m)" : "(-- in)";
+        if (warnBox) warnBox.style.display = "none";
+        state.madM = null;
+        state.customMad = null;
+        return;
+    }
+
+    let valM = 0;
+    let eqStr = "";
+    if (unit === "in") {
+        valM = rawVal * 0.0254;
+        eqStr = `(${valM.toFixed(2)} m)`;
+    } else {
+        valM = rawVal;
+        const inVal = rawVal / 0.0254;
+        eqStr = `(${inVal.toFixed(1)} in)`;
+    }
+
+    if (eqDisplay) eqDisplay.textContent = eqStr;
+    state.madM = valM;
+    state.customMad = valM;
+
+    // Check if user changed MAD from default suggestion 1.07m
+    state.isMadModified = (Math.abs(valM - 1.07) > 0.03);
+
+    if (warnBox) {
+        warnBox.style.display = (valM > MAD_WARN_M) ? "block" : "none";
+    }
+}
+
+function updateArrestForceEquivalentUI() {
+    const afInp = document.getElementById("input-arrest-force");
+    const afUnitSel = document.getElementById("select-arrest-force-unit");
+    const eqDisplay = document.getElementById("arrest-force-equivalent-display");
+    const loadStr = document.getElementById("val-global-arrest-load-str");
+    const errBox = document.getElementById("arrest-force-error-box");
+    const isEn = (parseInt(state.lang) === 1);
+    if (!afInp) return;
+
+    const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || "lbf");
+    state.arrestForceUnit = unit;
+    const rawVal = parseFloat(afInp.value);
+
+    if (isNaN(rawVal) || rawVal <= 0) {
+        if (eqDisplay) eqDisplay.textContent = unit === "lbf" ? "(-- kN)" : "(-- lbf)";
+        if (errBox) errBox.style.display = "none";
+        state.arrestForceKn = null;
+        state.arrestForceLbf = null;
+        return;
+    }
+
+    let lbfVal = 0;
+    let knVal = 0;
+    if (unit === "lbf") {
+        lbfVal = rawVal;
+        knVal = Math.abs(rawVal - 1350) < 1.0 ? 6.00 : parseFloat((rawVal * 0.0044482216).toFixed(2));
+        if (eqDisplay) eqDisplay.textContent = `(${knVal.toFixed(2)} kN)`;
+    } else {
+        knVal = rawVal;
+        lbfVal = Math.abs(rawVal - 6.00) < 0.01 ? 1350 : Math.round(rawVal * 224.808943);
+        if (eqDisplay) eqDisplay.textContent = `(${Math.round(lbfVal)} lbf)`;
+    }
+
+    state.arrestForceKn = knVal;
+    state.arrestForceLbf = lbfVal;
+
+    // Check if user modified compared to selected SRL default
+    if (state.connectingDevice === "srd" && state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) {
+        const srlDef = SRL_CATALOG[state.selectedSrlId].default_arrest_force_kn;
+        state.isArrestForceModified = (Math.abs(knVal - srlDef) > 0.05);
+    }
+
+    // Validation: 1 to 5000 lbf
+    const isExceeded = (lbfVal > 5000.0);
+    if (errBox) {
+        errBox.style.display = isExceeded ? "block" : "none";
+        const errTxt = document.getElementById("arrest-force-error-text");
+        if (errTxt && isExceeded) {
+            errTxt.textContent = isEn
+                ? `Error: Arrest force (${Math.round(lbfVal)} lbf) exceeds the 5,000 lbf (22.24 kN) limit.`
+                : `Erreur : Force d'arrêt (${Math.round(lbfVal)} lbf) supérieure à 5 000 lbf (22,24 kN).`;
+        }
+    }
+
+    // Global arrest load M * F
+    const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
+    const m = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u]) ? LUMP_FACTOR_BY_USERS[u] : 1.00;
+    const globalLbf = m * lbfVal;
+    const globalKn = globalLbf * 0.0044482216;
+
+    state.globalArrestLoadLbf = globalLbf;
+    state.globalArrestLoadKn = globalKn;
+
+    if (state.arrestLoadMode !== "custom") {
+        state.arrestLoadValue = globalKn;
+        state.arrestLoadKn = globalKn;
+    }
+
+    if (loadStr) {
+        loadStr.textContent = isEn
+            ? `Global Arrest Load: ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`
+            : `Charge globale : ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`;
+    }
+}
+
+function updateConnectingDeviceUI() {
+    const dev = state.connectingDevice || "srd";
+    const customGroup = document.getElementById("group-custom-device-fields");
+    const customClassGroup = document.getElementById("group-custom-device-class");
+    const customNameInp = document.getElementById("input-custom-device-name");
+    const customClassSel = document.getElementById("select-custom-device-class");
+    const customLenInp = document.getElementById("input-custom-device-length");
+    const catalogCards = document.getElementById("srl-catalog-cards");
+
+    // Sidebar elements
+    const sideConnSel = document.getElementById("select-sidebar-connecting-device");
+    const mainConnSel = document.getElementById("select-connecting-device");
+    const sideCustomGroup = document.getElementById("sidebar-group-custom-device");
+    const sideCustomClassGroup = document.getElementById("sidebar-group-custom-class");
+    const sideCustomNameInp = document.getElementById("input-sidebar-custom-name");
+    const sideCustomClassSel = document.getElementById("select-sidebar-custom-class");
+    const lblRetracted = document.getElementById("lbl-srl-retracted-title");
+    const isEn = (parseInt(state.lang) === 1);
+    const isLanyard = (dev === "lanyard" || dev === "custom_lanyard");
+
+    // Sync dropdown values
+    if (sideConnSel && sideConnSel.value !== dev) sideConnSel.value = dev;
+    if (mainConnSel && mainConnSel.value !== dev) mainConnSel.value = dev;
+
+    // Retracted / Lanyard label
+    if (lblRetracted) {
+        lblRetracted.textContent = isLanyard
+            ? (isEn ? "Lanyard Length:" : "Longueur de la longe :")
+            : (isEn ? "Retracted Length:" : "Longueur rétractée :");
+    }
+    const lblClrRetr = document.getElementById("lbl-clr-retracted");
+    if (lblClrRetr) {
+        lblClrRetr.textContent = isLanyard
+            ? (isEn ? "Longueur de la longe :" : "Longueur de la longe :")
+            : (isEn ? "Longueur rétractée :" : "Longueur rétractée :");
+    }
+
+    if (customGroup) {
+        customGroup.style.display = (dev === "custom_srd" || dev === "custom_lanyard") ? "block" : "none";
+    }
+    if (sideCustomGroup) {
+        sideCustomGroup.style.display = (dev === "custom_srd" || dev === "custom_lanyard") ? "block" : "none";
+    }
+    if (customClassGroup) {
+        customClassGroup.style.display = (dev === "custom_srd") ? "block" : "none";
+    }
+    if (sideCustomClassGroup) {
+        sideCustomClassGroup.style.display = (dev === "custom_srd") ? "block" : "none";
+    }
+    if (catalogCards) {
+        catalogCards.style.display = (dev === "srd") ? "grid" : "none";
+    }
+
+    if (customNameInp && state.customDeviceName !== undefined) {
+        customNameInp.value = state.customDeviceName;
+    }
+    if (sideCustomNameInp && state.customDeviceName !== undefined) {
+        sideCustomNameInp.value = state.customDeviceName;
+    }
+    if (customClassSel && state.customDeviceClass !== undefined) {
+        customClassSel.value = String(state.customDeviceClass);
+    }
+    if (sideCustomClassSel && state.customDeviceClass !== undefined) {
+        sideCustomClassSel.value = String(state.customDeviceClass);
+    }
+    if (customLenInp && state.customDeviceLengthM !== undefined) {
+        customLenInp.value = state.customDeviceLengthM;
+    }
+
+    // For custom devices (V2_09 / V2_10), start with fields empty if newly selected and undefined
+    if (dev === "custom_srd" || dev === "custom_lanyard") {
+        if (!state.customDeviceName) {
+            state.customDeviceName = "";
+        }
+    }
+}
+
 function validateSrlSelection() {
-    if (!state.selectedSrlId) return true;
-    const srl = SRL_CATALOG[state.selectedSrlId];
-    if (!srl) return true;
-
-    // Spec V2 — 04 & Prompt 12: SRL Class 1 is strictly prohibited when lifeline is below D-ring height (1.50m)
-    const hllElev = parseFloat(state.hllElevation) || 0.45;
-    const isClass1Violation = (srl.classe === 1 && (state.hllElevationPreset === "knee" || hllElev < 1.49));
-
+    const badge = document.getElementById("srl-status-badge");
     const warnBox = document.getElementById("srl-alert-warning");
     const warnTxt = document.getElementById("srl-alert-text");
-    const badge = document.getElementById("srl-status-badge");
+    const isEn = (parseInt(state.lang) === 1);
+    const isLanyard = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
 
-    if (isClass1Violation) {
+    // 1. Check Retracted Length / Lanyard Length (Spec V2 — 10 / Prompt 16)
+    const hasLen = (typeof state.retractedLengthM === "number" && !isNaN(state.retractedLengthM) && state.retractedLengthM > 0);
+    if (!hasLen) {
         if (warnBox && warnTxt) {
-            const isEn = (parseInt(state.lang) === 1);
+            const fieldFr = isLanyard ? "La longueur de la longe" : "La longueur rétractée";
+            const fieldEn = isLanyard ? "Lanyard length" : "Retracted length";
             warnTxt.innerHTML = isEn
-                ? `<strong>⚠️ SRL Class 1 Rejected:</strong> Lifeline is below D-ring height (${hllElev.toFixed(2)} m &lt; 1.50 m). A Class 2 SRL (Falcon Leading-Edge) is mandatory.`
-                : `<strong>⚠️ Classe 1 non autorisée :</strong> La ligne de vie est sous l'anneau D (${hllElev.toFixed(2)} m &lt; 1,50 m). Un SRL Classe 2 (Falcon Leading-Edge) est obligatoire pour une pose sous l'anneau D.`;
+                ? `<strong>⚠️ Missing Field:</strong> ${fieldEn} is mandatory.`
+                : `<strong>⚠️ Champ manquant :</strong> ${fieldFr} est obligatoire.`;
             warnBox.style.display = "flex";
         }
         if (badge) {
-            const isEn = (parseInt(state.lang) === 1);
-            badge.textContent = isEn ? "NON-COMPLIANT (CLASS 1 BELOW D-RING)" : "NON CONFORME (CLASSE 1 SOUS ANNEAU D)";
+            badge.textContent = isEn ? "MISSING LENGTH (REQUIRED)" : "LONGUEUR MANQUANTE (OBLIGATOIRE)";
             badge.className = "badge-role badge-role-suspended";
         }
         return false;
-    } else {
-        if (warnBox) warnBox.style.display = "none";
-        if (badge) {
-            badge.textContent = "SÉLECTIONNÉ & CONFORME";
-            badge.className = "badge-role badge-role-admin";
-        }
-        return true;
     }
+
+    // 2. Check MAD (Spec V2 — 09 / Prompt 15)
+    const hasMad = (typeof state.madM === "number" && !isNaN(state.madM) && state.madM > 0);
+    if (!hasMad) {
+        if (warnBox && warnTxt) {
+            warnTxt.innerHTML = isEn
+                ? "<strong>⚠️ Missing Field:</strong> Maximum Arrest Distance (MAD) is mandatory."
+                : "<strong>⚠️ Champ manquant :</strong> La distance d'arrêt maximale (MAD) est obligatoire.";
+            warnBox.style.display = "flex";
+        }
+        if (badge) {
+            badge.textContent = isEn ? "MISSING MAD (REQUIRED)" : "MAD MANQUANTE (OBLIGATOIRE)";
+            badge.className = "badge-role badge-role-suspended";
+        }
+        return false;
+    }
+
+    // 3. Check Arrest Force (Spec V2 — 09 / Prompt 15)
+    const hasAf = (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn) && state.arrestForceKn > 0);
+    if (!hasAf) {
+        if (warnBox && warnTxt) {
+            warnTxt.innerHTML = isEn
+                ? "<strong>⚠️ Missing Field:</strong> Arrest Force is mandatory."
+                : "<strong>⚠️ Champ manquant :</strong> La force d'arrêt (Arrest Force) est obligatoire.";
+            warnBox.style.display = "flex";
+        }
+        if (badge) {
+            badge.textContent = isEn ? "MISSING ARREST FORCE (REQUIRED)" : "FORCE D'ARRÊT MANQUANTE";
+            badge.className = "badge-role badge-role-suspended";
+        }
+        return false;
+    }
+
+    const afLbf = state.arrestForceLbf || (state.arrestForceKn * 224.808943);
+    if (afLbf > 5000.0) {
+        if (warnBox && warnTxt) {
+            warnTxt.innerHTML = isEn
+                ? `<strong>⚠️ Arrest Force Rejected:</strong> ${Math.round(afLbf)} lbf exceeds 5,000 lbf (22.24 kN) limit.`
+                : `<strong>⚠️ Force d'arrêt rejetée :</strong> ${Math.round(afLbf)} lbf dépasse la limite de 5 000 lbf (22,24 kN).`;
+            warnBox.style.display = "flex";
+        }
+        if (badge) {
+            badge.textContent = isEn ? "ARREST FORCE > 5000 LBF" : "FORCE D'ARRÊT > 5000 LBF";
+            badge.className = "badge-role badge-role-suspended";
+        }
+        return false;
+    }
+
+    // 4. Check Device selection
+    if (state.connectingDevice === "srd") {
+        if (!state.selectedSrlId) {
+            if (warnBox) warnBox.style.display = "none";
+            if (badge) {
+                badge.textContent = isEn ? "NOT SELECTED (REQUIRED)" : "NON SÉLECTIONNÉ (OBLIGATOIRE)";
+                badge.className = "badge-role badge-role-installer";
+            }
+            return false;
+        }
+        const srl = SRL_CATALOG[state.selectedSrlId];
+        if (!srl) return false;
+
+        const hllElev = parseFloat(state.hllElevation) || 0.45;
+        const isClass1Violation = (srl.classe === 1 && (state.hllElevationPreset === "knee" || hllElev < 1.49));
+        if (isClass1Violation) {
+            if (warnBox && warnTxt) {
+                warnTxt.innerHTML = isEn
+                    ? `<strong>⚠️ SRL Class 1 Rejected:</strong> Lifeline is below D-ring height (${hllElev.toFixed(2)} m &lt; 1.50 m). A Class 2 SRL is mandatory.`
+                    : `<strong>⚠️ Classe 1 non autorisée :</strong> La ligne de vie est sous l'anneau D (${hllElev.toFixed(2)} m &lt; 1,50 m). Un SRL Classe 2 est obligatoire pour une pose sous l'anneau D.`;
+                warnBox.style.display = "flex";
+            }
+            if (badge) {
+                badge.textContent = isEn ? "NON-COMPLIANT (CLASS 1 BELOW D-RING)" : "NON CONFORME (CLASSE 1 SOUS ANNEAU D)";
+                badge.className = "badge-role badge-role-suspended";
+            }
+            return false;
+        }
+    } else if (state.connectingDevice === "custom_srd") {
+        const cls = parseInt(state.customDeviceClass) || 2;
+        const hllElev = parseFloat(state.hllElevation) || 0.45;
+        if (cls === 1 && (state.hllElevationPreset === "knee" || hllElev < 1.49)) {
+            if (warnBox && warnTxt) {
+                warnTxt.innerHTML = isEn
+                    ? `<strong>⚠️ Custom SRL Class 1 Rejected:</strong> Lifeline is below D-ring height (${hllElev.toFixed(2)} m &lt; 1.50 m). Class 1 requires D-ring or overhead elevation.`
+                    : `<strong>⚠️ SRL Personnalisé Classe 1 rejeté :</strong> La ligne de vie est sous l'anneau D (${hllElev.toFixed(2)} m &lt; 1,50 m). La Classe 1 exige une pose à l'anneau D ou au-dessus.`;
+                warnBox.style.display = "flex";
+            }
+            if (badge) {
+                badge.textContent = isEn ? "NON-COMPLIANT (CLASS 1 BELOW D-RING)" : "NON CONFORME (CLASSE 1 SOUS ANNEAU D)";
+                badge.className = "badge-role badge-role-suspended";
+            }
+            return false;
+        }
+    } else if (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard") {
+        if (state.isOverEdgeFall || (state.line_to_edge !== undefined && state.line_to_edge < 1.0)) {
+            if (warnBox && warnTxt) {
+                warnTxt.innerHTML = isEn
+                    ? "<strong>⚠️ Lanyard Rejected on Roof Edge:</strong> A Class 2 SRL is mandatory when there is an over-edge fall hazard."
+                    : "<strong>⚠️ Longe interdite en bordure :</strong> Un SRL Classe 2 est obligatoire en cas de risque de chute par-dessus bord.";
+                warnBox.style.display = "flex";
+            }
+            if (badge) {
+                badge.textContent = isEn ? "NON-COMPLIANT (EDGE FALL HAZARD)" : "NON CONFORME (CHUTE PAR-DESSUS BORD)";
+                badge.className = "badge-role badge-role-suspended";
+            }
+            return false;
+        }
+    }
+
+    if (warnBox) warnBox.style.display = "none";
+    if (badge) {
+        badge.textContent = isEn ? "SELECTED & COMPLIANT" : "SÉLECTIONNÉ & CONFORME";
+        badge.className = "badge-role badge-role-admin";
+    }
+    return true;
 }
 if (typeof window !== "undefined") window.validateSrlSelection = validateSrlSelection;
+
+function getConnectingDeviceReportName(lang = 0) {
+    const isEn = (parseInt(lang) === 1);
+    if (state.connectingDevice === "srd") {
+        const srlData = (typeof SRL_CATALOG !== "undefined" && state.selectedSrlId) ? SRL_CATALOG[state.selectedSrlId] : null;
+        if (srlData) return srlData.name; // "TurboLite+" or "Falcon+" WITHOUT "Class 2" (Spec V2 — 10 / Prompt 16)
+        return "TurboLite+";
+    } else if (state.connectingDevice === "custom_srd") {
+        const name = (state.customDeviceName || "").trim() || (isEn ? "Custom SRL" : "SRL personnalisé");
+        return name;
+    } else if (state.connectingDevice === "custom_lanyard") {
+        const name = (state.customDeviceName || "").trim() || (isEn ? "Custom Lanyard" : "Longe personnalisée");
+        return name;
+    } else {
+        return isEn ? "Shock-Absorbing Lanyard" : "Longe avec absorbeur d'énergie";
+    }
+}
+if (typeof window !== "undefined") window.getConnectingDeviceReportName = getConnectingDeviceReportName;
+
+function validateSystem() {
+    const isProdValid = typeof validateProductAssociations === "function" ? validateProductAssociations() : true;
+    if (!isProdValid) return { valid: false, error: "Product associations invalid" };
+    const isSrlValid = typeof validateSrlSelection === "function" ? validateSrlSelection() : true;
+    if (!isSrlValid) return { valid: false, error: "Connecting device, MAD, Arrest Force, or Retracted length invalid" };
+    return { valid: true };
+}
+if (typeof window !== "undefined") window.validateSystem = validateSystem;
 
 function selectSrlModel(srlId) {
     const srl = SRL_CATALOG[srlId];
     if (!srl) return;
 
     state.selectedSrlId = srlId;
-    validateSrlSelection();
+    state.connectingDevice = "srd";
 
-    // Recompute lump sum arrest load with selected SRL preset
-    if (state.arrestLoadMode !== "custom") {
-        recalculateLumpSumArrestLoad();
-    } else {
-        updateLumpSumHint();
+    // Synchronize both dropdowns to "srd"
+    const leftDevSel = document.getElementById("select-connecting-device");
+    const sideDevSel = document.getElementById("select-sidebar-connecting-device");
+    if (leftDevSel) leftDevSel.value = "srd";
+    if (sideDevSel) sideDevSel.value = "srd";
+    updateConnectingDeviceUI();
+
+    // Spec V2 — 10 / Prompt 16: Pre-fill Retracted Length
+    const lenInp = document.getElementById("input-srl-retracted-length");
+    const unitSel = document.getElementById("select-retracted-length-unit");
+    if (lenInp) {
+        const unit = unitSel ? unitSel.value : (state.retractedLengthUnit || "m");
+        if (srl.retracted_length_m !== null && srl.retracted_length_m !== undefined) {
+            if (unit === "m") {
+                lenInp.value = srl.retracted_length_m.toFixed(2);
+            } else if (unit === "ft") {
+                const ft = srl.retracted_length_m / 0.3048;
+                const rFt = Math.round(ft * 10) / 10;
+                lenInp.value = (Math.abs(ft - rFt) < 0.015 ? rFt : ft).toFixed(1);
+            } else if (unit === "in") {
+                const inch = srl.retracted_length_m / 0.0254;
+                const rIn = Math.round(inch * 10) / 10;
+                lenInp.value = (Math.abs(inch - rIn) < 0.02 ? rIn : inch).toFixed(1);
+            }
+            state.retractedLengthM = srl.retracted_length_m;
+        } else {
+            lenInp.value = "";
+            state.retractedLengthM = null;
+        }
+        state.isRetractedLengthModified = false;
+        updateRetractedLengthEquivalentUI();
+    }
+
+    // Spec V2 — 09 / Prompt 15: Pre-fill Arrest Force preset (never overwrite MAD)
+    const afInp = document.getElementById("input-arrest-force");
+    const afUnitSel = document.getElementById("select-arrest-force-unit");
+    if (afInp) {
+        const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || "lbf");
+        if (unit === "lbf") {
+            afInp.value = srl.default_arrest_force_lbf || (srlId === "turbo_light_9ft" ? 1012 : 1349);
+        } else {
+            afInp.value = (srl.default_arrest_force_kn || (srlId === "turbo_light_9ft" ? 4.5 : 6.0)).toFixed(1);
+        }
+        state.isArrestForceModified = false;
+        updateArrestForceEquivalentUI();
     }
 
     // Update active classes on cards
@@ -3440,6 +4526,8 @@ function selectSrlModel(srlId) {
     if (cTurbo) cTurbo.classList.toggle("active", srlId === "turbo_light_9ft");
     if (cFalcon) cFalcon.classList.toggle("active", srlId === "falcon_leading_edge");
 
+    validateSrlSelection();
+
     if (typeof updateCalculationsUI === "function") {
         const maxSpan = Calculator.getMaxSpan(state.product);
         const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
@@ -3447,6 +4535,278 @@ function selectSrlModel(srlId) {
     }
 }
 window.selectSrlModel = selectSrlModel;
+
+function initSrlMadControls() {
+    // Retracted length controls (Spec V2 — 10 / Prompt 16)
+    const lenInp = document.getElementById("input-srl-retracted-length");
+    const lenUnitSel = document.getElementById("select-retracted-length-unit");
+    const resetLenBtn = document.getElementById("btn-reset-retracted-length");
+
+    function onRetractedLengthChange() {
+        updateRetractedLengthEquivalentUI();
+        validateSrlSelection();
+        if (typeof updateCalculationsUI === "function") {
+            const maxSpan = Calculator.getMaxSpan(state.product);
+            const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+            updateCalculationsUI(layout, maxSpan);
+        }
+    }
+
+    if (lenInp && !lenInp.dataset.hasListener) {
+        lenInp.dataset.hasListener = "true";
+        lenInp.addEventListener("input", onRetractedLengthChange);
+        lenInp.addEventListener("change", onRetractedLengthChange);
+    }
+
+    if (lenUnitSel && !lenUnitSel.dataset.hasListener) {
+        lenUnitSel.dataset.hasListener = "true";
+        lenUnitSel.addEventListener("change", () => {
+            const prevUnit = state.retractedLengthUnit || "m";
+            const nextUnit = lenUnitSel.value;
+            state.retractedLengthUnit = nextUnit;
+            const currentVal = parseFloat(lenInp.value);
+            if (!isNaN(currentVal) && currentVal > 0) {
+                lenInp.value = convertRetractedLength(currentVal, prevUnit, nextUnit);
+            }
+            onRetractedLengthChange();
+        });
+    }
+
+    if (resetLenBtn && !resetLenBtn.dataset.hasListener) {
+        resetLenBtn.dataset.hasListener = "true";
+        resetLenBtn.addEventListener("click", () => {
+            resetRetractedLength();
+        });
+    }
+
+    // MAD controls
+    const madInp = document.getElementById("input-srl-mad");
+    const madUnitSel = document.getElementById("select-mad-unit");
+    const resetBtn = document.getElementById("btn-reset-mad");
+    const warnBox = document.getElementById("mad-warning-box");
+
+    // Arrest force controls
+    const afInp = document.getElementById("input-arrest-force");
+    const afUnitSel = document.getElementById("select-arrest-force-unit");
+    const connDevSel = document.getElementById("select-connecting-device");
+    const sideConnDevSel = document.getElementById("select-sidebar-connecting-device");
+
+    function onMadChange() {
+        updateMadEquivalentUI();
+        validateSrlSelection();
+        if (typeof updateCalculationsUI === "function") {
+            const maxSpan = Calculator.getMaxSpan(state.product);
+            const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+            updateCalculationsUI(layout, maxSpan);
+        }
+    }
+
+    if (madInp && !madInp.dataset.hasListener) {
+        madInp.dataset.hasListener = "true";
+        madInp.addEventListener("input", onMadChange);
+        madInp.addEventListener("change", onMadChange);
+    }
+
+    if (madUnitSel && !madUnitSel.dataset.hasListener) {
+        madUnitSel.dataset.hasListener = "true";
+        madUnitSel.addEventListener("change", () => {
+            const prevUnit = state.madUnit || "m";
+            const nextUnit = madUnitSel.value;
+            state.madUnit = nextUnit;
+            const currentVal = parseFloat(madInp.value);
+            if (!isNaN(currentVal) && currentVal > 0) {
+                if (prevUnit === "m" && nextUnit === "in") {
+                    madInp.value = (currentVal / 0.0254).toFixed(1);
+                } else if (prevUnit === "in" && nextUnit === "m") {
+                    madInp.value = (currentVal * 0.0254).toFixed(2);
+                }
+            }
+            onMadChange();
+        });
+    }
+
+    if (resetBtn && !resetBtn.dataset.hasListener) {
+        resetBtn.dataset.hasListener = "true";
+        resetBtn.addEventListener("click", () => {
+            const unit = madUnitSel ? madUnitSel.value : (state.madUnit || "m");
+            if (unit === "in") {
+                madInp.value = "42.0";
+            } else {
+                madInp.value = "1.07";
+            }
+            onMadChange();
+        });
+    }
+
+    function onArrestForceChange() {
+        updateArrestForceEquivalentUI();
+        validateSrlSelection();
+        if (state.arrestLoadMode !== "custom") {
+            recalculateLumpSumArrestLoad();
+        }
+        if (typeof updateCalculationsUI === "function") {
+            const maxSpan = Calculator.getMaxSpan(state.product);
+            const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+            updateCalculationsUI(layout, maxSpan);
+        }
+    }
+
+    if (afInp && !afInp.dataset.hasListener) {
+        afInp.dataset.hasListener = "true";
+        afInp.addEventListener("input", onArrestForceChange);
+        afInp.addEventListener("change", onArrestForceChange);
+    }
+
+    if (afUnitSel && !afUnitSel.dataset.hasListener) {
+        afUnitSel.dataset.hasListener = "true";
+        afUnitSel.addEventListener("change", () => {
+            const prevUnit = state.arrestForceUnit || "lbf";
+            const nextUnit = afUnitSel.value;
+            state.arrestForceUnit = nextUnit;
+            const currentVal = parseFloat(afInp.value);
+            if (!isNaN(currentVal) && currentVal > 0) {
+                if (prevUnit === "lbf" && nextUnit === "kN") {
+                    afInp.value = Math.abs(currentVal - 1350) < 1.0 ? "6.00" : (currentVal * 0.0044482216).toFixed(2);
+                } else if (prevUnit === "kN" && nextUnit === "lbf") {
+                    afInp.value = Math.abs(currentVal - 6.00) < 0.01 ? "1350" : Math.round(currentVal * 224.808943);
+                }
+            }
+            onArrestForceChange();
+        });
+    }
+
+    // Connecting device selection & sync
+    function handleConnectingDeviceChange(newVal) {
+        state.connectingDevice = newVal;
+        if (connDevSel) connDevSel.value = newVal;
+        if (sideConnDevSel) sideConnDevSel.value = newVal;
+
+        // Pre-fill or adjust length based on device type
+        const lenInp = document.getElementById("input-srl-retracted-length");
+        const unitSel = document.getElementById("select-retracted-length-unit");
+        const curUnit = unitSel ? unitSel.value : (state.retractedLengthUnit || "m");
+
+        if (newVal === "srd") {
+            if (state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) {
+                const srl = SRL_CATALOG[state.selectedSrlId];
+                if (lenInp && srl.retracted_length_m !== null) {
+                    if (curUnit === "m") lenInp.value = srl.retracted_length_m.toFixed(2);
+                    else if (curUnit === "ft") lenInp.value = (srl.retracted_length_m / 0.3048).toFixed(1);
+                    else if (curUnit === "in") lenInp.value = (srl.retracted_length_m / 0.0254).toFixed(1);
+                    state.retractedLengthM = srl.retracted_length_m;
+                }
+            }
+        } else if (newVal === "lanyard") {
+            if (lenInp) {
+                if (curUnit === "m") lenInp.value = "1.80";
+                else if (curUnit === "ft") lenInp.value = "6.0";
+                else if (curUnit === "in") lenInp.value = "70.9";
+                state.retractedLengthM = 1.80;
+            }
+        } else if (newVal === "custom_srd" || newVal === "custom_lanyard") {
+            if (lenInp && (state.customDeviceLengthM === undefined || state.customDeviceLengthM === null)) {
+                lenInp.value = "";
+                state.retractedLengthM = null;
+            }
+        }
+
+        updateRetractedLengthEquivalentUI();
+        updateConnectingDeviceUI();
+        validateSrlSelection();
+        if (typeof updateCalculationsUI === "function") {
+            const maxSpan = Calculator.getMaxSpan(state.product);
+            const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+            updateCalculationsUI(layout, maxSpan);
+        }
+    }
+
+    if (connDevSel && !connDevSel.dataset.hasListener) {
+        connDevSel.dataset.hasListener = "true";
+        connDevSel.addEventListener("change", (e) => handleConnectingDeviceChange(e.target.value));
+    }
+
+    if (sideConnDevSel && !sideConnDevSel.dataset.hasListener) {
+        sideConnDevSel.dataset.hasListener = "true";
+        sideConnDevSel.addEventListener("change", (e) => handleConnectingDeviceChange(e.target.value));
+    }
+
+    // Listen to custom fields (both main and sidebar)
+    const customNameInp = document.getElementById("input-custom-device-name");
+    const sideCustomNameInp = document.getElementById("input-sidebar-custom-name");
+    const customClassSel = document.getElementById("select-custom-device-class");
+    const sideCustomClassSel = document.getElementById("select-sidebar-custom-class");
+    const customLenInp = document.getElementById("input-custom-device-length");
+
+    function syncCustomName(val) {
+        state.customDeviceName = val;
+        if (customNameInp && customNameInp.value !== val) customNameInp.value = val;
+        if (sideCustomNameInp && sideCustomNameInp.value !== val) sideCustomNameInp.value = val;
+    }
+
+    function syncCustomClass(val) {
+        state.customDeviceClass = parseInt(val) || 2;
+        if (customClassSel && customClassSel.value !== val) customClassSel.value = val;
+        if (sideCustomClassSel && sideCustomClassSel.value !== val) sideCustomClassSel.value = val;
+        validateSrlSelection();
+    }
+
+    if (customNameInp && !customNameInp.dataset.hasListener) {
+        customNameInp.dataset.hasListener = "true";
+        customNameInp.addEventListener("input", (e) => syncCustomName(e.target.value));
+    }
+    if (sideCustomNameInp && !sideCustomNameInp.dataset.hasListener) {
+        sideCustomNameInp.dataset.hasListener = "true";
+        sideCustomNameInp.addEventListener("input", (e) => syncCustomName(e.target.value));
+    }
+    if (customClassSel && !customClassSel.dataset.hasListener) {
+        customClassSel.dataset.hasListener = "true";
+        customClassSel.addEventListener("change", (e) => syncCustomClass(e.target.value));
+    }
+    if (sideCustomClassSel && !sideCustomClassSel.dataset.hasListener) {
+        sideCustomClassSel.dataset.hasListener = "true";
+        sideCustomClassSel.addEventListener("change", (e) => syncCustomClass(e.target.value));
+    }
+    if (customLenInp && !customLenInp.dataset.hasListener) {
+        customLenInp.dataset.hasListener = "true";
+        customLenInp.addEventListener("input", (e) => {
+            const v = parseFloat(e.target.value) || 0.60;
+            state.customDeviceLengthM = v;
+            state.retractedLengthM = v;
+            if (typeof updateCalculationsUI === "function") {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
+        });
+    }
+
+    // Initialize display values on load
+    updateRetractedLengthEquivalentUI();
+    updateSrlCardsDisplay();
+    updateMadEquivalentUI();
+    updateArrestForceEquivalentUI();
+    updateConnectingDeviceUI();
+
+    // Connect Stairs Toggle Button in 3D toolbar
+    const stairsBtn = document.getElementById("btn-toggle-stairs");
+    if (stairsBtn && !stairsBtn.dataset.hasListener) {
+        stairsBtn.dataset.hasListener = "true";
+        stairsBtn.addEventListener("click", () => {
+            state.showStairs = (state.showStairs === false);
+            stairsBtn.classList.toggle("active", state.showStairs !== false);
+            if (typeof update3DScene === "function") update3DScene();
+        });
+    }
+}
+window.initSrlMadControls = initSrlMadControls;
+window.convertRetractedLength = convertRetractedLength;
+window.updateRetractedLengthEquivalentUI = updateRetractedLengthEquivalentUI;
+window.resetRetractedLength = resetRetractedLength;
+window.updateSrlCardsDisplay = updateSrlCardsDisplay;
+window.RETRACTED_WARN_M = RETRACTED_WARN_M;
+window.updateMadEquivalentUI = updateMadEquivalentUI;
+window.updateArrestForceEquivalentUI = updateArrestForceEquivalentUI;
+window.updateConnectingDeviceUI = updateConnectingDeviceUI;
 
 function setFallCalculationMode(mode) {
     state.fallCalculationMode = mode;
@@ -3653,11 +5013,11 @@ function populateConfigModalInputs() {
 
     // HOOKT Product Family dropdown
     const prodSel = document.getElementById("select-product");
-    if (prodSel) prodSel.value = state.product || "NEW PRO";
+    if (prodSel) prodSel.value = normalizeProduct(state.product || "CORE");
 
     // Buffer length display
     const bufferInfo = document.getElementById("lbl-buffer-len-info");
-    const bufLenM = (state.product === "LONG RANGE") ? 0.30 : 0.20;
+    const bufLenM = isExtreme(state.product) ? 0.30 : 0.20;
     state.bufferLength = bufLenM;
     if (bufferInfo) {
         bufferInfo.innerHTML = isEn
@@ -3671,7 +5031,7 @@ function populateConfigModalInputs() {
 
     const usersElem = document.getElementById("input-users");
     if (usersElem) {
-        const maxU = (state.product === "LIGHT PRO" || state.product === "LONG RANGE") ? 3 : 5;
+        const maxU = (isCore(state.product) || isExtreme(state.product)) ? 3 : 5;
         usersElem.max = maxU;
         usersElem.value = Math.min(state.nbUsers, maxU);
     }
@@ -3701,6 +5061,7 @@ function populateConfigModalInputs() {
     const distUnit = isUS ? "ft" : "m";
     const toCurrentLen = (m) => isUS ? (m * UnitsModule.M_TO_FT) : m;
 
+    const rNormSel = document.getElementById("select-roof-norm");
     const rTypeSel = document.getElementById("select-roof-type");
     const rLenInp = document.getElementById("input-roof-length");
     const rWidInp = document.getElementById("input-roof-width");
@@ -3710,11 +5071,28 @@ function populateConfigModalInputs() {
     const rEdgeInp = document.getElementById("input-line-to-edge");
     const rHGroundInp = document.getElementById("input-roof-height-ground");
 
-    if (rTypeSel) rTypeSel.value = state.roof_type || "flat";
+    if (rNormSel) {
+        rNormSel.value = (state.norm === "EN 795" || state.norm === "EN") ? "EN 795" : "OSHA";
+        if (!rNormSel.dataset.hasListener) {
+            rNormSel.dataset.hasListener = "true";
+            rNormSel.addEventListener("change", (e) => {
+                setNorm(e.target.value);
+            });
+        }
+    }
+
+    const curTypeVal = state.roof_type || state.roofShape || "flat";
+    if (rTypeSel) rTypeSel.value = curTypeVal;
     if (rLenInp) rLenInp.value = toCurrentLen(state.roof_length || 25.0).toFixed(1);
     if (rWidInp) rWidInp.value = toCurrentLen(state.roof_width || 15.0).toFixed(1);
-    if (rSlope1Inp) rSlope1Inp.value = (state.roof_slope_deg !== undefined ? state.roof_slope_deg : 0).toFixed(1);
-    if (rSlope2Inp) rSlope2Inp.value = (state.roof_slope_deg_2 !== undefined ? state.roof_slope_deg_2 : 0).toFixed(1);
+    const initSlope1 = (state.roof_slope_deg !== undefined && state.roof_slope_deg > 0)
+        ? state.roof_slope_deg
+        : ((state.roofSlope && state.roofSlope > 0) ? state.roofSlope : (curTypeVal === "flat" ? 0 : 15.0));
+    if (rSlope1Inp) rSlope1Inp.value = initSlope1.toFixed(1);
+    const initSlope2 = (state.roof_slope_deg_2 !== undefined && state.roof_slope_deg_2 > 0)
+        ? state.roof_slope_deg_2
+        : (curTypeVal === "triangle" ? 15.0 : 0);
+    if (rSlope2Inp) rSlope2Inp.value = initSlope2.toFixed(1);
     if (rRidgeInp) rRidgeInp.value = toCurrentLen(state.ridge_position || 7.5).toFixed(1);
     if (rEdgeInp) rEdgeInp.value = toCurrentLen(state.line_to_edge || 2.0).toFixed(1);
     if (rHGroundInp) rHGroundInp.value = toCurrentLen(state.roof_height_above_ground || 6.0).toFixed(1);
@@ -3724,12 +5102,22 @@ function populateConfigModalInputs() {
     // Toggle slope groups in modal
     function syncRoofTypeVisibility() {
         const curType = rTypeSel ? rTypeSel.value : (state.roof_type || "flat");
+        const curNorm = (state.norm === "EN 795" || state.norm === "EN") ? "EN 795" : "OSHA";
         const grpS1 = document.getElementById("group-roof-slope-1");
         const grpS2 = document.getElementById("group-roof-slope-2");
         const grpRidge = document.getElementById("group-ridge-pos");
+        const hintNormEn = document.getElementById("hint-roof-norm-en");
         if (grpS1) grpS1.style.display = (curType === "sloped" || curType === "triangle") ? "block" : "none";
         if (grpS2) grpS2.style.display = (curType === "triangle") ? "block" : "none";
         if (grpRidge) grpRidge.style.display = (curType === "triangle") ? "block" : "none";
+        if (hintNormEn) {
+            hintNormEn.style.display = (curNorm === "EN 795" && (curType === "sloped" || curType === "triangle")) ? "block" : "none";
+        }
+        if (curType === "sloped" || curType === "triangle") {
+            if (rSlope1Inp && (parseFloat(rSlope1Inp.value) <= 0 || isNaN(parseFloat(rSlope1Inp.value)))) {
+                rSlope1Inp.value = "15.0";
+            }
+        }
     }
     syncRoofTypeVisibility();
     if (rTypeSel && !rTypeSel.dataset.hasListener) {
@@ -3757,13 +5145,13 @@ function populateConfigModalInputs() {
 function filterLayoutDropdownOptions() {
     const layoutSel = document.getElementById("select-layout-type");
     if (!layoutSel) return;
-    const prod = (state.product || "NEW PRO").toUpperCase();
+    const prod = (state.product || "CORE").toUpperCase();
 
     const opt11 = layoutSel.querySelector("option[value='cross_spans']");
     const opt12 = layoutSel.querySelector("option[value='grid_system']");
 
-    const isNewPro = prod.includes("NEW");
-    const isLongRange = prod.includes("LONG") || prod.includes("SUPER") || prod.includes("ULTRA");
+    const isNewPro = isPro(prod);
+    const isLongRange = isExtreme(prod);
 
     if (opt11) {
         opt11.disabled = false;
@@ -3781,6 +5169,10 @@ function filterLayoutDropdownOptions() {
     if (state.layoutType === "grid_system" && !isLongRange) {
         state.layoutType = "single_span";
         layoutSel.value = "single_span";
+    }
+    if (DEPRECATED_CONFIGS.includes(state.layoutType)) {
+        state.layoutType = "multi_straight";
+        layoutSel.value = "multi_straight";
     }
 }
 
@@ -3830,11 +5222,79 @@ function renderUnifiedSpansTableHTML(layout, distUnit, isEn) {
                                     <input type="radio" name="radio-fall-span" class="span-fall-radio" data-span-id="${sp.id}" ${isFallSpan ? 'checked' : ''} title="${isEn ? "Active fall span" : "Portée de chute active"}">
                                 </td>
                                 <td style="text-align: center; white-space: nowrap;">
+                                    ${!isLast ? `<button type="button" class="btn-table-icon btn-table-xmatrix ${sp.hasXMatrix ? 'active-xmat' : ''}" data-idx="${idx}" title="${sp.hasXMatrix ? (isEn ? "X-Matrix active - click to remove" : "X-Matrix active - cliquer pour retirer") : (isEn ? "Add X-Matrix junction (multi-directions)" : "Ajouter une X-Matrix (multi-directions)")}"><i class="fa-solid fa-diagram-project"></i></button>` : ''}
                                     <button type="button" class="btn-table-icon btn-split-span" data-idx="${idx}" title="${isEn ? "Split this span in two" : "Couper cette portée en deux"}"><i class="fa-solid fa-scissors"></i></button>
                                     <button type="button" class="btn-table-icon btn-insert-after" data-idx="${idx}" title="${isEn ? "Insert span after" : "Insérer une portée après"}"><i class="fa-solid fa-plus"></i></button>
                                     ${state.spans.length > 1 ? `<button type="button" class="btn-table-icon btn-danger-hover btn-delete-span" data-idx="${idx}" title="${isEn ? "Delete" : "Supprimer"}"><i class="fa-solid fa-trash"></i></button>` : ''}
                                 </td>
                             </tr>
+                            ${(!isLast && sp.hasXMatrix) ? `
+                            <tr class="xmatrix-table-subrow">
+                                <td colspan="6" style="padding: 8px 12px;">
+                                    <div style="display:flex; flex-direction:column; gap:8px;">
+                                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                                            <div style="display:flex; align-items:center; gap:6px;">
+                                                <span class="badge-tag-id xmatrix-badge" style="font-size:0.75rem; padding:2px 8px; border-radius:4px; font-weight:700;">
+                                                    <i class="fa-solid fa-diagram-project"></i> X-Matrix A${idx + 2}
+                                                </span>
+                                                <span style="font-size:0.8rem; color:#1e3a8a; font-weight:600;">
+                                                    ${isEn ? "Multi-direction branches (0 to 2):" : "Branches multi-directions (0 à 2) :"}
+                                                </span>
+                                                ${(!sp.xMatrixBranches || sp.xMatrixBranches.length === 0) ? `<span style="font-size:0.75rem; color:#64748b; font-style:italic;">${isEn ? "No branch (pass-through)" : "0 branche (jonction simple)"}</span>` : ''}
+                                            </div>
+                                            <div style="display:flex; align-items:center; gap:6px;">
+                                                ${(!sp.xMatrixBranches || sp.xMatrixBranches.length < 2) ? `
+                                                    <button type="button" class="btn btn-secondary btn-sm btn-table-add-branch" data-span-idx="${idx}" style="height:26px; padding:2px 8px; font-size:0.72rem; white-space:nowrap; border-color:#93c5fd; color:#1d4ed8; background:#eff6ff;">
+                                                        <i class="fa-solid fa-plus"></i> ${isEn ? "Add Branch" : "Ajouter branche"}
+                                                    </button>
+                                                ` : ''}
+                                                <button type="button" class="btn btn-secondary btn-sm btn-table-remove-xmat" data-span-idx="${idx}" style="height:26px; padding:2px 8px; font-size:0.72rem; color:#dc2626; border-color:#fca5a5; background:#fff;" title="${isEn ? "Remove X-Matrix" : "Retirer la X-Matrix"}">
+                                                    <i class="fa-solid fa-trash"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        ${(sp.xMatrixBranches && sp.xMatrixBranches.length > 0) ? `
+                                            <div style="display:flex; flex-direction:column; gap:6px;">
+                                                ${sp.xMatrixBranches.map((br, bIdx) => {
+                                                    const bSpans = (typeof getBranchSpans === "function") ? getBranchSpans(br) : (br.spans || [{ id: (br.id || "xmb") + "_s1", length: br.length || 5.0 }]);
+                                                    const angVal = br.angleDeg !== undefined ? br.angleDeg : (bIdx === 0 ? 90 : -90);
+                                                    return `
+                                                        <div class="xmatrix-branch-item-block">
+                                                            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+                                                                <div style="display:flex; align-items:center; gap:6px;">
+                                                                    <strong style="color:#2563eb; font-size:0.8rem;"><i class="fa-solid fa-code-branch"></i> Branche B${bIdx + 1}</strong>
+                                                                    <span style="font-size:0.75rem; color:#64748b;">|</span>
+                                                                    <span style="font-size:0.75rem; color:#475569;">Angle :</span>
+                                                                    <input type="number" class="xmat-branch-ang-input" data-span-idx="${idx}" data-branch-idx="${bIdx}" value="${angVal}" step="any" style="width:48px; height:22px; font-size:0.75rem; text-align:center;" title="${isEn ? "Branch angle (deg)" : "Angle de la branche (deg)"}"> <span style="font-size:0.72rem; color:#64748b;">°</span>
+                                                                </div>
+                                                                <button type="button" class="btn-delete-xmat-branch" data-span-idx="${idx}" data-branch-idx="${bIdx}" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:0.8rem; padding:0 4px;" title="${isEn ? "Delete branch" : "Supprimer cette branche"}"><i class="fa-solid fa-trash"></i></button>
+                                                            </div>
+                                                            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:4px; padding-left:10px;">
+                                                                <span style="font-size:0.72rem; font-weight:600; color:#475569;">${isEn ? "Spans:" : "Portées :"}</span>
+                                                                ${bSpans.map((subSp, sIdx) => {
+                                                                    const subLenVal = isUS ? (subSp.length * METERS_TO_FEET).toFixed(2) : (typeof subSp.length === "number" ? subSp.length.toFixed(2) : subSp.length);
+                                                                    return `
+                                                                        <div class="xmatrix-branch-item" style="padding:2px 6px; gap:4px;">
+                                                                            <strong style="color:#3b82f6; font-size:0.75rem;">S${sIdx + 1}:</strong>
+                                                                            <input type="number" class="xmat-branch-len-input xmat-branch-subspan-input" data-span-idx="${idx}" data-branch-idx="${bIdx}" data-subspan-idx="${sIdx}" value="${subLenVal}" step="any" min="0.5" style="width:50px; height:20px; font-size:0.75rem; text-align:center;" title="${isEn ? "Span length" : "Longueur de la portée"}"> <span style="font-size:0.68rem; color:#64748b;">${distUnit}</span>
+                                                                            ${bSpans.length > 1 ? `
+                                                                                <button type="button" class="btn-delete-branch-subspan" data-span-idx="${idx}" data-branch-idx="${bIdx}" data-subspan-idx="${sIdx}" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:0.7rem; padding:0 2px;" title="${isEn ? "Delete span" : "Supprimer cette portée"}"><i class="fa-solid fa-times"></i></button>
+                                                                            ` : ''}
+                                                                        </div>
+                                                                    `;
+                                                                }).join('')}
+                                                                <button type="button" class="btn btn-secondary btn-sm btn-add-branch-subspan" data-span-idx="${idx}" data-branch-idx="${bIdx}" style="height:22px; padding:1px 6px; font-size:0.7rem; border-color:#93c5fd; color:#2563eb; background:#eff6ff;" title="${isEn ? "Add span to branch" : "Ajouter une portée à la branche"}">
+                                                                    <i class="fa-solid fa-plus"></i> ${isEn ? "Add Span" : "Ajouter portée"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    `;
+                                                }).join('')}
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                </td>
+                            </tr>` : ''}
                         `;
                     }).join('')}
                 </tbody>
@@ -3856,6 +5316,67 @@ function renderUnifiedSpansTableHTML(layout, distUnit, isEn) {
             </select>
         </div>
     `;
+}
+
+function getBranchSpans(branch) {
+    if (!branch) return [{ id: "xmb_s1", length: 5.0 }];
+    if (Array.isArray(branch.spans) && branch.spans.length > 0) {
+        return branch.spans;
+    }
+    const len = Math.max(0.5, parseFloat(branch.length) || 5.0);
+    branch.spans = [{ id: (branch.id || "xmb") + "_s1", length: len }];
+    return branch.spans;
+}
+
+function getBranchTotalLength(branch) {
+    const spans = getBranchSpans(branch);
+    const sum = spans.reduce((acc, s) => acc + (Math.max(0.1, parseFloat(s.length) || 0)), 0);
+    branch.length = Math.max(0.5, sum);
+    return branch.length;
+}
+
+function cleanupCollinearXMatrixBranches(spans) {
+    if (!spans || !Array.isArray(spans)) return;
+    spans.forEach(sp => {
+        if (!sp || !sp.hasXMatrix || !Array.isArray(sp.xMatrixBranches)) return;
+        sp.xMatrixBranches = sp.xMatrixBranches.filter(br => {
+            const rawAng = (br.angleDeg !== undefined) ? parseFloat(br.angleDeg) : 90;
+            const normAng = ((rawAng % 360) + 360) % 360;
+            const isCollinear0 = (normAng < 15 || normAng > 345);
+            const isCollinear180 = (Math.abs(normAng - 180) < 15);
+            return !isCollinear0 && !isCollinear180;
+        });
+        if (sp.xMatrixBranches.length > 2) {
+            sp.xMatrixBranches = sp.xMatrixBranches.slice(0, 2);
+        }
+        sp.xMatrixBranches.forEach(br => {
+            getBranchTotalLength(br);
+        });
+    });
+}
+
+function syncXMatrixNomenclature() {
+    const curProd = normalizeProduct(state.product || "PRO");
+    const comps = COMPONENTS_DB[curProd] || [];
+    const xMatComp = comps.find(c => c.id === "X-Matrix");
+    const hasSpanX = !!(state.spans && state.spans.some(s => s && s.hasXMatrix));
+    const hasCrossOrGrid = state.layoutType === "cross_spans" || state.layoutType === "grid_system";
+    let activeNodes = [];
+    try {
+        const layout = Calculator.calculateAnchorPositions(state.L, state.l, Calculator.getMaxSpan(state.product));
+        activeNodes = (layout && layout.line1) ? layout.line1 : [];
+    } catch (e) {}
+    const hasNodeX = activeNodes.some(n => n.hasXMatrix || n.type === "x_matrix");
+    const shouldCheck = !!(hasSpanX || hasCrossOrGrid || hasNodeX);
+
+    if (xMatComp) {
+        xMatComp.checked = shouldCheck;
+    }
+    if (!state.checkedComponents) state.checkedComponents = {};
+    state.checkedComponents["X-Matrix"] = shouldCheck;
+    if (typeof renderComponentsChecklist === "function") {
+        renderComponentsChecklist();
+    }
 }
 
 function renderDynamicLayoutForm() {
@@ -3908,7 +5429,7 @@ function renderDynamicLayoutForm() {
         const structType = state.config6StructureType || "reservoir";
         const isReservoirMode = (mode === "reservoir");
 
-        const maxAdmissibleSpan = state.product === "LIGHT PRO" ? 3.5 : (state.product === "LONG RANGE" ? 30.0 : 15.2);
+        const maxAdmissibleSpan = isCore(state.product) ? 3.5 : (isExtreme(state.product) ? 30.0 : 15.2);
         const currentSpanLen = state.spans[0] ? state.spans[0].length : 5.0;
         const isExceedingMax = currentSpanLen > maxAdmissibleSpan;
 
@@ -4244,7 +5765,7 @@ function renderDynamicLayoutForm() {
         const nbPosts = 2 * (nx + ny);
         const nbSegments = ny * (nx + 1) + nx * (ny + 1);
 
-        const maxSpanLR = Calculator.getMaxSpan(state.product || "LONG RANGE");
+        const maxSpanLR = Calculator.getMaxSpan(state.product || "EXTREME");
 
         // Validate segments
         let maxSegVal = 0;
@@ -4509,6 +6030,191 @@ function attachDynamicFormListeners() {
         });
     });
 
+    // X-Matrix Multi-directions Table Actions
+    document.querySelectorAll(".btn-table-xmatrix").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.idx);
+            const isRange = isExtreme(state.product);
+            const isOverhead = (state.mountingType === "overhead" || state.roofShape === "flat_overhead");
+            if (!isPro(state.product) && !(isRange && isOverhead)) {
+                alert(["⚠️ La X-Matrix est autorisée uniquement pour le système PRO ou en pose suspendue (overhead) pour Extreme.", "⚠️ X-Matrix is only allowed for PRO systems or overhead Extreme systems."][state.lang || 0]);
+                return;
+            }
+            if (state.spans && state.spans[idx]) {
+                state.spans[idx].hasXMatrix = !state.spans[idx].hasXMatrix;
+                if (state.spans[idx].hasXMatrix) {
+                    if (!state.spans[idx].xMatrixBranches) {
+                        state.spans[idx].xMatrixBranches = [];
+                    }
+                    cleanupCollinearXMatrixBranches(state.spans);
+                } else {
+                    state.spans[idx].xMatrixBranches = [];
+                }
+                syncXMatrixNomenclature();
+                if (typeof LayoutEditorModule !== "undefined") {
+                    LayoutEditorModule.recordState("toggle_xmatrix");
+                    LayoutEditorModule.refreshUI();
+                } else {
+                    renderDynamicLayoutForm();
+                    if (typeof update3DScene === "function") update3DScene();
+                }
+            }
+        });
+    });
+
+    document.querySelectorAll(".btn-table-add-branch").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.spanIdx);
+            if (state.spans && state.spans[idx]) {
+                if (!state.spans[idx].xMatrixBranches) state.spans[idx].xMatrixBranches = [];
+                cleanupCollinearXMatrixBranches(state.spans);
+                if (state.spans[idx].xMatrixBranches.length < 2) {
+                    const count = state.spans[idx].xMatrixBranches.length;
+                    const nextAng = count === 0 ? 90 : -90;
+                    const bId = "xmb_" + Date.now() + "_" + count;
+                    state.spans[idx].xMatrixBranches.push({
+                        id: bId,
+                        length: 5.0,
+                        angleDeg: nextAng,
+                        spans: [{ id: bId + "_s1", length: 5.0 }]
+                    });
+                    if (typeof LayoutEditorModule !== "undefined") {
+                        LayoutEditorModule.recordState("add_xmatrix_branch");
+                        LayoutEditorModule.refreshUI();
+                    } else {
+                        renderDynamicLayoutForm();
+                        if (typeof update3DScene === "function") update3DScene();
+                    }
+                }
+            }
+        });
+    });
+
+    document.querySelectorAll(".btn-add-branch-subspan").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const spanIdx = parseInt(btn.dataset.spanIdx);
+            const branchIdx = parseInt(btn.dataset.branchIdx);
+            if (state.spans && state.spans[spanIdx] && state.spans[spanIdx].xMatrixBranches && state.spans[spanIdx].xMatrixBranches[branchIdx]) {
+                const branch = state.spans[spanIdx].xMatrixBranches[branchIdx];
+                const bSpans = getBranchSpans(branch);
+                const newSubId = (branch.id || "xmb") + "_s" + (bSpans.length + 1);
+                bSpans.push({ id: newSubId, length: 5.0 });
+                getBranchTotalLength(branch);
+                if (typeof LayoutEditorModule !== "undefined") {
+                    LayoutEditorModule.recordState("add_branch_subspan");
+                    LayoutEditorModule.refreshUI();
+                } else {
+                    renderDynamicLayoutForm();
+                    if (typeof update3DScene === "function") update3DScene();
+                }
+            }
+        });
+    });
+
+    document.querySelectorAll(".btn-delete-branch-subspan").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const spanIdx = parseInt(btn.dataset.spanIdx);
+            const branchIdx = parseInt(btn.dataset.branchIdx);
+            const subIdx = parseInt(btn.dataset.subspanIdx);
+            if (state.spans && state.spans[spanIdx] && state.spans[spanIdx].xMatrixBranches && state.spans[spanIdx].xMatrixBranches[branchIdx]) {
+                const branch = state.spans[spanIdx].xMatrixBranches[branchIdx];
+                const bSpans = getBranchSpans(branch);
+                if (bSpans.length > 1) {
+                    bSpans.splice(subIdx, 1);
+                    getBranchTotalLength(branch);
+                    if (typeof LayoutEditorModule !== "undefined") {
+                        LayoutEditorModule.recordState("delete_branch_subspan");
+                        LayoutEditorModule.refreshUI();
+                    } else {
+                        renderDynamicLayoutForm();
+                        if (typeof update3DScene === "function") update3DScene();
+                    }
+                }
+            }
+        });
+    });
+
+    document.querySelectorAll(".btn-delete-xmat-branch").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const spanIdx = parseInt(btn.dataset.spanIdx);
+            const branchIdx = parseInt(btn.dataset.branchIdx);
+            if (state.spans && state.spans[spanIdx] && state.spans[spanIdx].xMatrixBranches) {
+                state.spans[spanIdx].xMatrixBranches.splice(branchIdx, 1);
+                if (typeof LayoutEditorModule !== "undefined") {
+                    LayoutEditorModule.recordState("delete_xmatrix_branch");
+                    LayoutEditorModule.refreshUI();
+                } else {
+                    renderDynamicLayoutForm();
+                    if (typeof update3DScene === "function") update3DScene();
+                }
+            }
+        });
+    });
+
+    document.querySelectorAll(".xmat-branch-len-input").forEach(inp => {
+        inp.addEventListener("change", (e) => {
+            const spanIdx = parseInt(e.target.dataset.spanIdx);
+            const branchIdx = parseInt(e.target.dataset.branchIdx);
+            const subIdx = e.target.dataset.subspanIdx !== undefined ? parseInt(e.target.dataset.subspanIdx) : null;
+            if (state.spans && state.spans[spanIdx] && state.spans[spanIdx].xMatrixBranches && state.spans[spanIdx].xMatrixBranches[branchIdx]) {
+                const raw = parseFloat(e.target.value) || 5.0;
+                const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+                const meters = isUS ? (raw / METERS_TO_FEET) : raw;
+                const branch = state.spans[spanIdx].xMatrixBranches[branchIdx];
+                if (subIdx !== null && !isNaN(subIdx)) {
+                    const bSpans = getBranchSpans(branch);
+                    if (bSpans[subIdx]) {
+                        bSpans[subIdx].length = Math.max(0.5, meters);
+                    }
+                    getBranchTotalLength(branch);
+                } else {
+                    branch.length = Math.max(0.5, meters);
+                    const bSpans = getBranchSpans(branch);
+                    if (bSpans.length === 1) {
+                        bSpans[0].length = branch.length;
+                    }
+                }
+                if (typeof update3DScene === "function") update3DScene();
+            }
+        });
+    });
+
+    document.querySelectorAll(".xmat-branch-ang-input").forEach(inp => {
+        inp.addEventListener("change", (e) => {
+            const spanIdx = parseInt(e.target.dataset.spanIdx);
+            const branchIdx = parseInt(e.target.dataset.branchIdx);
+            if (state.spans && state.spans[spanIdx] && state.spans[spanIdx].xMatrixBranches && state.spans[spanIdx].xMatrixBranches[branchIdx]) {
+                let ang = parseFloat(e.target.value) || 0;
+                const norm = ((ang % 360) + 360) % 360;
+                if (norm < 15 || norm > 345 || Math.abs(norm - 180) < 15) {
+                    alert(["⚠️ L'angle de la branche ne peut pas être aligné avec la ligne principale (0° ou 180°).", "⚠️ Branch angle cannot be aligned with the main lifeline (0° or 180°)."][state.lang || 0]);
+                    ang = (branchIdx === 0 ? 90 : -90);
+                    e.target.value = ang;
+                }
+                state.spans[spanIdx].xMatrixBranches[branchIdx].angleDeg = ang;
+                if (typeof update3DScene === "function") update3DScene();
+            }
+        });
+    });
+
+    document.querySelectorAll(".btn-table-remove-xmat").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const idx = parseInt(btn.dataset.spanIdx);
+            if (state.spans && state.spans[idx]) {
+                state.spans[idx].hasXMatrix = false;
+                state.spans[idx].xMatrixBranches = [];
+                syncXMatrixNomenclature();
+                if (typeof LayoutEditorModule !== "undefined") {
+                    LayoutEditorModule.recordState("remove_xmatrix");
+                    LayoutEditorModule.refreshUI();
+                } else {
+                    renderDynamicLayoutForm();
+                    if (typeof update3DScene === "function") update3DScene();
+                }
+            }
+        });
+    });
+
     // Table bottom action bar buttons
     const btnInsStart = document.getElementById("btn-insert-start");
     if (btnInsStart) {
@@ -4562,6 +6268,14 @@ function attachDynamicFormListeners() {
             const isSloped = (e.target.value === "true");
             if (state.spans[idx]) {
                 state.spans[idx].isSloped = isSloped;
+                if (!isSloped) {
+                    state.spans[idx].slopeDeg = 0;
+                    state.spans[idx].slope_deg = 0;
+                    state.spans[idx].xconesCount = 0;
+                } else if ((state.spans[idx].slopeDeg || 0) < 15) {
+                    state.spans[idx].slopeDeg = 15;
+                    state.spans[idx].slope_deg = 15;
+                }
             }
             renderDynamicLayoutForm();
         });
@@ -4750,7 +6464,7 @@ function attachDynamicFormListeners() {
     if (btnAdd) {
         btnAdd.addEventListener("click", () => {
             const defaultSlope = (state.layoutType === "slope_multi") ? 25 : 0;
-            state.spans.push({ length: 5.0, bendDeg: 0, slopeDeg: defaultSlope, bend90: false, isSloped: true, direction: "up" });
+            state.spans.push({ length: 5.0, bendDeg: 0, slopeDeg: defaultSlope, bend90: false, isSloped: (defaultSlope >= 15), direction: "up" });
             renderDynamicLayoutForm();
         });
     }
@@ -4862,9 +6576,9 @@ const TRANSLATIONS = {
         "Configurador Inteligente de Líneas de Vida para Cubiertas"
     ],
     homeDescription: [
-        "Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (EN 795-C, OSHA) pour les systèmes HOOKT New Pro, Light Pro et Long/Super/Ultra Range.",
-        "Size, visualize in 3D/2D and generate the regulatory compliance note (EN 795-C, OSHA) for HOOKT New Pro, Light Pro and Long/Super/Ultra Range systems.",
-        "Dimensione, visualice en 3D/2D y genere la nota de conformidad normativa (EN 795-C, OSHA) para los sistemas HOOKT New Pro, Light Pro y Long/Super/Ultra Range."
+        "Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (EN 795-C, OSHA) pour les systèmes HOOKT Core, Pro et Extreme.",
+        "Size, visualize in 3D/2D and generate the regulatory compliance note (EN 795-C, OSHA) for HOOKT Core, Pro and Extreme systems.",
+        "Dimensione, visualice en 3D/2D y genere la nota de conformidad normativa (EN 795-C, OSHA) para los sistemas HOOKT Core, Pro y Extreme."
     ],
     startBtnText: ["Démarrer une Configuration", "Start Configuration", "Iniciar Configuración"],
 
@@ -4901,28 +6615,22 @@ const TRANSLATIONS = {
         "ej: Chapa grecada 0.75mm, Hormigón C25/30, Viga de acero"
     ],
 
-    secLayout: ["Configuration de Pose (12 Layouts OSHA)", "Installation Layout (12 OSHA Configurations)", "Configuración de Instalación (12 Layouts OSHA)"],
+    secLayout: ["Configuration de Pose (6 Configurations)", "Installation Layout (6 Configurations)", "Configuración de Instalación (6 Configuraciones)"],
     layoutType: ["Configuration de pose :", "Layout Configuration:", "Configuración de instalación:"],
     layoutTypeOptions: {
-        single_span: ["1. Single Span (Portée Unique)", "1. Single Span", "1. Single Span (Luz Única)"],
-        multi_straight: ["2. Multi-span – Straight (Portées Alignées)", "2. Multi-span – Straight", "2. Multi-span – Straight (Luces Alineadas)"],
-        multi_bend_90: ["3. Multi-span – 90-Degree bend (Coudes à 90°)", "3. Multi-span – 90-Degree bend", "3. Multi-span – 90-Degree bend (Codos a 90°)"],
-        multi_bend_var: ["4. Multi-span – Variable-Degree bend (Coudes Angles Variables)", "4. Multi-span – Variable-Degree bend", "4. Multi-span – Variable-Degree bend (Codos Ángulos Variables)"],
-        multi_bend_multi90: ["5. Multi-span – Multiple 90-degree bends (Pourtour Toiture / Boucle)", "5. Multi-span – Multiple 90-degree bends (Perimeter / Loop)", "5. Multi-span – Multiple 90-degree bends (Perímetro / Bucle)"],
-        multi_bend_circle: ["6. Multi-span – Variable-degree bends (Cercle / Réservoir / Polygone)", "6. Multi-span – Variable-degree bends (Circle / Tank / Polygon)", "6. Multi-span – Variable-degree bends (Círculo / Tanque / Polígono)"],
-        multi_bend_multivar: ["7. Multi-span – Multiple Variable bends (Parcours Ouvert)", "7. Multi-span – Multiple Variable bends (Open Path)", "7. Multi-span – Multiple Variable bends (Trayectoria Abierta)"],
-        slope_single: ["8. Single-span – Slope System (Portée Unique en Pente)", "8. Single-span – Slope System", "8. Single-span – Slope System (Luz Única en Pendiente)"],
-        slope_multi: ["9. Multiple-span – Slope System (Portées Indépendantes en Pente)", "9. Multiple-span – Slope System", "9. Multiple-span – Slope System (Luces en Pendiente)"],
-        slope_horizontal_comb: ["10. Multiple-span – Horizontal and Slope System (Combinaison Horizontale/Pente)", "10. Multiple-span – Horizontal & Slope System", "10. Multiple-span – Horizontal & Slope System (Combinación Horizontal/Pendiente)"],
-        cross_spans: ["11. Cross-spans (Système en Croix - Exclusif NEW PRO)", "11. Cross-spans (Cross System - NEW PRO Exclusive)", "11. Cross-spans (Sistema en Cruz - Exclusivo NEW PRO)"],
-        grid_system: ["12. Grid Systems (Système en Grille - Exclusif LONG / SUPER / ULTRA RANGE)", "12. Grid Systems (Grid System - LONG RANGE Exclusive)", "12. Grid Systems (Sistema en Rejilla - Exclusivo LONG RANGE)"]
+        single_span: ["1. Portée Unique (Single Span)", "1. Single Span", "1. Single Span (Luz Única)"],
+        multi_straight: ["2. Multi-portée (Multi-span - Standard)", "2. Multi-span (Multi-span - Standard)", "2. Multi-span (Luces Múltiples)"],
+        multi_bend_circle: ["6. Multi-portée – Coudes variables (Cercle / Réservoir)", "6. Multi-span – Variable bends (Tank / Circle)", "6. Multi-span – Codos variables (Tanque / Círculo)"],
+        slope_single: ["8. Portée Unique en Pente (Slope System)", "8. Single-span – Slope System", "8. Single-span – Slope System (Pendiente)"],
+        cross_spans: ["11. Système en Croix (Cross-spans - Exclusif PRO)", "11. Cross-spans (PRO Exclusive)", "11. Sistema en Cruz (Exclusivo PRO)"],
+        grid_system: ["12. Système en Grille (Grid Systems - Exclusif EXTREME)", "12. Grid Systems (EXTREME Exclusive)", "12. Sistema en Rejilla (Exclusivo EXTREME)"]
     },
 
     lblProduct: ["Gamme de Système HOOKT :", "HOOKT System Family:", "Gama de Sistema HOOKT:"],
     lblShape: ["Forme / Typologie du Toit :", "Roof Shape / Typology:", "Forma / Tipología del Techo:"],
     roofShapes: {
         flat: ["Toit Plat (Terrasse Standard)", "Flat Roof (Standard Terrace)", "Techo Plano (Terraza Estándar)"],
-        flat_overhead: ["Toit Plat (Overhead - Long/Super/Ultra Range uniquement)", "Flat Roof (Overhead - Long/Super/Ultra Range only)", "Techo Plano (Overhead - Solo Long/Super/Ultra Range)"],
+        flat_overhead: ["Toit Plat (Overhead - Extreme uniquement)", "Flat Roof (Overhead - Extreme only)", "Techo Plano (Overhead - Solo Extreme)"],
         sloped: ["Toit Incliné (Monopente avec pente)", "Sloped Roof (Single pitch)", "Techo Inclinado (Monopassante)"],
         triangle: ["Toit Triangulaire (Pignon / Double Pente)", "Gabled / Triangular Roof", "Techo Triangular (A dos aguas)"]
     },
@@ -4935,7 +6643,7 @@ const TRANSLATIONS = {
     lblCustomSpan: ["Portée personnalisée :", "Custom Span:", "Luz Personalizada:"],
     lblLineLen: ["Longueur Ligne de Vie :", "Lifeline Length:", "Longitud Línea de Vida:"],
     lblUsers: ["Nombre d'utilisateurs max :", "Max Active Users:", "Número máx. de usuarios:"],
-    lblEngineerCoefficient: ["Coefficient de l'ingénieur :", "Engineer Coefficient:", "Coeficiente del Ingeniero:"],
+    lblEngineerCoefficient: ["Facteur de chute :", "Fall Factor:", "Factor de caída:"],
     lblHasLine2: ["Activer une seconde direction (Ligne 2)", "Enable a second direction (Line 2)", "Activar una segunda dirección (Línea 2)"],
     lblLine2Len: ["Longueur Ligne 2 :", "Line 2 Length:", "Longitud Línea 2:"],
     lblXmatrixLoc: ["Type / Emplacement Jonction :", "Junction Type / Location:", "Tipo / Ubicación de la Unión:"],
@@ -4961,33 +6669,44 @@ const TRANSLATIONS = {
 
     groupTitlePieces: ["GAMME & COMPOSANTS HOOKT", "HOOKT RANGE & COMPONENTS", "GAMA Y COMPONENTES HOOKT"],
     sysNames: {
-        longRange: ["LONG / SUPER / ULTRA RANGE", "LONG / SUPER / ULTRA RANGE", "LONG / SUPER / ULTRA RANGE"]
+        core: ["CORE", "CORE", "CORE"],
+        pro: ["PRO", "PRO", "PRO"],
+        extreme: ["EXTREME", "EXTREME", "EXTREME"],
+        longRange: ["EXTREME", "EXTREME", "EXTREME"],
+        lightPro: ["CORE", "CORE", "CORE"],
+        newPro: ["PRO", "PRO", "PRO"]
     },
     sysTags: {
+        core: ["Max 15m | 3 pers.", "Max 15 m | 3 users", "Máx 15m | 3 pers."],
+        pro: ["Max 15m | 5 pers.", "Max 15 m | 5 users", "Máx 15m | 5 pers."],
+        extreme: ["Max 56m | 3 pers.", "Max 56 m | 3 users", "Máx 56m | 3 pers."],
         newPro: ["Max 15m | 5 pers.", "Max 15 m | 5 users", "Máx 15m | 5 pers."],
         lightPro: ["Max 15m | 3 pers.", "Max 15 m | 3 users", "Máx 15m | 3 pers."],
         longRange: ["Max 56m | 3 pers.", "Max 56 m | 3 users", "Máx 56m | 3 pers."]
     },
     sysDescs: {
+        core: ["Solution légère et économique pour toitures tertiaires et industrielles.", "Lightweight and economical solution for commercial and industrial roofs.", "Solución ligera y económica para cubiertas comerciales e industriales."],
+        pro: ["Système haute performance avec absorbeurs intégrés pour bac acier et béton.", "High-performance system with integrated absorbers for trapezoidal sheet and concrete.", "Sistema de alto rendimiento con absorbedores integrados para chapa y hormigón."],
+        extreme: ["Ligne de vie pour très grandes portées (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m).", "Lifeline for long spans (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m).", "Línea de vida para grandes luces (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m)."],
         newPro: ["Système haute performance avec absorbeurs intégrés pour bac acier et béton.", "High-performance system with integrated absorbers for trapezoidal sheet and concrete.", "Sistema de alto rendimiento con absorbedores integrados para chapa y hormigón."],
         lightPro: ["Solution légère et économique pour toitures tertiaires et industrielles.", "Lightweight and economical solution for commercial and industrial roofs.", "Solución ligera y económica para cubiertas comerciales e industriales."],
         longRange: ["Ligne de vie pour très grandes portées (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m).", "Lifeline for long spans (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m).", "Línea de vida para grandes luces (Long Range 10-20m, Super Range 20-34m, Ultra Range 34-56m)."]
     },
     lblComponentsSelector: ["PIÈCES DU SYSTÈME (COCHER POUR AFFICHER EN 3D) :", "SYSTEM COMPONENTS (CHECK TO DISPLAY IN 3D):", "PIEZAS DEL SISTEMA (MARCAR PARA MOSTRAR EN 3D):"],
     emptyStateTitle: ["Veuillez choisir un système HOOKT ci-dessus", "Please choose a HOOKT system above", "Por favor elija un sistema HOOKT arriba"],
-    emptyStateSub: ["Cliquez sur NEW PRO, LIGHT PRO ou LONG / SUPER / ULTRA RANGE pour afficher et configurer la ligne de vie 3D.", "Click on NEW PRO, LIGHT PRO or LONG / SUPER / ULTRA RANGE to display and configure the 3D lifeline.", "Haga clic en NEW PRO, LIGHT PRO o LONG / SUPER / ULTRA RANGE para mostrar y configurar la línea de vida 3D."],
+    emptyStateSub: ["Cliquez sur CORE, PRO ou EXTREME pour afficher et configurer la ligne de vie 3D.", "Click on CORE, PRO or EXTREME to display and configure the 3D lifeline.", "Haga clic en CORE, PRO o EXTREME para mostrar y configurar la línea de vida 3D."],
 
     components: {
         "New_Pro": ["NEW PRO ABSORBER", "NEW PRO ABSORBER", "ABSORBEDOR NEW PRO"],
         "X-Matrix": ["X-MATRIX JONCTION MULTIDIRECTIONNELLE", "X-MATRIX MULTIDIRECTIONAL JUNCTION", "UNIÓN MULTIDIRECCIONAL X-MATRIX"],
-        "Mini_Omega": ["MINI OMEGA (avec NEW PRO)", "MINI OMEGA (with NEW PRO)", "MINI OMEGA (con NEW PRO)"],
-        "P_Inox": ["POTELET INOX RIGIDE (avec NEW PRO)", "STAINLESS RIGID POST (with NEW PRO)", "POSTE INOX RÍGIDO (con NEW PRO)"],
+        "Mini_Omega": ["MINI OMEGA (avec PRO)", "MINI OMEGA (with PRO)", "MINI OMEGA (con PRO)"],
+        "P_Inox": ["POTELET INOX RIGIDE (avec PRO)", "STAINLESS RIGID POST (with PRO)", "POSTE INOX RÍGIDO (con PRO)"],
         "X-Cone": ["X-CONE", "X-CONE", "X-CONE"],
         "LightPro": ["LIGHT PRO ABSORBER", "LIGHT PRO ABSORBER", "ABSORBEDOR LIGHT PRO"],
-        "PB_HOOKt": ["POTELET PB HOOKT (avec LIGHT PRO)", "PB HOOKT POST (with LIGHT PRO)", "POSTE PB HOOKT (con LIGHT PRO)"],
-        "P_Galva": ["POTELET GALVA RIGIDE (avec LIGHT PRO)", "GALVANIZED RIGID POST (with LIGHT PRO)", "POSTE GALVA RÍGIDO (con LIGHT PRO)"],
+        "PB_HOOKt": ["POTELET PB HOOKT (avec CORE)", "PB HOOKT POST (with CORE)", "POSTE PB HOOKT (con CORE)"],
+        "P_Galva": ["POTELET GALVA RIGIDE (avec CORE)", "GALVANIZED RIGID POST (with CORE)", "POSTE GALVA RÍGIDO (con CORE)"],
         "LongRange": ["LONG RANGE HEAVY ABSORBER", "LONG RANGE HEAVY ABSORBER", "ABSORBEDOR HEAVY LONG RANGE"],
-        "A-Fix": ["A-FIX ANCHOR (avec LONG RANGE)", "A-FIX ANCHOR (with LONG RANGE)", "ANCLAJE A-FIX (con LONG RANGE)"]
+        "A-Fix": ["A-FIX ANCHOR", "A-FIX ANCHOR", "ANCLAJE A-FIX"]
     },
 
     nodeInspectorTitle: ["INSPECTEUR & ORIENTATION 3D", "INSPECTOR & 3D ORIENTATION", "INSPECTOR Y ORIENTACIÓN 3D"],
@@ -5011,7 +6730,7 @@ const TRANSLATIONS = {
     subtabSpanMulti: ["Multi-Portée", "Multi-Span", "Multiluz"],
     lblAnchorCount: ["Potelets / Ancrages", "Posts / Anchors", "Postes / Anclajes"],
     lblAbsorberCount: ["Absorbeurs", "Absorbers", "Absorbedores"],
-    lblEngineerCoefCalc: ["Coef. Ingénieur :", "Engineer Coef.:", "Coef. Ingeniero:"],
+    lblEngineerCoefCalc: ["Facteur de chute :", "Fall Factor:", "Factor de caída:"],
     lblMaxAllowedSpanCalc: ["Portée Max Aut. :", "Max Allowed Span:", "Luz Máx. Perm.:"],
     sideTitleLifeline: ["Résultats sur la Ligne de Vie", "Lifeline Results", "Resultados de la Línea de Vida"],
     lblTotalLineLenRow: ["Longueur développée :", "Total Length:", "Longitud Total:"],
@@ -5047,9 +6766,9 @@ const TRANSLATIONS = {
             "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nLa opción X-CONE solo se puede utilizar para una pendiente de cubierta entre 15° y 75°."
         ],
         xmatrixNewProOnly: [
-            "⚠️ CONFIGURATION NON SUPPORTÉE :\nLa jonction X-MATRIX en milieu de ligne est uniquement disponible pour le système NEW PRO (et non Light Pro ni Long Range).\nPour cette étude spécifique, veuillez contacter l'équipe HOOKT.",
-            "⚠️ UNSUPPORTED CONFIGURATION:\nThe mid-span X-MATRIX junction is only available for the NEW PRO system (not Light Pro or Long Range).\nFor this specific study, please contact the HOOKT team.",
-            "⚠️ CONFIGURACIÓN NO COMPATIBLE:\nLa unión X-MATRIX a mitad de línea solo está disponible para el sistema NEW PRO (no Light Pro ni Long Range).\nPara este estudio específico, póngase en contacto con el equipo de HOOKT."
+            "⚠️ CONFIGURATION NON SUPPORTÉE :\nLa jonction X-MATRIX en milieu de ligne est uniquement disponible pour le système PRO (et non Core ni Extreme).\nPour cette étude spécifique, veuillez contacter l'équipe HOOKT.",
+            "⚠️ UNSUPPORTED CONFIGURATION:\nThe mid-span X-MATRIX junction is only available for the PRO system (not Core or Extreme).\nFor this specific study, please contact the HOOKT team.",
+            "⚠️ CONFIGURACIÓN NO COMPATIBLE:\nLa unión X-MATRIX a mitad de línea solo está disponible para el sistema PRO (no Core ni Extreme).\nPara este estudio específico, póngase en contacto con el equipo de HOOKT."
         ],
         line2FlatOnly: [
             "⚠️ CONFIGURATION INCOMPATIBLE :\nLa seconde direction (Ligne 2) peut uniquement être sélectionnée en configuration Toit Plat (Terrasse Standard).",
@@ -5057,49 +6776,49 @@ const TRANSLATIONS = {
             "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nLa segunda dirección (Línea 2) solo se puede seleccionar en configuración de Techo Plano (Terraza Estándar)."
         ],
         longRangeFlatOverhead: [
-            "⚠️ CONFIGURATION INCOMPATIBLE :\nLe système LONG / SUPER / ULTRA RANGE est exclusivement utilisable en configuration Toit Plat (Overhead avec poteaux hauts).\nVotre toiture actuelle est configurée différemment. Veuillez modifier les paramètres de la toiture.",
-            "⚠️ INCOMPATIBLE CONFIGURATION:\nThe LONG / SUPER / ULTRA RANGE system can only be used in Flat Roof configuration (Overhead with high posts).\nYour current roof is configured differently. Please modify roof parameters.",
-            "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nEl sistema LONG / SUPER / ULTRA RANGE solo se puede utilizar en configuración de Techo Plano (Overhead con postes altos).\nSu cubierta actual está configurada de forma diferente. Modifique los parámetros de la cubierta."
+            "⚠️ CONFIGURATION INCOMPATIBLE :\nLe système EXTREME est exclusivement utilisable en configuration Toit Plat (Overhead avec poteaux hauts).\nVotre toiture actuelle est configurée différemment. Veuillez modifier les paramètres de la toiture.",
+            "⚠️ INCOMPATIBLE CONFIGURATION:\nThe EXTREME system can only be used in Flat Roof configuration (Overhead with high posts).\nYour current roof is configured differently. Please modify roof parameters.",
+            "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nEl sistema EXTREME solo se puede utilizar en configuración de Techo Plano (Overhead con postes altos).\nSu cubierta actual está configurada de forma diferente. Modifique los parámetros de la cubierta."
         ],
         overheadLongRangeOnly: [
-            "⚠️ CONFIGURATION INCOMPATIBLE :\nLa configuration Toit Plat (Overhead avec poteaux hauts 3.0m) est exclusivement réservée au système LONG / SUPER / ULTRA RANGE.",
-            "⚠️ INCOMPATIBLE CONFIGURATION:\nFlat Roof (Overhead with 3.0m high posts) is exclusively reserved for the LONG / SUPER / ULTRA RANGE system.",
-            "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nEl Techo Plano (Overhead con postes de 3,0 m) está reservado exclusivamente para el sistema LONG / SUPER / ULTRA RANGE."
+            "⚠️ CONFIGURATION INCOMPATIBLE :\nLa configuration Toit Plat (Overhead avec poteaux hauts 3.0m) est exclusivement réservée au système EXTREME.",
+            "⚠️ INCOMPATIBLE CONFIGURATION:\nFlat Roof (Overhead with 3.0m high posts) is exclusively reserved for the EXTREME system.",
+            "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nEl Techo Plano (Overhead con postes de 3,0 m) está reservado exclusivamente para el sistema EXTREME."
         ],
         slopedNewProOnly: [
-            "⚠️ CONFIGURATION INCOMPATIBLE :\nLe toit mono-pente (incliné) est uniquement disponible pour le système NEW PRO.",
-            "⚠️ INCOMPATIBLE CONFIGURATION:\nSingle-slope (pitched) roof is only available for the NEW PRO system.",
-            "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nLa cubierta monopendiente (inclinada) solo está disponible para el sistema NEW PRO."
+            "⚠️ CONFIGURATION INCOMPATIBLE :\nLe toit mono-pente (incliné) est uniquement disponible pour le système PRO.",
+            "⚠️ INCOMPATIBLE CONFIGURATION:\nSingle-slope (pitched) roof is only available for the PRO system.",
+            "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nLa cubierta monopendiente (inclinada) solo está disponible para el sistema PRO."
         ],
         usersLimit: [
-            "⚠️ LIMITATION DU SYSTÈME :\nPour les systèmes LIGHT PRO, LONG RANGE, SUPER RANGE et ULTRA RANGE, le nombre d'utilisateurs maximal est de 3 personnes (NEW PRO jusqu'à 5 utilisateurs).",
-            "⚠️ SYSTEM LIMITATION:\nFor LIGHT PRO, LONG RANGE, SUPER RANGE, and ULTRA RANGE systems, the maximum number of users is 3 people (NEW PRO up to 5 users).",
-            "⚠️ LIMITACIÓN DEL SISTEMA:\nPara los sistemas LIGHT PRO, LONG RANGE, SUPER RANGE y ULTRA RANGE, el número máximo de usuarios es de 3 personas (NEW PRO hasta 5 usuarios)."
+            "⚠️ LIMITATION DU SYSTÈME :\nPour les systèmes CORE et EXTREME, le nombre d'utilisateurs maximal est de 3 personnes (PRO jusqu'à 5 utilisateurs).",
+            "⚠️ SYSTEM LIMITATION:\nFor CORE and EXTREME systems, the maximum number of users is 3 people (PRO up to 5 users).",
+            "⚠️ LIMITACIÓN DEL SISTEMA:\nPara los sistemas CORE y EXTREME, el número máximo de usuarios es de 3 personas (PRO hasta 5 usuarios)."
         ],
         miniOmegaNewPro: [
-            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLe potelet MINI OMEGA ne s'utilise qu'avec un ancrage NEWPRO (jamais seul, ni avec Light Pro ou Longue Portée).",
-            "⚠️ INVALID CONFIGURATION ALERT:\nThe MINI OMEGA post is only used with a NEWPRO anchor (never alone, nor with Light Pro or Long Range).",
-            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nEl poste MINI OMEGA solo se utiliza con un anclaje NEWPRO (nunca solo, ni con Light Pro o Long Range)."
+            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLe potelet MINI OMEGA ne s'utilise qu'avec un ancrage PRO (jamais seul, ni avec Core ou Extreme).",
+            "⚠️ INVALID CONFIGURATION ALERT:\nThe MINI OMEGA post is only used with a PRO anchor (never alone, nor with Core or Extreme).",
+            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nEl poste MINI OMEGA solo se utiliza con un anclaje PRO (nunca solo, ni con Core o Extreme)."
         ],
         basculantLightPro: [
-            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLe potelet basculant ne s'utilise qu'avec un ancrage Light Pro.",
-            "⚠️ INVALID CONFIGURATION ALERT:\nThe tilting post is only used with a Light Pro anchor.",
-            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nEl poste basculante solo se utiliza con un anclaje Light Pro."
+            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLe potelet basculant ne s'utilise qu'avec un ancrage Core.",
+            "⚠️ INVALID CONFIGURATION ALERT:\nThe tilting post is only used with a Core anchor.",
+            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nEl poste basculante solo se utiliza con un anclaje Core."
         ],
         rigideNotLongRange: [
-            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLe potelet rigide ne s'utilise qu'avec les gammes NEWPRO ou Light Pro.",
-            "⚠️ INVALID CONFIGURATION ALERT:\nThe rigid post is only used with NEWPRO or Light Pro ranges.",
-            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nEl poste rígido solo se utiliza con las gamas NEWPRO o Light Pro."
+            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLe potelet rigide ne s'utilise qu'avec les gammes PRO ou Core.",
+            "⚠️ INVALID CONFIGURATION ALERT:\nThe rigid post is only used with PRO or Core ranges.",
+            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nEl poste rígido solo se utiliza con las gamas PRO o Core."
         ],
         afixLongRangeOnly: [
-            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLa pièce A.FIX ne s'utilise qu'avec la gamme Longue Portée.",
-            "⚠️ INVALID CONFIGURATION ALERT:\nThe A.FIX component is only used with the Long Range system.",
-            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nLa pieza A.FIX solo se utiliza con la gama Long Range."
+            "⚠️ ALERTE CONFIGURATION INVALIDE :\nLa pièce A.FIX ne s'utilise qu'avec la gamme EXTREME.",
+            "⚠️ INVALID CONFIGURATION ALERT:\nThe A.FIX component is only used with the EXTREME system.",
+            "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nLa pieza A.FIX solo se utiliza con la gama EXTREME."
         ],
         longRangeLengthRange: [
-            "⚠️ LONGUEUR DE LIGNE NON CONFORME :\nPour le système LONG RANGE, vous devez choisir une longueur de ligne entre 10 et 56 m.",
-            "⚠️ NON-COMPLIANT LINE LENGTH:\nFor the LONG RANGE system, line length must be between 32.8 and 183.7 ft.",
-            "⚠️ LONGITUD DE LÍNEA NO CONFORME:\nPara el sistema LONG RANGE, la longitud de la línea debe estar entre 10 y 56 m."
+            "⚠️ LONGUEUR DE LIGNE NON CONFORME :\nPour le système EXTREME, vous devez choisir une longueur de ligne entre 10 et 56 m.",
+            "⚠️ NON-COMPLIANT LINE LENGTH:\nFor the EXTREME system, line length must be between 32.8 and 183.7 ft.",
+            "⚠️ LONGITUD DE LÍNEA NO CONFORME:\nPara el sistema EXTREME, la longitud de la línea debe estar entre 10 y 56 m."
         ],
         pdfLoading: [
             "Chargement du générateur PDF en cours... Veuillez réessayer dans un instant.",
@@ -5122,7 +6841,7 @@ const TRANSLATIONS = {
         genDate: ["Date de génération : ", "Generation date: ", "Fecha de generación: "],
         productRange: ["Gamme de produit : ", "Product range: ", "Gama de producto: "],
         calcStandard: ["Norme de calcul : ", "Calculation standard: ", "Norma de cálculo: "],
-        engineerCoefficient: ["Coefficient de l'ingénieur : ", "Engineer coefficient: ", "Coeficiente del ingeniero: "],
+        engineerCoefficient: ["Facteur de chute : ", "Fall Factor: ", "Factor de caída: "],
         anchorCount: ["Nombre d'ancrages : ", "Number of anchors: ", "Número de anclajes: "],
         absorberCount: ["Nombre d'absorbeurs : ", "Number of absorbers: ", "Número de absorbedores: "],
         mountingSupport: ["Support de pose : ", "Mounting surface: ", "Soporte de instalación: "],
@@ -5182,13 +6901,13 @@ const TRANSLATIONS = {
             ["Component Name", "Fastener Count", "Fastener Type"],
             ["Nombre de la pieza", "Número de fijaciones", "Tipo de fijación"]
         ],
-        matriceNewPro: ["Matrice NEWPRO Absorbeur", "NEWPRO Matrix Absorber", "Matriz NEWPRO Absorbedor"],
-        matriceLightPro: ["Matrice Light Pro Absorbeur", "Light Pro Matrix Absorber", "Matriz Light Pro Absorbedor"],
-        matriceLongRange: ["Matrice Longue Portée", "Long Range Matrix", "Matriz Larga Distancia"],
+        matriceNewPro: ["Matrice PRO Absorbeur", "PRO Matrix Absorber", "Matriz PRO Absorbedor"],
+        matriceLightPro: ["Matrice CORE Absorbeur", "CORE Matrix Absorber", "Matriz CORE Absorbedor"],
+        matriceLongRange: ["Matrice EXTREME Absorbeur", "EXTREME Matrix Absorber", "Matriz EXTREME Absorbedor"],
 
-        platineNewPro: ["Platine de fixation NEWPRO", "NEWPRO Mounting Plate", "Placa de fijación NEWPRO"],
-        platineLightPro: ["Platine de fixation Light Pro", "Light Pro Mounting Plate", "Placa de fijación Light Pro"],
-        platineLongRange: ["Platine de fixation Longue Portée", "Long Range Mounting Plate", "Placa de fijación Larga Distancia"],
+        platineNewPro: ["Platine de fixation PRO", "PRO Mounting Plate", "Placa de fijación PRO"],
+        platineLightPro: ["Platine de fixation CORE", "CORE Mounting Plate", "Placa de fijación CORE"],
+        platineLongRange: ["Platine de fixation EXTREME", "EXTREME Mounting Plate", "Placa de fijación EXTREME"],
 
         inoxBolts: ["Boulons Inox M12 x 30 + rondelles", "Stainless Bolts M12 x 30 + washers", "Pernos Inox M12 x 30 + arandelas"],
         noCompChecked: ["Aucun composant coché", "No component checked", "Ningún componente marcado"],
@@ -5262,7 +6981,7 @@ function getComponentName(c) {
         return ["ANCRAGE A-FIX", "A-FIX ANCHOR", "ANCLAJE A-FIX"][l];
     }
     if (c.id === "PB_HOOKt" || c.id === "PB_HOOKT") {
-        const sysName = state.product || "NEW PRO";
+        const sysName = normalizeProduct(state.product || "CORE");
         return [
             `POTELET PB HOOKT (avec ${sysName})`,
             `PB HOOKT POST (with ${sysName})`,
@@ -5270,7 +6989,7 @@ function getComponentName(c) {
         ][l];
     }
     if (c.id === "P_Galva") {
-        const sysName = state.product || "NEW PRO";
+        const sysName = normalizeProduct(state.product || "CORE");
         const heightSuffix = (state.hllElevationPreset === "d_ring") ? " 1.5m" : (state.hllElevationPreset === "overhead") ? " 1.8m" : "";
         return [
             `POTELET GALVA RIGIDE${heightSuffix} (avec ${sysName})`,
@@ -5279,7 +6998,7 @@ function getComponentName(c) {
         ][l];
     }
     if (c.id === "P_Inox") {
-        const sysName = state.product || "NEW PRO";
+        const sysName = normalizeProduct(state.product || "CORE");
         const heightSuffix = (state.hllElevationPreset === "d_ring") ? " 1.5m" : (state.hllElevationPreset === "overhead") ? " 1.8m" : "";
         return [
             `POTELET INOX RIGIDE${heightSuffix} (avec ${sysName})`,
@@ -5385,7 +7104,7 @@ function applyLanguage(langIndex) {
     const lblUsers = document.getElementById("lbl-users");
     if (lblUsers) lblUsers.textContent = TRANSLATIONS.lblUsers[l];
     const lblEngCoef = document.getElementById("lbl-engineer-coefficient");
-    if (lblEngCoef) lblEngCoef.textContent = TRANSLATIONS.lblEngineerCoefficient ? TRANSLATIONS.lblEngineerCoefficient[l] : (isEn ? "Engineer Coefficient:" : "Coefficient de l'ingénieur :");
+    if (lblEngCoef) lblEngCoef.textContent = TRANSLATIONS.lblEngineerCoefficient ? TRANSLATIONS.lblEngineerCoefficient[l] : (isEn ? "Fall Factor:" : "Facteur de chute :");
     const hintEngCoef = document.getElementById("hint-engineer-coefficient");
     if (hintEngCoef) hintEngCoef.textContent = isEn ? "Adjusts calculated forces (default 1.00 = test results)" : "Ajuste les efforts calculés (défaut 1.00 = essais)";
 
@@ -5428,10 +7147,25 @@ function applyLanguage(langIndex) {
     const selConnDev = document.getElementById("select-connecting-device");
     if (selConnDev) {
         const optSrd = selConnDev.querySelector("option[value='srd']");
+        const optCustomSrd = selConnDev.querySelector("option[value='custom_srd']");
         const optLany = selConnDev.querySelector("option[value='lanyard']");
-        if (optSrd) optSrd.textContent = isEn ? "SRD / Self-Retracting Lifeline (SRL)" : "SRD / Enrouleur à rappel automatique (SRL)";
-        if (optLany) optLany.textContent = isEn ? "Shock-Absorbing Lanyard" : "Longe avec absorbeur d'énergie";
+        const optCustomLany = selConnDev.querySelector("option[value='custom_lanyard']");
+        if (optSrd) optSrd.textContent = isEn ? "SRD / Self-Retracting Lifeline (SRL)" : (l === 2 ? "SRD / Retráctil automático (SRL)" : "SRD / Enrouleur à rappel automatique (SRL)");
+        if (optCustomSrd) optCustomSrd.textContent = isEn ? "Other SRL / SRD (Custom Entry)" : (l === 2 ? "Otro Retráctil SRL (Entrada libre)" : "Autre Enrouleur SRL (Saisie libre)");
+        if (optLany) optLany.textContent = isEn ? "Shock-Absorbing Lanyard" : (l === 2 ? "Eslinga con absorbedor" : "Longe avec absorbeur d'énergie");
+        if (optCustomLany) optCustomLany.textContent = isEn ? "Other Lanyard (Custom Entry)" : (l === 2 ? "Otra Eslinga (Entrada libre)" : "Autre Longe absorbante (Saisie libre)");
     }
+
+    const lblCustomName = document.getElementById("lbl-custom-device-name");
+    if (lblCustomName) lblCustomName.textContent = isEn ? "Device Name / Model:" : (l === 2 ? "Nombre / Modelo del dispositivo:" : "Nom / Modèle du dispositif :");
+    const lblCustomClass = document.getElementById("lbl-custom-device-class");
+    if (lblCustomClass) lblCustomClass.textContent = isEn ? "ANSI / OSHA Class:" : (l === 2 ? "Clase ANSI / OSHA:" : "Classe ANSI / OSHA :");
+    const lblCustomLen = document.getElementById("lbl-custom-device-length");
+    if (lblCustomLen) lblCustomLen.textContent = isEn ? "Lanyard Length (m):" : (l === 2 ? "Longitud de eslinga (m):" : "Longueur de la longe (m) :");
+    const lblSrlMad = document.getElementById("lbl-srl-mad");
+    if (lblSrlMad) lblSrlMad.textContent = isEn ? "Maximum Arrest Distance (MAD):" : (l === 2 ? "Distancia Máx. de Detención (MAD):" : "Distance d'arrêt maximale (MAD) :");
+    const lblArrestForce = document.getElementById("lbl-arrest-force");
+    if (lblArrestForce) lblArrestForce.textContent = isEn ? "Arrest Force (1 user max):" : (l === 2 ? "Fuerza de parada máx (1 user):" : "Force d'arrêt (1 user max) :");
 
     // Fall mode
     const lblFallMode = document.getElementById("lbl-fall-mode");
@@ -5457,6 +7191,21 @@ function applyLanguage(langIndex) {
     if (inSubstrate) inSubstrate.placeholder = TRANSLATIONS.substratePlaceholder[l];
 
     // Section 1bis: Roof Parameters
+    const lblRoofNorm = document.getElementById("lbl-roof-norm");
+    if (lblRoofNorm) {
+        lblRoofNorm.innerHTML = `<i class="fa-solid fa-scale-balanced"></i> ${["Norme réglementaire :", "Regulatory Standard:", "Norma reglamentaria:"][l]}`;
+    }
+    const hintRoofNormEn = document.getElementById("hint-roof-norm-en");
+    if (hintRoofNormEn) {
+        hintRoofNormEn.innerHTML = `<i class="fa-solid fa-circle-exclamation"></i> ${["En norme EN 795, les toitures en pente ne sont pas admises.", "Under EN 795 standard, sloped roofs are not permitted.", "Bajo la norma EN 795, no se permiten cubiertas inclinadas."][l]}`;
+    }
+    const selRoofNorm = document.getElementById("select-roof-norm");
+    if (selRoofNorm) {
+        const optOsha = selRoofNorm.querySelector("option[value='OSHA']");
+        const optEn = selRoofNorm.querySelector("option[value='EN 795']");
+        if (optOsha) optOsha.textContent = isEn ? "OSHA (US Standard / OSHA 1910 - 1926)" : "OSHA (Standard américain / OSHA 1910 - 1926)";
+        if (optEn) optEn.textContent = isEn ? "EN 795-C (European Standard)" : "EN 795-C (Standard européen)";
+    }
     const secRoof = document.getElementById("lbl-sec-roof");
     if (secRoof) secRoof.textContent = TRANSLATIONS.secRoof[l];
     const lblRoofType = document.getElementById("lbl-roof-type");
@@ -5497,6 +7246,53 @@ function applyLanguage(langIndex) {
             }
         });
     }
+
+    // Sidebar connecting device & Retracted length translations (Spec V2 — 10 / Prompt 16)
+    const lblSidebarConn = document.getElementById("lbl-sidebar-conn-dev-title");
+    if (lblSidebarConn) lblSidebarConn.textContent = ["Type de connexion :", "Connecting Device Type:", "Tipo de conexión:"][l];
+    const selSidebarConn = document.getElementById("select-sidebar-connecting-device");
+    if (selSidebarConn) {
+        const optSrd = selSidebarConn.querySelector("option[value='srd']");
+        const optCustomSrd = selSidebarConn.querySelector("option[value='custom_srd']");
+        const optLany = selSidebarConn.querySelector("option[value='lanyard']");
+        const optCustomLany = selSidebarConn.querySelector("option[value='custom_lanyard']");
+        if (optSrd) optSrd.textContent = isEn ? "SRL (Self-Retracting Lifeline)" : (l === 2 ? "SRL (Retráctil automático)" : "SRL (Enrouleur à rappel automatique)");
+        if (optCustomSrd) optCustomSrd.textContent = isEn ? "Custom SRL (Free entry)" : (l === 2 ? "SRL personalizado (Entrada libre)" : "SRL personnalisé (Saisie libre)");
+        if (optLany) optLany.textContent = isEn ? "Shock-Absorbing Lanyard" : (l === 2 ? "Eslinga con absorbedor" : "Longe avec absorbeur d'énergie");
+        if (optCustomLany) optCustomLany.textContent = isEn ? "Custom Lanyard (Free entry)" : (l === 2 ? "Eslinga personalizada (Entrada libre)" : "Longe personnalisée (Saisie libre)");
+    }
+
+    const isLanyardDev = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
+    const lblRetractedTitle = document.getElementById("lbl-srl-retracted-title");
+    if (lblRetractedTitle) {
+        lblRetractedTitle.textContent = isLanyardDev
+            ? ["Longueur de la longe :", "Lanyard Length:", "Longitud de la eslinga:"][l]
+            : ["Longueur rétractée :", "Retracted Length:", "Longitud retraída:"][l];
+    }
+    const btnResetRetractedTxt = document.getElementById("btn-reset-retracted-length-text");
+    if (btnResetRetractedTxt) btnResetRetractedTxt.textContent = ["Rétablir", "Reset", "Restablecer"][l];
+    const badgeRetractedMod = document.getElementById("badge-retracted-modified");
+    if (badgeRetractedMod) badgeRetractedMod.textContent = ["modifiée", "modified", "modificada"][l];
+    const retractedWarnTxt = document.getElementById("retracted-warning-text");
+    if (retractedWarnTxt) {
+        retractedWarnTxt.textContent = isLanyardDev
+            ? ["Avertissement : Longueur de la longe supérieure à 3,0 m (9.8 ft).", "Warning: Lanyard length exceeds 3.0 m (9.8 ft).", "Advertencia: Longitud de eslinga superior a 3,0 m (9.8 ft)."][l]
+            : ["Avertissement : Longueur rétractée supérieure à 3,0 m (9.8 ft).", "Warning: Retracted length exceeds 3.0 m (9.8 ft).", "Advertencia: Longitud retraída superior a 3,0 m (9.8 ft)."][l];
+    }
+
+    // Update SRL cards display
+    if (typeof updateSrlCardsDisplay === "function") updateSrlCardsDisplay();
+
+    const lblSrlMadTitle = document.getElementById("lbl-srl-mad-title");
+    if (lblSrlMadTitle) lblSrlMadTitle.textContent = ["Distance d'arrêt maximale (MAD) :", "Maximum Arrest Distance (MAD):", "Distancia máxima de parada (MAD):"][l];
+    const btnResetMadTxt = document.getElementById("btn-reset-mad-text");
+    if (btnResetMadTxt) btnResetMadTxt.textContent = ["Rétablir", "Reset", "Restablecer"][l];
+    const badgeMadMod = document.getElementById("badge-mad-modified");
+    if (badgeMadMod) badgeMadMod.textContent = ["modifiée", "modified", "modificada"][l];
+    const madWarnTxt = document.getElementById("mad-warning-text");
+    if (madWarnTxt) madWarnTxt.textContent = ["Avertissement : MAD supérieure à 2,00 m (6.6 ft).", "Warning: MAD exceeds 2.00 m (6.6 ft).", "Advertencia: MAD superior a 2,00 m (6.6 ft)."][l];
+    const lblBtnStairs = document.getElementById("lbl-btn-stairs");
+    if (lblBtnStairs) lblBtnStairs.textContent = ["Escaliers", "Stairs", "Escaleras"][l];
 
     // Engineer coefficient readout
     const valEngCoef = document.getElementById("val-engineer-coef");
@@ -5550,22 +7346,26 @@ function applyLanguage(langIndex) {
     const groupTitlePieces = document.getElementById("group-title-pieces");
     if (groupTitlePieces) groupTitlePieces.textContent = TRANSLATIONS.groupTitlePieces[l];
 
-    const sysTagNewPro = document.getElementById("sys-tag-newpro");
-    if (sysTagNewPro) sysTagNewPro.textContent = TRANSLATIONS.sysTags.newPro[l];
-    const sysDescNewPro = document.getElementById("sys-desc-newpro");
-    if (sysDescNewPro) sysDescNewPro.textContent = TRANSLATIONS.sysDescs.newPro[l];
+    const sysNameCore = document.getElementById("sys-name-core");
+    if (sysNameCore) sysNameCore.textContent = TRANSLATIONS.sysNames.core ? TRANSLATIONS.sysNames.core[l] : "CORE";
+    const sysTagCore = document.getElementById("sys-tag-core") || document.getElementById("sys-tag-lightpro");
+    if (sysTagCore) sysTagCore.textContent = TRANSLATIONS.sysTags.core ? TRANSLATIONS.sysTags.core[l] : TRANSLATIONS.sysTags.lightPro[l];
+    const sysDescCore = document.getElementById("sys-desc-core") || document.getElementById("sys-desc-lightpro");
+    if (sysDescCore) sysDescCore.textContent = TRANSLATIONS.sysDescs.core ? TRANSLATIONS.sysDescs.core[l] : TRANSLATIONS.sysDescs.lightPro[l];
 
-    const sysTagLightPro = document.getElementById("sys-tag-lightpro");
-    if (sysTagLightPro) sysTagLightPro.textContent = TRANSLATIONS.sysTags.lightPro[l];
-    const sysDescLightPro = document.getElementById("sys-desc-lightpro");
-    if (sysDescLightPro) sysDescLightPro.textContent = TRANSLATIONS.sysDescs.lightPro[l];
+    const sysNamePro = document.getElementById("sys-name-pro");
+    if (sysNamePro) sysNamePro.textContent = TRANSLATIONS.sysNames.pro ? TRANSLATIONS.sysNames.pro[l] : "PRO";
+    const sysTagPro = document.getElementById("sys-tag-pro") || document.getElementById("sys-tag-newpro");
+    if (sysTagPro) sysTagPro.textContent = TRANSLATIONS.sysTags.pro ? TRANSLATIONS.sysTags.pro[l] : TRANSLATIONS.sysTags.newPro[l];
+    const sysDescPro = document.getElementById("sys-desc-pro") || document.getElementById("sys-desc-newpro");
+    if (sysDescPro) sysDescPro.textContent = TRANSLATIONS.sysDescs.pro ? TRANSLATIONS.sysDescs.pro[l] : TRANSLATIONS.sysDescs.newPro[l];
 
-    const sysNameLongRange = document.getElementById("sys-name-longrange");
-    if (sysNameLongRange) sysNameLongRange.textContent = TRANSLATIONS.sysNames.longRange[l];
-    const sysTagLongRange = document.getElementById("sys-tag-longrange");
-    if (sysTagLongRange) sysTagLongRange.textContent = TRANSLATIONS.sysTags.longRange[l];
-    const sysDescLongRange = document.getElementById("sys-desc-longrange");
-    if (sysDescLongRange) sysDescLongRange.textContent = TRANSLATIONS.sysDescs.longRange[l];
+    const sysNameExtreme = document.getElementById("sys-name-extreme") || document.getElementById("sys-name-longrange");
+    if (sysNameExtreme) sysNameExtreme.textContent = TRANSLATIONS.sysNames.extreme ? TRANSLATIONS.sysNames.extreme[l] : TRANSLATIONS.sysNames.longRange[l];
+    const sysTagExtreme = document.getElementById("sys-tag-extreme") || document.getElementById("sys-tag-longrange");
+    if (sysTagExtreme) sysTagExtreme.textContent = TRANSLATIONS.sysTags.extreme ? TRANSLATIONS.sysTags.extreme[l] : TRANSLATIONS.sysTags.longRange[l];
+    const sysDescExtreme = document.getElementById("sys-desc-extreme") || document.getElementById("sys-desc-longrange");
+    if (sysDescExtreme) sysDescExtreme.textContent = TRANSLATIONS.sysDescs.extreme ? TRANSLATIONS.sysDescs.extreme[l] : TRANSLATIONS.sysDescs.longRange[l];
 
     const lblCompSel = document.getElementById("lbl-components-selector");
     if (lblCompSel) {
@@ -5777,31 +7577,37 @@ function applyLanguage(langIndex) {
 }
 
 // Real 3D Component Models Database & Exploded Views
-// Real 3D Component Models Database & Exploded Views
 const COMPONENTS_DB = {
-    "NEW PRO": [
+    "CORE": [
+        { id: "LightPro", name: "LIGHT PRO ABSORBER", file: "models/light_pro/LightPro.glb", checked: false, exploded: ["models/light_pro/LightPro_exploded1.png", "models/light_pro/LightPro_exploded2.png", "models/light_pro/LightPro_exploded3.png"] },
+        { id: "PB_HOOKt", name: "POTELET PB HOOKT (avec CORE)", file: "models/light_pro/PB_HOOKT.glb", checked: false, exploded: ["models/light_pro/PB_HOOKT_exploded1.png", "models/light_pro/PB_HOOKT_exploded2.png", "models/light_pro/PB_HOOKT_exploded3.png"] },
+        { id: "P_Galva", name: "POTELET GALVA RIGIDE (avec CORE)", file: "models/light_pro/P_Galva_Rigide.glb", checked: false, exploded: ["models/light_pro/P_Galva_Rigide_exploded1.png", "models/light_pro/P_Galva_Rigide_exploded2.png", "models/light_pro/P_Galva_Rigide_exploded3.png"] },
+        { id: "P_Inox", name: "POTELET INOX RIGIDE (avec CORE)", file: "models/light_pro/P_Inox_Rigide.glb", checked: false, exploded: ["models/light_pro/P_Inox_Rigide_exploded1.png", "models/light_pro/P_Inox_Rigide_exploded2.png", "models/light_pro/P_Inox_Rigide_exploded3.png"] },
+        { id: "X-Cone", name: "X-CONE", file: "models/new_pro/X-Cone.glb", checked: false, exploded: ["models/new_pro/X-Cone_exploded1.png", "models/new_pro/X-Cone_exploded3.png"] }
+    ],
+    "PRO": [
         { id: "New_Pro", name: "NEW PRO ABSORBER", file: "models/new_pro/New_Pro.glb", checked: false, exploded: ["models/new_pro/New_Pro_exploded1.png", "models/new_pro/New_Pro_exploded2.png", "models/new_pro/New_Pro_exploded3.png"] },
         { id: "X-Matrix", name: "X-MATRIX JONCTION MULTIDIRECTIONNELLE", file: "models/new_pro/X-Matrix.glb", checked: false, exploded: ["models/new_pro/X-Matrix_exploded1.png", "models/new_pro/X-Matrix_exploded2.png", "models/new_pro/X-Matrix_exploded3.png"] },
-        { id: "Mini_Omega", name: "MINI OMEGA (avec NEW PRO)", file: "models/new_pro/Mini_Omega.glb", checked: false, exploded: ["models/new_pro/Mini_Omega_exploded1.png", "models/new_pro/Mini_Omega_exploded2.png", "models/new_pro/Mini_Omega_exploded3.png"] },
-        { id: "PB_HOOKt", name: "POTELET PB HOOKT (avec NEW PRO)", file: "models/new_pro/PB_HOOKT.glb", checked: false, exploded: ["models/new_pro/PB_HOOKT_exploded1.png", "models/new_pro/PB_HOOKT_exploded2.png", "models/new_pro/PB_HOOKT_exploded3.png"] },
-        { id: "P_Galva", name: "POTELET GALVA RIGIDE (avec NEW PRO)", file: "models/new_pro/P_Glava_Rigide.glb", checked: false, exploded: ["models/new_pro/P_Galva_Rigide_exploded1.png", "models/new_pro/P_Galva_Rigide_exploded2.png", "models/new_pro/P_Galva_Rigide_exploded3.png"] },
-        { id: "P_Inox", name: "POTELET INOX RIGIDE (avec NEW PRO)", file: "models/new_pro/P_Inox_Rigide.glb", checked: false, exploded: ["models/new_pro/P_Inox_Rigide_exploded1.png", "models/new_pro/P_Inox_Rigide_exploded2.png", "models/new_pro/P_Inox_Rigide_exploded3.png"] },
+        { id: "Mini_Omega", name: "MINI OMEGA (avec PRO)", file: "models/new_pro/Mini_Omega.glb", checked: false, exploded: ["models/new_pro/Mini_Omega_exploded1.png", "models/new_pro/Mini_Omega_exploded2.png", "models/new_pro/Mini_Omega_exploded3.png"] },
+        { id: "PB_HOOKt", name: "POTELET PB HOOKT (avec PRO)", file: "models/new_pro/PB_HOOKT.glb", checked: false, exploded: ["models/new_pro/PB_HOOKT_exploded1.png", "models/new_pro/PB_HOOKT_exploded2.png", "models/new_pro/PB_HOOKT_exploded3.png"] },
+        { id: "P_Galva", name: "POTELET GALVA RIGIDE (avec PRO)", file: "models/new_pro/P_Glava_Rigide.glb", checked: false, exploded: ["models/new_pro/P_Galva_Rigide_exploded1.png", "models/new_pro/P_Galva_Rigide_exploded2.png", "models/new_pro/P_Galva_Rigide_exploded3.png"] },
+        { id: "P_Inox", name: "POTELET INOX RIGIDE (avec PRO)", file: "models/new_pro/P_Inox_Rigide.glb", checked: false, exploded: ["models/new_pro/P_Inox_Rigide_exploded1.png", "models/new_pro/P_Inox_Rigide_exploded2.png", "models/new_pro/P_Inox_Rigide_exploded3.png"] },
         { id: "X-Cone", name: "X-CONE", file: "models/new_pro/X-Cone.glb", checked: false, exploded: ["models/new_pro/X-Cone_exploded1.png", "models/new_pro/X-Cone_exploded3.png"] }
     ],
-    "LIGHT PRO": [
-        { id: "LightPro", name: "LIGHT PRO ABSORBER", file: "models/light_pro/LightPro.glb", checked: false, exploded: ["models/light_pro/LightPro_exploded1.png", "models/light_pro/LightPro_exploded2.png", "models/light_pro/LightPro_exploded3.png"] },
-        { id: "PB_HOOKt", name: "POTELET PB HOOKT (avec LIGHT PRO)", file: "models/light_pro/PB_HOOKT.glb", checked: false, exploded: ["models/light_pro/PB_HOOKT_exploded1.png", "models/light_pro/PB_HOOKT_exploded2.png", "models/light_pro/PB_HOOKT_exploded3.png"] },
-        { id: "P_Galva", name: "POTELET GALVA RIGIDE (avec LIGHT PRO)", file: "models/light_pro/P_Galva_Rigide.glb", checked: false, exploded: ["models/light_pro/P_Galva_Rigide_exploded1.png", "models/light_pro/P_Galva_Rigide_exploded2.png", "models/light_pro/P_Galva_Rigide_exploded3.png"] },
-        { id: "P_Inox", name: "POTELET INOX RIGIDE (avec LIGHT PRO)", file: "models/light_pro/P_Inox_Rigide.glb", checked: false, exploded: ["models/light_pro/P_Inox_Rigide_exploded1.png", "models/light_pro/P_Inox_Rigide_exploded2.png", "models/light_pro/P_Inox_Rigide_exploded3.png"] },
-        { id: "X-Cone", name: "X-CONE", file: "models/new_pro/X-Cone.glb", checked: false, exploded: ["models/new_pro/X-Cone_exploded1.png", "models/new_pro/X-Cone_exploded3.png"] }
-    ],
-    "LONG RANGE": [
+    "EXTREME": [
         { id: "LongRange", name: "LONG RANGE HEAVY ABSORBER", file: "models/long_range/LongRange.glb", checked: false, exploded: ["models/long_range/LongRange_exploded1.png", "models/long_range/LongRange_exploded2.png", "models/long_range/LongRange_exploded3.png"] },
         { id: "X-Matrix", name: "X-MATRIX JONCTION MULTIDIRECTIONNELLE", file: "models/new_pro/X-Matrix.glb", checked: false, exploded: ["models/new_pro/X-Matrix_exploded1.png", "models/new_pro/X-Matrix_exploded2.png", "models/new_pro/X-Matrix_exploded3.png"] },
         { id: "A-Fix", name: "A-FIX ANCHOR", file: "models/long_range/LongRange.glb", checked: false, exploded: ["models/long_range/A-Fix_exploded1.png", "models/long_range/A-Fix_exploded2.png"] },
         { id: "X-Cone", name: "X-CONE", file: "models/new_pro/X-Cone.glb", checked: false, exploded: ["models/new_pro/X-Cone_exploded1.png", "models/new_pro/X-Cone_exploded3.png"] }
     ]
 };
+
+// Compatibility aliases for legacy product names
+COMPONENTS_DB["LIGHT PRO"] = COMPONENTS_DB["CORE"];
+COMPONENTS_DB["NEW PRO"] = COMPONENTS_DB["PRO"];
+COMPONENTS_DB["LONG RANGE"] = COMPONENTS_DB["EXTREME"];
+COMPONENTS_DB["SUPER RANGE"] = COMPONENTS_DB["EXTREME"];
+COMPONENTS_DB["ULTRA RANGE"] = COMPONENTS_DB["EXTREME"];
 
 function setDefaultComponentsForSystem(productName) {
     // Reset all component selections so no default items/parts are automatically checked
@@ -5889,7 +7695,7 @@ function loadOBJModel(filePath) {
 }
 
 function preloadActiveModels() {
-    const list = COMPONENTS_DB[state.product || "NEW PRO"] || [];
+    const list = COMPONENTS_DB[normalizeProduct(state.product || "CORE")] || [];
     const files = list.map(c => c.file).filter(Boolean);
     const uniqueFiles = [...new Set(files)];
     const heightVariants = [];
@@ -6188,7 +7994,7 @@ function calculateTriangleTension(fmax_ancre, portee, fleche) {
 
 function getBaselineFmax(system, users, portee, supportType) {
     const sType = (supportType || "").toLowerCase();
-    if (system === "LIGHT PRO") {
+    if (isCore(system)) {
         const t = Math.max(0.0, Math.min(1.0, (portee - 2.0) / (15.0 - 2.0)));
         if (sType.includes("hookt")) {
             if (users === 1) return 5.6 + t * (5.0 - 5.6);
@@ -6206,7 +8012,7 @@ function getBaselineFmax(system, users, portee, supportType) {
             return 8.0;
         }
     }
-    if (system === "LONG RANGE" || system === "LongRange") {
+    if (isExtreme(system)) {
         let f10 = 4.8, f34 = 4.5, f56 = 4.0;
         let usersToUse = Math.max(1, Math.min(users, 3));
         if (usersToUse === 2) { f10 = 6.45; f34 = 5.8; f56 = 4.55; }
@@ -6230,8 +8036,8 @@ function getBaselineFmax(system, users, portee, supportType) {
 
 function getActiveSupportType() {
     if (typeof state === 'undefined') return "omega_mini";
-    if (state.product === "LONG RANGE" && (state.mountingType === "overhead" || state.roofShape === "flat_overhead")) return "overhead";
-    const list = (typeof COMPONENTS_DB !== 'undefined' ? COMPONENTS_DB[state.product] : []) || [];
+    if (isExtreme(state.product) && (state.mountingType === "overhead" || state.roofShape === "flat_overhead")) return "overhead";
+    const list = (typeof COMPONENTS_DB !== 'undefined' ? (COMPONENTS_DB[normalizeProduct(state.product)] || COMPONENTS_DB[state.product]) : []) || [];
     const checked = list.find(c => c.checked);
     if (checked) {
         const id = checked.id.toLowerCase();
@@ -6247,23 +8053,26 @@ function getActiveSupportType() {
 function getActivePostName() {
     if (typeof state === 'undefined') return "MINI OMEGA";
     const l = state.lang || 0;
-    if (state.product === "LONG RANGE") {
+    if (isExtreme(state.product)) {
         return ["ANCRAGE A-FIX", "A-FIX ANCHOR", "ANCLAJE A-FIX"][l];
     }
-    const list = (typeof COMPONENTS_DB !== 'undefined' ? COMPONENTS_DB[state.product] : []) || [];
+    const list = (typeof COMPONENTS_DB !== 'undefined' ? (COMPONENTS_DB[normalizeProduct(state.product)] || COMPONENTS_DB[state.product]) : []) || [];
     const postComp = list.find(c => c.id !== "Contre_Plaque" && c.id !== "X-Cone" && c.id !== "Pack_Matrix" && c.id !== "X-Matrix" && c.id !== "New_Pro" && c.id !== "LightPro" && c.id !== "LongRange" && c.checked);
     if (postComp) return getComponentName(postComp);
-    if (state.product === "NEW PRO") return getComponentName({ id: "Mini_Omega", name: "MINI OMEGA" });
-    if (state.product === "LIGHT PRO") return ["Potelet Basculant", "Tilting Post", "Poste Basculante"][l];
+    if (isPro(state.product)) return getComponentName({ id: "Mini_Omega", name: "MINI OMEGA" });
+    if (isCore(state.product)) return ["Potelet Basculant", "Tilting Post", "Poste Basculante"][l];
     return ["Potelet / Ancrage", "Post / Anchor", "Poste / Anclaje"][l];
 }
 
 const Calculator = {
     getXConeSpacing: function (slopeDegOverride) {
         let slope = slopeDegOverride;
-        if (slope === undefined) {
-            if (state.roofShape !== "sloped" && state.layoutType !== "slope_single" && state.layoutType !== "slope_multi" && state.layoutType !== "slope_horizontal_comb") return 0;
-            slope = state.roofSlope || 0;
+        if (slope === undefined || slope === null || isNaN(slope)) {
+            const isSloped = (state.roofShape === "sloped" || state.roof_type === "sloped" || state.roofShape === "triangle" || state.roof_type === "triangle" || state.layoutType === "slope_single" || state.layoutType === "slope_multi" || state.layoutType === "slope_horizontal_comb");
+            if (!isSloped) return 0;
+            slope = parseFloat(state.roofSlope || state.roof_slope_deg || 15);
+        } else {
+            slope = parseFloat(slope);
         }
         if (slope >= 40 && slope <= 75) return 0.3;
         if (slope >= 30 && slope < 40) return 0.5;
@@ -6275,10 +8084,8 @@ const Calculator = {
         if (state.roofShape === "sloped" && state.roofSlope >= 40 && state.roofSlope <= 75) {
             return 3.0;
         }
-        const pUpper = (product || state.product || "").toUpperCase();
-        if (pUpper.includes("NEW")) return 15.0;
-        if (pUpper.includes("LIGHT")) return 15.0;
-        if (pUpper.includes("LONG") || pUpper.includes("RANGE") || pUpper.includes("SUPER") || pUpper.includes("ULTRA")) {
+        const prod = product || state.product || "CORE";
+        if (isExtreme(prod)) {
             if (actualSpan <= 20.0) return 20.0;
             if (actualSpan <= 34.0) return 34.0;
             return 56.0;
@@ -6354,11 +8161,19 @@ const Calculator = {
                 const bendAngle = Math.abs(bendDeg);
                 const isDoubled = (type === "angle" && bendAngle > 40);
 
+                const hasX = !isLast && !!sp.hasXMatrix;
+                if (hasX) {
+                    type = "x_matrix";
+                }
+
                 line1Nodes.push({
                     x: parseFloat(currX.toFixed(2)),
                     y: parseFloat(currY.toFixed(2)),
                     z: parseFloat(currZ.toFixed(2)),
                     type: type,
+                    hasXMatrix: hasX,
+                    noPost: hasX,
+                    xMatrixBranches: hasX ? (sp.xMatrixBranches || []) : [],
                     rotY: headingRad,
                     bendDeg: bendDeg,
                     slopeDeg: slopeVal,
@@ -6603,6 +8418,24 @@ const Calculator = {
                 if (n.x > maxX) maxX = n.x;
                 if (n.z < minZ) minZ = n.z;
                 if (n.z > maxZ) maxZ = n.z;
+
+                // Account for X-Matrix multi-direction branch tips
+                if ((n.hasXMatrix || n.type === "x_matrix") && n.xMatrixBranches && n.xMatrixBranches.length > 0) {
+                    const nRotY = n.rotY || 0;
+                    n.xMatrixBranches.forEach(b => {
+                        const bDeg = (b.angleDeg !== undefined) ? parseFloat(b.angleDeg) : 90;
+                        const normAng = ((bDeg % 360) + 360) % 360;
+                        if (normAng < 15 || normAng > 345 || Math.abs(normAng - 180) < 15) return;
+                        const bLen = (typeof getBranchTotalLength === "function") ? getBranchTotalLength(b) : Math.max(0.5, parseFloat(b.length) || 5.0);
+                        const bRad = nRotY + (bDeg * Math.PI / 180);
+                        const bx = n.x + bLen * Math.cos(bRad);
+                        const bz = n.z + bLen * Math.sin(bRad);
+                        if (bx < minX) minX = bx;
+                        if (bx > maxX) maxX = bx;
+                        if (bz < minZ) minZ = bz;
+                        if (bz > maxZ) maxZ = bz;
+                    });
+                }
             });
 
             // Shift all node coordinates so minX >= edgeDist and minZ >= edgeDist (Bypassed for centered structures like multi_bend_circle and cross_spans)
@@ -6652,7 +8485,18 @@ const Calculator = {
             return sumX * gs.ny + sumZ * gs.nx;
         }
         const spans = state.spans || [];
-        const total = spans.reduce((sum, s) => sum + (s.length || 0), 0);
+        let total = spans.reduce((sum, s) => sum + (s.length || 0), 0);
+        spans.forEach(s => {
+            if (s && s.hasXMatrix && s.xMatrixBranches && s.xMatrixBranches.length > 0) {
+                s.xMatrixBranches.forEach(b => {
+                    const bDeg = (b.angleDeg !== undefined) ? parseFloat(b.angleDeg) : 90;
+                    const normAng = ((bDeg % 360) + 360) % 360;
+                    if (normAng < 15 || normAng > 345 || Math.abs(normAng - 180) < 15) return;
+                    const bLen = (typeof getBranchTotalLength === "function") ? getBranchTotalLength(b) : (parseFloat(b.length) || 0);
+                    total += bLen;
+                });
+            }
+        });
         return total > 0 ? total : (state.lineLength || 15.0);
     },
 
@@ -6685,7 +8529,7 @@ const Calculator = {
             const u = Math.max(1, Math.min(5, nbUsers));
             const F_user = 1.37 * u + 4.65;
             let res = F_user * k_FC;
-            if (product === "NEW PRO") {
+            if (isPro(product)) {
                 const spanClamped = Math.max(0.1, Math.min(15.2, span));
                 const spanRatio = (15.2 - Math.max(3.0, spanClamped)) / (15.2 - 3.0);
                 let k_support = 1.0;
@@ -6693,7 +8537,7 @@ const Calculator = {
                 else if (support === "sol_mur") k_support = 6.4 / 5.7;
                 else if (support === "overhead") k_support = 7.2 / 5.7;
                 res = F_user * (5.7 / 11.5) * k_support * k_FC * (1.0 + 0.15 * spanRatio);
-            } else if (product === "LIGHT PRO" && span <= 3.5) {
+            } else if (isCore(product) && span <= 3.5) {
                 const fmax_base = u === 1 ? 5.0 : (u === 2 ? 5.8 : 6.5);
                 res = fmax_base * k_FC;
             }
@@ -6706,11 +8550,11 @@ const Calculator = {
         if (fallFactor <= 0.0) return 1.0 * nbUsers;
 
         let fancre_ref = 6.0;
-        if (product === "LIGHT PRO") {
-            fancre_ref = getBaselineFmax("LIGHT PRO", nbUsers, span, support);
-        } else if (product === "LONG RANGE" || product === "LongRange") {
-            fancre_ref = getBaselineFmax("LONG RANGE", nbUsers, span, support);
-        } else if (product === "NEW PRO") {
+        if (isCore(product)) {
+            fancre_ref = getBaselineFmax("CORE", nbUsers, span, support);
+        } else if (isExtreme(product)) {
+            fancre_ref = getBaselineFmax("EXTREME", nbUsers, span, support);
+        } else if (isPro(product)) {
             let searchDir = (support || "").toLowerCase().includes("mini") ? "omega_mini" : ((support || "").toLowerCase().includes("omega") ? "omega" : ((support || "").toLowerCase().includes("overhead") ? "overhead" : "sol_mur"));
             const rec_3 = newProPredictRecords.find(r => r.direction === searchDir && r.users === nbUsers && r.portee === 3.0);
             const rec_15 = newProPredictRecords.find(r => r.direction === searchDir && r.users === nbUsers && r.portee === 15.0);
@@ -6733,11 +8577,11 @@ const Calculator = {
             const u = Math.max(1, Math.min(5, nbUsers));
             const F_user = 1.37 * u + 4.65;
             let res = 500.0;
-            if (product === "NEW PRO") {
+            if (isPro(product)) {
                 const spanRatio = Math.max(0.1, Math.min(15.2, span)) / 15.2;
                 let k_support = support === "omega" ? 1290 / 1410 : (support === "sol_mur" ? 1300 / 1410 : (support === "overhead" ? 1640 / 1410 : 1.0));
                 res = (isMultiSpan ? 1530.0 : 2200.0) * spanRatio * (F_user / 11.5) * k_support * k_FC;
-            } else if (product === "LIGHT PRO") {
+            } else if (isCore(product)) {
                 if (span <= 3.5) {
                     res = 675.0 * (span / 3.5) * k_FC;
                 } else {
@@ -6745,7 +8589,7 @@ const Calculator = {
                     let f_ref = support === "hookt" ? (isMultiSpan ? 2250.0 : 2600.0) : (isMultiSpan ? 1500.0 : 1800.0);
                     res = f_ref * spanRatio * (F_user / 8.8) * k_FC;
                 }
-            } else if (product === "LONG RANGE" || product === "LongRange") {
+            } else if (isExtreme(product)) {
                 const spanRatio = Math.max(0.1, Math.min(54.9, span)) / 54.9;
                 res = (isMultiSpan ? 1510.0 : 2790.0) * spanRatio * (F_user / 8.8) * k_FC;
             }
@@ -6755,7 +8599,7 @@ const Calculator = {
         let k_fleche_fc = fallFactor >= 2.0 ? 1.0 : (fallFactor === 1.0 ? Math.sqrt(0.5) : (fallFactor > 0.0 ? 0.50 + fallFactor * (Math.sqrt(0.5) - 0.50) : 0.50));
         const fmax_ancre_calc = this.effortLonge(product, span, nbUsers, norm, fallFactor, support, isMultiSpan);
 
-        if (product === "LONG RANGE" || product === "LongRange") {
+        if (isExtreme(product)) {
             let usersToUse = Math.max(1, Math.min(3, nbUsers));
             const matchingRecs = longRangePredictRecords.filter(r => r.users === usersToUse).sort((a, b) => a.portee - b.portee);
             if (matchingRecs.length > 0) {
@@ -6768,13 +8612,13 @@ const Calculator = {
                 return Math.round(fleche_ref * k_fleche_fc * Math.sqrt(fancre_ref > 0.0 ? Math.max(0.0, fmax_ancre_calc / fancre_ref) : 1.0));
             }
             return 780.0;
-        } else if (product === "LIGHT PRO") {
+        } else if (isCore(product)) {
             let f_a = 771.4, f_b = 0.3453;
             const sLower = (support || "").toLowerCase();
             if (sLower.includes("pb250")) { f_a = 441.7; f_b = 0.7050; }
             else if (sLower.includes("hookt")) { f_a = 390.0; f_b = 0.6800; }
             const pred_fleche = Math.max(10.0, f_a * Math.pow(span, f_b));
-            const fmax_ancre_base = getBaselineFmax("LIGHT PRO", nbUsers, span, support);
+            const fmax_ancre_base = getBaselineFmax("CORE", nbUsers, span, support);
             return Math.round(pred_fleche * k_fleche_fc * Math.sqrt(fmax_ancre_base > 0.0 ? Math.max(0.0, fmax_ancre_calc / fmax_ancre_base) : 1.0));
         } else {
             let searchDir = (support || "").toLowerCase().includes("mini") ? "omega_mini" : ((support || "").toLowerCase().includes("omega") ? "omega" : ((support || "").toLowerCase().includes("overhead") ? "overhead" : "sol_mur"));
@@ -6802,9 +8646,9 @@ const Calculator = {
             const u = Math.max(1, Math.min(5, nbUsers));
             const F_user = 1.37 * u + 4.65;
             let baseForce = 10.0;
-            if (product === "NEW PRO") {
+            if (isPro(product)) {
                 baseForce = (isMultiSpan ? 13.05 : 12.50) * (F_user / 11.5) * k_FC;
-            } else if (product === "LIGHT PRO") {
+            } else if (isCore(product)) {
                 if (span <= 3.5) {
                     const lc1_base = u === 1 ? 5.4 : (u === 2 ? 6.1 : 6.8);
                     baseForce = lc1_base * k_FC;
@@ -6813,7 +8657,7 @@ const Calculator = {
                     let fext1_ref = support === "hookt" ? (isMultiSpan ? 8.30 : 9.00) : (isMultiSpan ? 13.65 : 11.60);
                     baseForce = fext1_ref * (F_user / 8.8) * spanRatio * k_FC;
                 }
-            } else if (product === "LONG RANGE" || product === "LongRange") {
+            } else if (isExtreme(product)) {
                 baseForce = (isMultiSpan ? 10.40 : 19.30) * (F_user / 8.8) * k_FC;
             }
             if (span < 3.0) {
@@ -6822,12 +8666,12 @@ const Calculator = {
             return baseForce;
         }
 
-        if (product === "LIGHT PRO") {
+        if (isCore(product)) {
             const currentDefl = (deflection > 0.0) ? deflection : this.deflection(product, span, fallFactor, support, nbUsers, norm, isMultiSpan);
             if (currentDefl <= 0.0) return 0.0;
             const currentEffort = (effortLonge > 0.0) ? effortLonge : this.effortLonge(product, span, nbUsers, norm, fallFactor, support, isMultiSpan);
             return calculateTriangleTension(currentEffort, span, currentDefl) * 0.97 + (fallFactor <= 0.0 ? 1.0 : 0.0);
-        } else if (product === "NEW PRO") {
+        } else if (isPro(product)) {
             let searchDir = (support || "").toLowerCase().includes("mini") ? "omega_mini" : ((support || "").toLowerCase().includes("omega") ? "omega" : ((support || "").toLowerCase().includes("overhead") ? "overhead" : "sol_mur"));
             const rec_3 = newProPredictRecords.find(r => r.direction === searchDir && r.users === nbUsers && r.portee === 3.0);
             const rec_15 = newProPredictRecords.find(r => r.direction === searchDir && r.users === nbUsers && r.portee === 15.0);
@@ -6865,9 +8709,9 @@ const Calculator = {
             const u = Math.max(1, Math.min(5, nbUsers));
             const F_user = 1.37 * u + 4.65;
             let baseForce = 10.0;
-            if (product === "NEW PRO") {
+            if (isPro(product)) {
                 baseForce = (isMultiSpan ? 12.55 : 12.05) * (F_user / 11.5) * k_FC;
-            } else if (product === "LIGHT PRO") {
+            } else if (isCore(product)) {
                 if (span <= 3.5) {
                     const lc2_base = u === 1 ? 5.8 : (u === 2 ? 6.5 : 7.2);
                     baseForce = lc2_base * k_FC;
@@ -6876,7 +8720,7 @@ const Calculator = {
                     let fext2_ref = support === "hookt" ? (isMultiSpan ? 8.10 : 9.00) : (isMultiSpan ? 13.05 : 11.30);
                     baseForce = fext2_ref * (F_user / 8.8) * spanRatio * k_FC;
                 }
-            } else if (product === "LONG RANGE" || product === "LongRange") {
+            } else if (isExtreme(product)) {
                 baseForce = (isMultiSpan ? 10.20 : 18.95) * (F_user / 8.8) * k_FC;
             }
             if (span < 3.0) {
@@ -6885,12 +8729,12 @@ const Calculator = {
             return baseForce;
         }
 
-        if (product === "LIGHT PRO") {
+        if (isCore(product)) {
             const currentDefl = (deflection > 0.0) ? deflection : this.deflection(product, span, fallFactor, support, nbUsers, norm, isMultiSpan);
             if (currentDefl <= 0.0) return 0.0;
             const currentEffort = (effortLonge > 0.0) ? effortLonge : this.effortLonge(product, span, nbUsers, norm, fallFactor, support, isMultiSpan);
             return calculateTriangleTension(currentEffort, span, currentDefl) * 1.03 + (fallFactor <= 0.0 ? 1.0 : 0.0);
-        } else if (product === "NEW PRO") {
+        } else if (isPro(product)) {
             let searchDir = (support || "").toLowerCase().includes("mini") ? "omega_mini" : ((support || "").toLowerCase().includes("omega") ? "omega" : ((support || "").toLowerCase().includes("overhead") ? "overhead" : "sol_mur"));
             const rec_3 = newProPredictRecords.find(r => r.direction === searchDir && r.users === nbUsers && r.portee === 3.0);
             const rec_15 = newProPredictRecords.find(r => r.direction === searchDir && r.users === nbUsers && r.portee === 15.0);
@@ -6928,9 +8772,9 @@ const Calculator = {
         if (norm === "OSHA") {
             const u = Math.max(1, Math.min(5, nbUsers));
             const F_user = 1.37 * u + 4.65;
-            if (product === "NEW PRO") return 3.90 * (F_user / 11.5) * k_FC;
-            if (product === "LIGHT PRO") return (support === "hookt" ? 3.80 : 4.50) * (F_user / 8.8) * k_FC;
-            if (product === "LONG RANGE" || product === "LongRange") return 3.90 * (F_user / 8.8) * k_FC;
+            if (isPro(product)) return 3.90 * (F_user / 11.5) * k_FC;
+            if (isCore(product)) return (support === "hookt" ? 3.80 : 4.50) * (F_user / 8.8) * k_FC;
+            if (isExtreme(product)) return 3.90 * (F_user / 8.8) * k_FC;
         }
         return effortLonge * 0.35 * k_FC;
     },
@@ -6941,9 +8785,9 @@ const Calculator = {
         if (norm === "OSHA") {
             const u = Math.max(1, Math.min(5, nbUsers));
             const F_user = 1.37 * u + 4.65;
-            if (product === "NEW PRO") return 5.40 * (F_user / 11.5) * k_FC;
-            if (product === "LIGHT PRO") return (support === "hookt" ? 4.20 : 5.10) * (F_user / 8.8) * k_FC;
-            if (product === "LONG RANGE" || product === "LongRange") return 4.10 * (F_user / 8.8) * k_FC;
+            if (isPro(product)) return 5.40 * (F_user / 11.5) * k_FC;
+            if (isCore(product)) return (support === "hookt" ? 4.20 : 5.10) * (F_user / 8.8) * k_FC;
+            if (isExtreme(product)) return 4.10 * (F_user / 8.8) * k_FC;
         }
         return effortLonge * 0.45 * k_FC;
     }
@@ -6986,10 +8830,22 @@ const SystemLabelingModule = {
                 const isOSHA = (state.norm === "OSHA");
                 const isMulti = isOSHA && (state.oshaSpanMode === "multi");
                 const support = getActiveSupportType();
-                effortL = Calculator.effortLonge(state.product, realSpanMax, state.nbUsers, state.norm, state.fallFactor, support, isMulti);
-                deflL = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, state.nbUsers, state.norm, isMulti);
-                ext1L = Calculator.extremiteForce1(state.product, realSpanMax, state.nbUsers, state.norm, effortL, deflL, state.fallFactor, support, isMulti);
-                ext2L = Calculator.extremiteForce2(state.product, realSpanMax, state.nbUsers, state.norm, effortL, deflL, state.fallFactor, support, isMulti);
+                const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+                const ff = isOSHA ? (state.fallFactor || state.engineerCoefficient || 1.0) : enFF;
+                if (!isOSHA) {
+                    effortL = Calculator.effortLonge(state.product, realSpanMax, state.nbUsers, "EN 795", enFF, support, false);
+                    deflL = Calculator.deflection(state.product, realSpanMax, enFF, support, state.nbUsers, "EN 795", false);
+                    ext1L = Calculator.extremiteForce1(state.product, realSpanMax, state.nbUsers, "EN 795", effortL, deflL, enFF, support, false);
+                    ext2L = Calculator.extremiteForce2(state.product, realSpanMax, state.nbUsers, "EN 795", effortL, deflL, enFF, support, false);
+                } else {
+                    const baseEff = Calculator.effortLonge(state.product, realSpanMax, state.nbUsers, "OSHA", 1.0, support, isMulti);
+                    deflL = Calculator.deflection(state.product, realSpanMax, 1.0, support, state.nbUsers, "OSHA", isMulti);
+                    const baseExt1 = Calculator.extremiteForce1(state.product, realSpanMax, state.nbUsers, "OSHA", baseEff, deflL, 1.0, support, isMulti);
+                    const baseExt2 = Calculator.extremiteForce2(state.product, realSpanMax, state.nbUsers, "OSHA", baseEff, deflL, 1.0, support, isMulti);
+                    effortL = baseEff * ff;
+                    ext1L = baseExt1 * ff;
+                    ext2L = baseExt2 * ff;
+                }
             } catch (e) {
                 ext1L = 0.0;
                 ext2L = 0.0;
@@ -7436,6 +9292,10 @@ const SystemLabelingModule = {
             try {
                 const support = getActiveSupportType();
                 const isSloped = (state.roofShape === "sloped");
+                const isOSHA = (state.norm === "OSHA");
+                const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+                const ff = isOSHA ? (state.fallFactor || state.engineerCoefficient || 1.0) : enFF;
+
                 spanCalcs = rawSpans.map((sp, idx) => {
                     const spanLen = Math.max(0.1, parseFloat(sp.length) || 5.0);
                     let sEffort = 0, sDefl = 0, sExt1 = 0, sExt2 = 0;
@@ -7448,13 +9308,21 @@ const SystemLabelingModule = {
                         const slopedRep = SlopedSystemConesModule.getFullScenarioReport(state.roofSlope || 15, spanLen, state.lineLength);
                         sExt1 = slopedRep.retainedMax.loadCellTopKn;
                         sExt2 = slopedRep.retainedMax.loadCellBottomKn;
-                        sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, state.norm, state.fallFactor, support, false);
-                        sDefl = Calculator.deflection(state.product, spanLen, state.fallFactor, support, state.nbUsers, state.norm, false);
+                        sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, state.norm, isOSHA ? 1.0 : enFF, support, false);
+                        sDefl = Calculator.deflection(state.product, spanLen, isOSHA ? 1.0 : enFF, support, state.nbUsers, state.norm, false);
+                    } else if (!isOSHA) {
+                        sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, "EN 795", enFF, support, false);
+                        sDefl = Calculator.deflection(state.product, spanLen, enFF, support, state.nbUsers, "EN 795", false);
+                        sExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, "EN 795", sEffort, sDefl, enFF, support, false);
+                        sExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, "EN 795", sEffort, sDefl, enFF, support, false);
                     } else {
-                        sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, state.norm, state.fallFactor, support, isMulti);
-                        sDefl = Calculator.deflection(state.product, spanLen, state.fallFactor, support, state.nbUsers, state.norm, isMulti);
-                        sExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, isMulti);
-                        sExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, isMulti);
+                        const baseEff = Calculator.effortLonge(state.product, spanLen, state.nbUsers, "OSHA", 1.0, support, isMulti);
+                        sDefl = Calculator.deflection(state.product, spanLen, 1.0, support, state.nbUsers, "OSHA", isMulti);
+                        const baseExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, "OSHA", baseEff, sDefl, 1.0, support, isMulti);
+                        const baseExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, "OSHA", baseEff, sDefl, 1.0, support, isMulti);
+                        sEffort = baseEff * ff;
+                        sExt1 = baseExt1 * ff;
+                        sExt2 = baseExt2 * ff;
                     }
                     return {
                         idx,
@@ -7490,7 +9358,7 @@ const SystemLabelingModule = {
                 }
             });
         }
-        const p0Kn = effortContext?.p0Kn || ((state.product === "LONG RANGE") ? 5.886 : 0.981);
+        const p0Kn = effortContext?.p0Kn || (isExtreme(state.product) ? 5.886 : 0.981);
 
         // 2. Multi-span adapted distribution fallback if not provided in effortContext
         if (isMulti && !adaptedPoints && spanCalcs) {
@@ -7507,7 +9375,7 @@ const SystemLabelingModule = {
                     const sExt4 = Calculator.extremiteForce4(state.product, sc.length, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, true);
                     const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(sExt1, sExt2, sExt3, sExt4);
                     const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, sIdx);
-                    const adapted = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, N + 1, l, sIdx, p0Kn);
+                    const adapted = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, N + 1, l, sIdx, p0Kn, state.spans);
                     return { sIdx, sc, adapted };
                 });
 
@@ -7517,7 +9385,8 @@ const SystemLabelingModule = {
                 } else {
                     const primaryAdapted = multiSpanResultsPerSpan[critSpanIdx]?.adapted || multiSpanResultsPerSpan[0]?.adapted;
                     const envelopePoints = [];
-                    for (let aIdx = 0; aIdx <= N; aIdx++) {
+                    const numPts = primaryAdapted?.points ? primaryAdapted.points.length : (N + 1);
+                    for (let aIdx = 0; aIdx < numPts; aIdx++) {
                         let maxVal = -1;
                         let causeSpanIdx = critSpanIdx;
                         for (let sIdx = 0; sIdx < rawSpans.length; sIdx++) {
@@ -7667,32 +9536,31 @@ const SystemLabelingModule = {
                     let remB = "-";
 
                     if (is2PointMode) {
+                        let val2Pt = p0Kn;
+                        let fall2Pt = false;
                         if (fallMode === "selected_span") {
                             if (chosenSpanIdx === i - 1) {
-                                effA = spanCalcs[i - 1].ext2Kn;
-                                isFallA = true;
-                                remA = isEn ? `Fall Anchor (S${i} - Arrival)` : `Ancrage de chute (S${i} - Arrivée)`;
-                                effB = p0Kn;
-                                remB = isEn ? "Pretension (P0)" : "Prétension (P0)";
+                                val2Pt = spanCalcs[i - 1].ext2Kn;
+                                fall2Pt = true;
                             } else if (chosenSpanIdx === i) {
-                                effA = p0Kn;
-                                remA = isEn ? "Pretension (P0)" : "Prétension (P0)";
-                                effB = spanCalcs[i].ext1Kn;
-                                isFallB = true;
-                                remB = isEn ? `Fall Anchor (S${i + 1} - Departure)` : `Ancrage de chute (S${i + 1} - Départ)`;
-                            } else {
-                                effA = p0Kn;
-                                effB = p0Kn;
-                                remA = isEn ? "Pretension (P0)" : "Prétension (P0)";
-                                remB = isEn ? "Pretension (P0)" : "Prétension (P0)";
+                                val2Pt = spanCalcs[i].ext1Kn;
+                                fall2Pt = true;
                             }
                         } else {
                             // critical_case
-                            effA = spanCalcs[i - 1]?.ext2Kn || 0;
-                            effB = spanCalcs[i]?.ext1Kn || 0;
-                            if (critSpanIdx === i - 1) { isFallA = true; remA = isEn ? `Critical Span (S${i})` : `Portée critique (S${i})`; }
-                            if (critSpanIdx === i) { isFallB = true; remB = isEn ? `Critical Span (S${i + 1})` : `Portée critique (S${i + 1})`; }
+                            const leftEff = spanCalcs[i - 1]?.ext2Kn || 0;
+                            const rightEff = spanCalcs[i]?.ext1Kn || 0;
+                            val2Pt = Math.max(leftEff, rightEff);
+                            if (critSpanIdx === i - 1 || critSpanIdx === i) {
+                                fall2Pt = true;
+                            }
                         }
+                        effA = val2Pt;
+                        effB = val2Pt;
+                        isFallA = fall2Pt;
+                        isFallB = fall2Pt;
+                        remA = isFallA ? (isEn ? "Double fall anchor" : "Ancrage double (chute)") : (isEn ? "Double anchor" : "Ancrage double");
+                        remB = remA;
                     } else if (adaptedPoints) {
                         if (adaptedPoints[aLinearIndex]) {
                             effA = adaptedPoints[aLinearIndex].val;
@@ -7704,6 +9572,10 @@ const SystemLabelingModule = {
                             isFallB = Boolean(adaptedPoints[aLinearIndex + 1].isFallAnchor);
                             remB = adaptedPoints[aLinearIndex + 1].remarque || "-";
                         }
+                        // Spec V2 — 17 : A#a et A#b reçoivent exactement la même valeur d'effort
+                        const maxEff = Math.max(effA, effB);
+                        effA = maxEff;
+                        effB = maxEff;
                     }
 
                     const posA = geomContext?.anchorPositions ? geomContext.anchorPositions[aLinearIndex] : null;
@@ -7711,9 +9583,10 @@ const SystemLabelingModule = {
 
                     anchors.push({
                         id: idA,
-                        type: isEn ? "Bend > 40° (Arrival)" : "Coude > 40° (Arrivée)",
+                        type: isEn ? "Double Anchor" : "Ancrage double",
                         adjacentSpans: [`S${i}`],
                         isFallAnchor: isFallA,
+                        isDoubleAnchor: true,
                         isXMatrix: false,
                         effortKn: effA,
                         effortStr: UnitsModule.formatForce(effA),
@@ -7722,9 +9595,10 @@ const SystemLabelingModule = {
                     });
                     anchors.push({
                         id: idB,
-                        type: isEn ? "Bend > 40° (Departure)" : "Coude > 40° (Départ)",
+                        type: isEn ? "Double Anchor" : "Ancrage double",
                         adjacentSpans: [`S${i + 1}`],
                         isFallAnchor: isFallB,
+                        isDoubleAnchor: true,
                         isXMatrix: false,
                         effortKn: effB,
                         effortStr: UnitsModule.formatForce(effB),
@@ -7771,14 +9645,17 @@ const SystemLabelingModule = {
 
                     const pos = geomContext?.anchorPositions ? geomContext.anchorPositions[aLinearIndex] : null;
 
+                    const isXMat = !!(spBefore && spBefore.hasXMatrix);
                     anchors.push({
                         id,
-                        type: (bendDeg > 0)
-                            ? (isEn ? "Bend <= 40°" : "Coude <= 40°")
-                            : (isEn ? "Intermediate" : "Intermédiaire"),
+                        type: isXMat
+                            ? (isEn ? "X-Matrix (Multi-direction)" : "X-Matrix (Multi-directions)")
+                            : ((bendDeg > 0)
+                                ? (isEn ? "Bend <= 40°" : "Coude <= 40°")
+                                : (isEn ? "Intermediate" : "Intermédiaire")),
                         adjacentSpans: [`S${i}`, `S${i + 1}`],
                         isFallAnchor: isFall,
-                        isXMatrix: false,
+                        isXMatrix: isXMat,
                         effortKn: eff,
                         effortStr: UnitsModule.formatForce(eff),
                         remarque: remark,
@@ -7786,6 +9663,68 @@ const SystemLabelingModule = {
                     });
                     vertexAnchors.push([id]);
                     aLinearIndex++;
+
+                    if (isXMat) {
+                        const xMatId = `X${xMatrixPieces.length + 1}`;
+                        xMatrixPieces.push({
+                            id: xMatId,
+                            anchorId: id,
+                            type: isEn ? "X-Matrix (Multi-direction)" : "X-Matrix (Multi-directions)",
+                            isXMatrix: true,
+                            adjacentSpans: [`S${i}`, `S${i + 1}`],
+                            isFallAnchor: isFall,
+                            effortKn: eff,
+                            effortStr: UnitsModule.formatForce(eff),
+                            remarque: remark,
+                            position: pos
+                        });
+
+                        if (spBefore.xMatrixBranches && spBefore.xMatrixBranches.length > 0) {
+                            spBefore.xMatrixBranches.forEach((br, bIdx) => {
+                                const rawAng = (br.angleDeg !== undefined) ? parseFloat(br.angleDeg) : (bIdx === 0 ? 90 : -90);
+                                const normAng = ((rawAng % 360) + 360) % 360;
+                                if (normAng < 15 || normAng > 345 || Math.abs(normAng - 180) < 15) return;
+
+                                const bSpans = (typeof getBranchSpans === "function") ? getBranchSpans(br) : (br.spans || [{ id: "xmb_s1", length: br.length || 5.0 }]);
+                                const brEffort = 0.25 * eff;
+                                let prevAId = id;
+
+                                bSpans.forEach((subSp, sIdx) => {
+                                    const isLastSpan = (sIdx === bSpans.length - 1);
+                                    const subLen = Math.max(0.5, parseFloat(subSp.length) || 5.0);
+                                    const brAnchorId = (bSpans.length === 1)
+                                        ? `${xMatId}-A${bIdx + 1}`
+                                        : `${xMatId}-B${bIdx + 1}-A${sIdx + 1}`;
+                                    const brSpanId = (bSpans.length === 1)
+                                        ? `${xMatId}-S${bIdx + 1}`
+                                        : `${xMatId}-B${bIdx + 1}-S${sIdx + 1}`;
+
+                                    anchors.push({
+                                        id: brAnchorId,
+                                        type: isLastSpan
+                                            ? (isEn ? `Branch End (${xMatId}-B${bIdx + 1})` : `Extrémité Branche (${xMatId}-B${bIdx + 1})`)
+                                            : (isEn ? `Branch Inter (${xMatId}-B${bIdx + 1})` : `Intermédiaire Branche (${xMatId}-B${bIdx + 1})`),
+                                        adjacentSpans: [brSpanId],
+                                        isFallAnchor: false,
+                                        isXMatrix: false,
+                                        effortKn: brEffort,
+                                        effortStr: UnitsModule.formatForce(brEffort),
+                                        remarque: (isFall && isLastSpan) ? (isEn ? "Transferred (25%)" : "Report d'effort (25%)") : "-"
+                                    });
+                                    spans.push({
+                                        id: brSpanId,
+                                        fromAnchorId: prevAId,
+                                        toAnchorId: brAnchorId,
+                                        length: subLen,
+                                        slopeDeg: 0,
+                                        isSloped: false,
+                                        text: `${brSpanId} : ${formatLen(subLen)}`
+                                    });
+                                    prevAId = brAnchorId;
+                                });
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -8196,8 +10135,13 @@ const SystemLabelingModule = {
             badgeSpans.textContent = isEn ? `${totalS} ${totalS > 1 ? "spans" : "span"}` : `${totalS} ${totalS > 1 ? "portées" : "portée"}`;
         }
 
-        const engCoef = (typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00;
-        const isAdjusted = Math.abs(engCoef - 1.00) > 0.001;
+        const isOSHA = (state.norm === "OSHA");
+        const engCoef = isOSHA
+            ? ((typeof state.fallFactor === "number" && !isNaN(state.fallFactor))
+                ? state.fallFactor
+                : ((typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00))
+            : 1.00;
+        const isAdjusted = isOSHA && (Math.abs(engCoef - 1.00) > 0.001);
 
         const theadAnchors = document.querySelector("#table-system-anchors thead");
         if (theadAnchors) {
@@ -8208,7 +10152,7 @@ const SystemLabelingModule = {
                         <th>Type</th>
                         <th>${isEn ? "Spans" : "Portées"}</th>
                         <th>${isEn ? "Test Result" : "Résultat d'essai"}</th>
-                        <th>${isEn ? "Adjusted (" + engCoef.toFixed(2) + ")" : "Résultat ajusté (" + engCoef.toFixed(2) + ")"}</th>
+                        <th>${isEn ? "Adjusted (Fall Factor " + engCoef.toFixed(2) + ")" : "Résultat ajusté (Fall Factor " + engCoef.toFixed(2) + ")"}</th>
                         <th>${isEn ? "Remark" : "Remarque"}</th>
                     </tr>`;
             } else {
@@ -8272,7 +10216,7 @@ const SystemLabelingModule = {
                         <th>${isEn ? "Length" : "Longueur"}</th>
                         <th>${isEn ? "Deflection" : "Flèche"}</th>
                         <th>${isEn ? "Test Load" : "Effort d'essai"}</th>
-                        <th>${isEn ? "Adjusted (" + engCoef.toFixed(2) + ")" : "Effort ajusté (" + engCoef.toFixed(2) + ")"}</th>
+                        <th>${isEn ? "Adjusted (Fall Factor " + engCoef.toFixed(2) + ")" : "Effort ajusté (Fall Factor " + engCoef.toFixed(2) + ")"}</th>
                     </tr>`;
             } else {
                 theadSpans.innerHTML = `
@@ -8825,6 +10769,184 @@ function highlightSelectedNode(nodeIdx = null, spanIdx = null) {
         const inpSlope = document.getElementById("insp-slope-val");
         if (inpSlope) inpSlope.value = (targetSpan.slope_deg !== undefined ? targetSpan.slope_deg : targetSpan.slopeDeg) || 0;
 
+        const inpXCones = document.getElementById("insp-xcones-val");
+        if (inpXCones) inpXCones.value = targetSpan.xconesCount || 0;
+
+        const groupXMat = document.getElementById("group-insp-xmatrix");
+        const btnXMatTxt = document.getElementById("btn-insp-xmatrix-text");
+        if (groupXMat) {
+            const isInter = (nIdx > 0 && nIdx < activePositions.length - 1);
+            groupXMat.style.display = isInter ? "block" : "none";
+            const hasX = !!(node.hasXMatrix || node.type === "x_matrix");
+            if (btnXMatTxt) {
+                btnXMatTxt.textContent = hasX ? (parseInt(state.lang) === 1 ? "Remove X-Matrix" : "Retirer la X-Matrix") : (parseInt(state.lang) === 1 ? "Add X-Matrix" : "Ajouter une X-Matrix");
+            }
+            const pnlBranches = document.getElementById("insp-xmatrix-branches-panel");
+            const listBranches = document.getElementById("insp-xmatrix-branches-list");
+            const countBadge = document.getElementById("insp-xmat-branch-count");
+            const btnAddBranch = document.getElementById("btn-add-xmatrix-branch");
+            if (pnlBranches) {
+                pnlBranches.style.display = hasX ? "block" : "none";
+                if (hasX && listBranches) {
+                    const spanIdx = (nIdx > 0 && state.spans && nIdx <= state.spans.length) ? nIdx - 1 : 0;
+                    const sp = (state.spans && state.spans[spanIdx]) ? state.spans[spanIdx] : null;
+                    const branches = (sp && sp.xMatrixBranches) ? sp.xMatrixBranches : (node.xMatrixBranches || []);
+                    if (countBadge) countBadge.textContent = `${branches.length}/2`;
+
+                    const distUnit = isUS ? "ft" : "m";
+                    if (branches.length === 0) {
+                        listBranches.innerHTML = `<span style="font-size:0.75rem; color:#64748b; font-style:italic;">${isEn ? "No branch (pass-through)" : "0 branche (jonction simple)"}</span>`;
+                    } else {
+                        listBranches.innerHTML = branches.map((br, bIdx) => {
+                            const bSpans = (typeof getBranchSpans === "function") ? getBranchSpans(br) : (br.spans || [{ id: (br.id || "xmb") + "_s1", length: br.length || 5.0 }]);
+                            const angVal = br.angleDeg !== undefined ? br.angleDeg : (bIdx === 0 ? 90 : -90);
+                            return `
+                                <div class="xmatrix-branch-card" style="margin-bottom:6px;">
+                                    <div style="display:flex; align-items:center; justify-content:space-between; gap:4px; margin-bottom:4px;">
+                                        <strong style="color:#2563eb; font-size:0.75rem;"><i class="fa-solid fa-code-branch"></i> B${bIdx + 1}</strong>
+                                        <div style="display:flex; align-items:center; gap:2px;">
+                                            <span style="font-size:0.7rem; color:#475569;">Angle:</span>
+                                            <input type="number" class="insp-xmat-ang-input" data-span-idx="${spanIdx}" data-branch-idx="${bIdx}" value="${angVal}" step="any" min="-180" max="180" style="width:46px; font-size:0.75rem; padding:2px 4px; height:24px; text-align:center;">
+                                            <span style="font-size:0.7rem; color:#64748b;">°</span>
+                                        </div>
+                                        <button type="button" class="btn-table-icon btn-danger-hover insp-btn-del-branch" data-span-idx="${spanIdx}" data-branch-idx="${bIdx}" title="${isEn ? "Delete branch" : "Supprimer la branche"}" style="height:22px; width:22px; font-size:0.7rem; padding:0;">
+                                            <i class="fa-solid fa-trash"></i>
+                                        </button>
+                                    </div>
+                                    <div class="insp-branch-spans-list">
+                                        ${bSpans.map((subSp, sIdx) => {
+                                            const subLenVal = isUS ? (subSp.length * METERS_TO_FEET).toFixed(2) : (typeof subSp.length === "number" ? subSp.length.toFixed(2) : subSp.length);
+                                            return `
+                                                <div style="display:flex; align-items:center; justify-content:space-between; gap:4px; padding:2px 0;">
+                                                    <span style="font-size:0.72rem; font-weight:600; color:#3b82f6;">S${sIdx + 1}:</span>
+                                                    <div style="display:flex; align-items:center; gap:2px;">
+                                                        <input type="number" class="insp-xmat-subspan-input xmat-branch-len-input" data-span-idx="${spanIdx}" data-branch-idx="${bIdx}" data-subspan-idx="${sIdx}" value="${subLenVal}" step="any" min="0.5" style="width:52px; font-size:0.75rem; padding:2px 4px; height:22px; text-align:center;">
+                                                        <span style="font-size:0.68rem; color:#64748b;">${distUnit}</span>
+                                                    </div>
+                                                    ${bSpans.length > 1 ? `
+                                                        <button type="button" class="insp-btn-del-subspan" data-span-idx="${spanIdx}" data-branch-idx="${bIdx}" data-subspan-idx="${sIdx}" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:0.7rem; padding:0 2px;" title="${isEn ? "Delete span" : "Supprimer cette portée"}"><i class="fa-solid fa-times"></i></button>
+                                                    ` : '<span style="width:14px;"></span>'}
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                        <button type="button" class="btn btn-secondary btn-sm insp-btn-add-subspan" data-span-idx="${spanIdx}" data-branch-idx="${bIdx}" style="width:100%; margin-top:2px; height:22px; font-size:0.68rem; padding:1px 4px; color:#2563eb; border-color:#bfdbfe; background:#eff6ff;">
+                                            <i class="fa-solid fa-plus"></i> ${isEn ? "Add Span" : "Ajouter portée"}
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join("");
+
+                        listBranches.querySelectorAll(".insp-xmat-subspan-input").forEach(inp => {
+                            inp.addEventListener("change", (e) => {
+                                const bIdx = parseInt(e.target.dataset.branchIdx);
+                                const subIdx = parseInt(e.target.dataset.subspanIdx);
+                                const raw = parseFloat(e.target.value) || 5.0;
+                                const meters = isUS ? (raw / METERS_TO_FEET) : raw;
+                                if (sp && sp.xMatrixBranches && sp.xMatrixBranches[bIdx]) {
+                                    const bSpans = getBranchSpans(sp.xMatrixBranches[bIdx]);
+                                    if (bSpans[subIdx]) {
+                                        bSpans[subIdx].length = Math.max(0.5, meters);
+                                    }
+                                    getBranchTotalLength(sp.xMatrixBranches[bIdx]);
+                                    update3DScene();
+                                    renderDynamicLayoutForm();
+                                }
+                            });
+                        });
+
+                        listBranches.querySelectorAll(".insp-btn-add-subspan").forEach(btn => {
+                            btn.addEventListener("click", () => {
+                                const bIdx = parseInt(btn.dataset.branchIdx);
+                                if (sp && sp.xMatrixBranches && sp.xMatrixBranches[bIdx]) {
+                                    const branch = sp.xMatrixBranches[bIdx];
+                                    const bSpans = getBranchSpans(branch);
+                                    const newSubId = (branch.id || "xmb") + "_s" + (bSpans.length + 1);
+                                    bSpans.push({ id: newSubId, length: 5.0 });
+                                    getBranchTotalLength(branch);
+                                    highlightSelectedNode(nIdx, sIdx);
+                                    update3DScene();
+                                    renderDynamicLayoutForm();
+                                }
+                            });
+                        });
+
+                        listBranches.querySelectorAll(".insp-btn-del-subspan").forEach(btn => {
+                            btn.addEventListener("click", () => {
+                                const bIdx = parseInt(btn.dataset.branchIdx);
+                                const subIdx = parseInt(btn.dataset.subspanIdx);
+                                if (sp && sp.xMatrixBranches && sp.xMatrixBranches[bIdx]) {
+                                    const branch = sp.xMatrixBranches[bIdx];
+                                    const bSpans = getBranchSpans(branch);
+                                    if (bSpans.length > 1) {
+                                        bSpans.splice(subIdx, 1);
+                                        getBranchTotalLength(branch);
+                                        highlightSelectedNode(nIdx, sIdx);
+                                        update3DScene();
+                                        renderDynamicLayoutForm();
+                                    }
+                                }
+                            });
+                        });
+
+                        listBranches.querySelectorAll(".insp-xmat-ang-input").forEach(inp => {
+                            inp.addEventListener("change", (e) => {
+                                const bIdx = parseInt(e.target.dataset.branchIdx);
+                                if (sp && sp.xMatrixBranches && sp.xMatrixBranches[bIdx]) {
+                                    let ang = parseFloat(e.target.value) || 0;
+                                    const norm = ((ang % 360) + 360) % 360;
+                                    if (norm < 15 || norm > 345 || Math.abs(norm - 180) < 15) {
+                                        alert(["⚠️ L'angle de la branche ne peut pas être aligné avec la ligne principale (0° ou 180°).", "⚠️ Branch angle cannot be aligned with the main lifeline (0° or 180°)."][state.lang || 0]);
+                                        ang = (bIdx === 0 ? 90 : -90);
+                                        e.target.value = ang;
+                                    }
+                                    sp.xMatrixBranches[bIdx].angleDeg = ang;
+                                    update3DScene();
+                                    renderDynamicLayoutForm();
+                                }
+                            });
+                        });
+
+                        listBranches.querySelectorAll(".insp-btn-del-branch").forEach(btn => {
+                            btn.addEventListener("click", () => {
+                                const bIdx = parseInt(btn.dataset.branchIdx);
+                                if (sp && sp.xMatrixBranches) {
+                                    sp.xMatrixBranches.splice(bIdx, 1);
+                                    highlightSelectedNode(nIdx, sIdx);
+                                    update3DScene();
+                                    renderDynamicLayoutForm();
+                                }
+                            });
+                        });
+                    }
+
+                    if (btnAddBranch) {
+                        btnAddBranch.disabled = (branches.length >= 2);
+                        btnAddBranch.onclick = () => {
+                            if (sp) {
+                                if (!sp.xMatrixBranches) sp.xMatrixBranches = [];
+                                cleanupCollinearXMatrixBranches(state.spans);
+                                if (sp.xMatrixBranches.length < 2) {
+                                    const count = sp.xMatrixBranches.length;
+                                    const nextAng = count === 0 ? 90 : -90;
+                                    const bId = "xmb_" + Date.now() + "_" + count;
+                                    sp.xMatrixBranches.push({
+                                        id: bId,
+                                        length: 5.0,
+                                        angleDeg: nextAng,
+                                        spans: [{ id: bId + "_s1", length: 5.0 }]
+                                    });
+                                    highlightSelectedNode(nIdx, sIdx);
+                                    update3DScene();
+                                    renderDynamicLayoutForm();
+                                }
+                            }
+                        };
+                    }
+                }
+            }
+        }
+
         const fallBtn = document.getElementById("btn-insp-set-fall");
         const fallTxt = document.getElementById("btn-insp-fall-text");
         const isCurrentFall = (state.selectedFallSpanId === targetSpan.id);
@@ -9038,8 +11160,8 @@ function prepareOBJModel(rawObj, rotY, modelFile = null) {
         clone.position.set(-topCenter.x, -box.min.y, -topCenter.z);
     }
 
-    // Apply base Y-axis rotation offset for NEW PRO & LIGHT PRO models
-    const isNewOrLightPro = modelFile ? (modelFile.includes("new_pro") || modelFile.includes("light_pro")) : (state.product === "NEW PRO" || state.product === "LIGHT PRO");
+    // Apply base Y-axis rotation offset for PRO & CORE models
+    const isNewOrLightPro = modelFile ? (modelFile.includes("new_pro") || modelFile.includes("light_pro")) : (isPro(state.product) || isCore(state.product));
     let angleOffset = isNewOrLightPro ? (Math.PI / 2) : 0;
 
     // Additional Y-axis rotation offsets for specific models
@@ -9052,7 +11174,7 @@ function prepareOBJModel(rawObj, rotY, modelFile = null) {
     }
 
     const rotGroup = new THREE.Group();
-    rotGroup.rotation.y = rotY + angleOffset;
+    rotGroup.rotation.y = -rotY + angleOffset;
     rotGroup.add(clone);
 
     wrapper.add(rotGroup);
@@ -9246,18 +11368,16 @@ function createAnchorMesh(colorHex, nodeType = "intermediaire", compId = null, r
     // 2. Otherwise check which components in COMPONENTS_DB are checked for active product
     if (filesToRender.length === 0) {
         if (nodeType === "x_matrix") {
-            const checkedPosts = list.filter(c => c.id !== "Contre_Plaque" && c.id !== "X-Cone" && c.id !== "Pack_Matrix" && c.id !== "X-Matrix" && c.id !== "New_Pro" && c.id !== "LightPro" && c.id !== "LongRange" && c.checked);
-            checkedPosts.forEach(c => filesToRender.push(c.file));
             const xmat = list.find(c => c.id === "X-Matrix" && c.checked);
             if (xmat) {
                 filesToRender.push(xmat.file);
-            } else if (checkedPosts.length === 0) {
+            } else {
                 const defaultXmat = list.find(c => c.id === "X-Matrix");
                 if (defaultXmat) filesToRender.push(defaultXmat.file);
             }
         } else if (nodeType === "extremite") {
-            // For LONG RANGE, render 3D model if Absorber (LongRange) or Anchor (A-Fix) is checked
-            if (state.product === "LONG RANGE") {
+            // For EXTREME, render 3D model if Absorber (LongRange) or Anchor (A-Fix) is checked
+            if (isExtreme(state.product)) {
                 const lrAbsorber = list.find(c => c.id === "LongRange");
                 const afixAnchor = list.find(c => c.id === "A-Fix");
                 const isLr = (lrAbsorber && lrAbsorber.checked) || (state.checkedComponents && state.checkedComponents["LongRange"]);
@@ -9275,7 +11395,7 @@ function createAnchorMesh(colorHex, nodeType = "intermediaire", compId = null, r
             }
         } else {
             // Intermediate node post
-            if (state.product === "LONG RANGE") {
+            if (isExtreme(state.product)) {
                 const lrAbsorber = list.find(c => c.id === "LongRange");
                 const afixAnchor = list.find(c => c.id === "A-Fix");
                 const isLr = (lrAbsorber && lrAbsorber.checked) || (state.checkedComponents && state.checkedComponents["LongRange"]);
@@ -9767,10 +11887,14 @@ function createConfig10Structures3D() {
         }
     }
 
-    if (state.layoutType !== "slope_horizontal_comb") return;
+    if (state.layoutType !== "slope_horizontal_comb" && state.layoutType !== "multi_straight" && state.layoutType !== "slope_multi") return;
+    if (state.showStairs === false) return;
 
     const spans = state.spans || [];
     if (spans.length === 0) return;
+
+    const hasAnySloped = spans.some(sp => sp.isSloped || (sp.slope_deg && sp.slope_deg !== 0) || (sp.slopeDeg && sp.slopeDeg !== 0));
+    if (!hasAnySloped) return;
 
     const activeLayout = Calculator.calculateAnchorPositions(state.L, state.l, Calculator.getMaxSpan(state.product));
     const nodes = activeLayout.line1 || [];
@@ -9779,7 +11903,8 @@ function createConfig10Structures3D() {
     // Check if any slope > 45° and display non-blocking warning badge if so
     let hasExtremeSlope = false;
     spans.forEach(sp => {
-        if (sp.isSloped && (sp.slopeDeg || 0) > 45) {
+        const sDeg = (sp.slope_deg !== undefined ? sp.slope_deg : sp.slopeDeg) || 0;
+        if ((sp.isSloped || sDeg > 0) && sDeg > 45) {
             hasExtremeSlope = true;
         }
     });
@@ -9813,7 +11938,8 @@ function createConfig10Structures3D() {
 
     for (let i = 0; i < spans.length; i++) {
         const sp = spans[i];
-        if (!sp.isSloped) continue;
+        const spSlope = (sp.slope_deg !== undefined ? sp.slope_deg : sp.slopeDeg) || 0;
+        if (!sp.isSloped && spSlope === 0) continue;
 
         const pA = nodes[i];
         const pB = nodes[i + 1];
@@ -9897,54 +12023,79 @@ function createConfig10Structures3D() {
     // 2. Process Raised Platforms at Top Arrivals
     let k = 0;
     while (k < spans.length) {
-        if (spans[k].isSloped) {
+        const sp = spans[k];
+        const spSlope = Math.abs((sp.slope_deg !== undefined ? sp.slope_deg : sp.slopeDeg) || 0);
+        const dy = (nodes[k + 1] && nodes[k]) ? Math.abs(nodes[k + 1].y - nodes[k].y) : 0;
+        const isSpSloped = (spSlope >= 15) || (dy >= 0.05 && spSlope >= 1.0);
+
+        if (isSpSloped) {
             const topNodeIdx = k + 1;
             const topY = nodes[topNodeIdx] ? nodes[topNodeIdx].y : 0;
 
             if (topY > 0.05) {
-                let endHorizNodeIdx = topNodeIdx;
-                while (endHorizNodeIdx < spans.length && !spans[endHorizNodeIdx].isSloped) {
-                    endHorizNodeIdx++;
+                // Find all consecutive horizontal spans starting at topNodeIdx
+                let nextSpanIdx = topNodeIdx;
+                let endNodeIdx = topNodeIdx;
+
+                while (nextSpanIdx < spans.length) {
+                    const spNext = spans[nextSpanIdx];
+                    const nextSlope = Math.abs((spNext.slope_deg !== undefined ? spNext.slope_deg : spNext.slopeDeg) || 0);
+                    const nextDy = (nodes[nextSpanIdx + 1] && nodes[nextSpanIdx]) ? Math.abs(nodes[nextSpanIdx + 1].y - nodes[nextSpanIdx].y) : 0;
+
+                    // If subsequent span is horizontal (< 15° and height change is negligible), platform continues under it!
+                    if (nextSlope < 15 && nextDy < 0.05) {
+                        endNodeIdx = nextSpanIdx + 1;
+                        nextSpanIdx++;
+                    } else {
+                        break;
+                    }
                 }
 
-                const nodeA = nodes[topNodeIdx];
-                const nodeB = nodes[endHorizNodeIdx] || nodes[nodes.length - 1];
-
-                if (nodeA && nodeB) {
-                    const minX = Math.min(nodeA.x, nodeB.x) - marginX;
-                    const maxX = Math.max(nodeA.x, nodeB.x) + marginX;
-                    const platLen = Math.max(1.0, maxX - minX);
-                    const platHeight = topY;
-                    const platThickness = platHeight;
-
-                    const platZCenter = nodeA.z + (CONFIG10_STAIRS.sideOffset / 2);
-                    const platWidthZ = CONFIG10_STAIRS.stairWidth + CONFIG10_STAIRS.sideOffset + 1.2;
-
-                    const platGeo = new THREE.BoxGeometry(platLen, platThickness, platWidthZ);
-                    const platMat = new THREE.MeshStandardMaterial({
-                        color: 0x64748b,
-                        roughness: 0.5,
-                        metalness: 0.2
-                    });
-                    const platMesh = new THREE.Mesh(platGeo, platMat);
-
-                    platMesh.position.set(
-                        minX + platLen / 2,
-                        platHeight / 2,
-                        platZCenter
-                    );
-                    platMesh.receiveShadow = true;
-                    platMesh.castShadow = true;
-                    config10StructuresGroup.add(platMesh);
-
-                    const edgeMatPlat = new THREE.LineBasicMaterial({ color: 0x334155 });
-                    const edges = new THREE.EdgesGeometry(platGeo);
-                    const line = new THREE.LineSegments(edges, edgeMatPlat);
-                    line.position.set(minX + platLen / 2, platHeight / 2, platZCenter);
-                    config10StructuresGroup.add(line);
+                // Compute bounding volume for all nodes covered by this continuous platform
+                let minX = Infinity, maxX = -Infinity;
+                let minZ = Infinity, maxZ = -Infinity;
+                for (let n = topNodeIdx; n <= endNodeIdx; n++) {
+                    if (nodes[n]) {
+                        minX = Math.min(minX, nodes[n].x);
+                        maxX = Math.max(maxX, nodes[n].x);
+                        minZ = Math.min(minZ, nodes[n].z);
+                        maxZ = Math.max(maxZ, nodes[n].z);
+                    }
                 }
 
-                k = endHorizNodeIdx;
+                minX -= marginX;
+                maxX += marginX;
+                const platLen = Math.max(1.0, maxX - minX);
+                const platHeight = topY;
+                const platThickness = platHeight;
+
+                const platZCenter = (minZ + maxZ) / 2 + (CONFIG10_STAIRS.sideOffset / 2);
+                const platWidthZ = Math.max(CONFIG10_STAIRS.stairWidth + CONFIG10_STAIRS.sideOffset + 1.2, (maxZ - minZ) + 2.0);
+
+                const platGeo = new THREE.BoxGeometry(platLen, platThickness, platWidthZ);
+                const platMat = new THREE.MeshStandardMaterial({
+                    color: 0x64748b,
+                    roughness: 0.5,
+                    metalness: 0.2
+                });
+                const platMesh = new THREE.Mesh(platGeo, platMat);
+
+                platMesh.position.set(
+                    minX + platLen / 2,
+                    platHeight / 2,
+                    platZCenter
+                );
+                platMesh.receiveShadow = true;
+                platMesh.castShadow = true;
+                config10StructuresGroup.add(platMesh);
+
+                const edgeMatPlat = new THREE.LineBasicMaterial({ color: 0x334155 });
+                const edges = new THREE.EdgesGeometry(platGeo);
+                const line = new THREE.LineSegments(edges, edgeMatPlat);
+                line.position.set(minX + platLen / 2, platHeight / 2, platZCenter);
+                config10StructuresGroup.add(line);
+
+                k = Math.max(k + 1, endNodeIdx - 1);
                 continue;
             }
         }
@@ -10149,6 +12300,97 @@ function createXMatrixPieceMesh(rotY = 0) {
     }
 
     return group;
+}
+
+// 3D Renderer: Multi-direction branches from an intermediate X-Matrix anchor (Spec V2_14 / Config 2)
+function renderXMatrixBranches3D(pos, cableTopY, rotX, activePostHeight) {
+    if (!pos || !pos.xMatrixBranches || pos.xMatrixBranches.length === 0) return;
+    const branches = pos.xMatrixBranches;
+    const baseRotY = pos.rotY || 0;
+    const cableExt = isExtreme(state.product) ? 0.30 : 0.20;
+
+    const cableMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(state.colors.cable || "#f8fafc"),
+        metalness: 0.9,
+        roughness: 0.1,
+        emissive: new THREE.Color(state.colors.cable || "#f8fafc"),
+        emissiveIntensity: 0.2
+    });
+
+    const hubCenter = new THREE.Vector3(pos.x, cableTopY, pos.z);
+
+    branches.forEach((br, bIdx) => {
+        const rawAng = (br.angleDeg !== undefined) ? parseFloat(br.angleDeg) : (bIdx === 0 ? 90 : -90);
+        const normAng = ((rawAng % 360) + 360) % 360;
+        // Collinear suppression: strictly prevent duplicate crimped lines overlapping main lifeline
+        if (normAng < 15 || normAng > 345 || Math.abs(normAng - 180) < 15) {
+            return;
+        }
+
+        const bSpans = (typeof getBranchSpans === "function") ? getBranchSpans(br) : (br.spans || [{ id: (br.id || "xmb") + "_s1", length: br.length || 5.0 }]);
+        const brAngleRad = baseRotY + (rawAng * Math.PI / 180);
+        const vDir = new THREE.Vector3(Math.cos(brAngleRad), 0, Math.sin(brAngleRad)).normalize();
+
+        // Crimp terminal loop at X-Matrix arm slot
+        const slotPos = hubCenter.clone().add(vDir.clone().multiplyScalar(0.085));
+        cableGroup.add(createCableLoopTerminal(slotPos, vDir, state.colors.cable, true));
+
+        const roofLift = (state.roofShape === "sloped" || state.roofShape === "triangle") ? 0.02 : 0.0;
+        let prevPt = hubCenter.clone().add(vDir.clone().multiplyScalar(0.165));
+        let cumulativeDist = 0;
+
+        bSpans.forEach((subSp, sIdx) => {
+            const isLastSpan = (sIdx === bSpans.length - 1);
+            const subLen = Math.max(0.5, parseFloat(subSp.length) || 5.0);
+            cumulativeDist += subLen;
+
+            const curX = pos.x + cumulativeDist * Math.cos(brAngleRad);
+            const curZ = pos.z + cumulativeDist * Math.sin(brAngleRad);
+            const curRoofY = (typeof getRoofHeightAt === "function") ? getRoofHeightAt(curX, curZ) : 0;
+            const curPostY = curRoofY + roofLift;
+            const curCablePt = new THREE.Vector3(curX, curPostY + activePostHeight, curZ);
+
+            if (isLastSpan) {
+                // Extremity post at the branch tip
+                const branchPost = createAnchorMesh(state.colors.anchors, "extremite", null, brAngleRad, activePostHeight);
+                branchPost.position.set(curX, curPostY, curZ);
+                branchPost.rotation.x = rotX;
+                branchPost.userData.isAnchorPost = true;
+                branchPost.userData.isBranchEndPost = true;
+                branchPost.userData.branchIndex = bIdx;
+                branchPost.userData.spanIndex = sIdx;
+                anchorGroup.add(branchPost);
+
+                // Cable tube extending to extremity post
+                const endExt = curCablePt.clone().add(vDir.clone().multiplyScalar(cableExt));
+                const curve = new THREE.LineCurve3(prevPt, endExt);
+                const tubeGeo = new THREE.TubeGeometry(curve, 16, 0.015, 8, false);
+                const cableMesh = new THREE.Mesh(tubeGeo, cableMat);
+                cableGroup.add(cableMesh);
+
+                // Crimp loop terminal at branch extremity post
+                cableGroup.add(createCableLoopTerminal(endExt, vDir, state.colors.cable, false));
+            } else {
+                // Intermediate post along the branch
+                const interPost = createAnchorMesh(state.colors.anchors, "intermediaire", null, brAngleRad, activePostHeight);
+                interPost.position.set(curX, curPostY, curZ);
+                interPost.rotation.x = rotX;
+                interPost.userData.isAnchorPost = true;
+                interPost.userData.isBranchInterPost = true;
+                interPost.userData.branchIndex = bIdx;
+                interPost.userData.spanIndex = sIdx;
+                anchorGroup.add(interPost);
+
+                // Cable tube segment
+                const curve = new THREE.LineCurve3(prevPt, curCablePt);
+                const tubeGeo = new THREE.TubeGeometry(curve, 16, 0.015, 8, false);
+                const cableMesh = new THREE.Mesh(tubeGeo, cableMat);
+                cableGroup.add(cableMesh);
+
+                prevPt = curCablePt;
+            }
+        });
+    });
 }
 
 // 3D Renderer for Config 11: Cross-spans (NewPRO Only, 4 branches from central X-Matrix piece)
@@ -10789,30 +13031,91 @@ function createSlopeSpanTextSprite(text) {
     return sprite;
 }
 
-// Procedural 3D X-Cone Mesh Fallback (guarantees instantaneous visibility even while GLB is loading)
+// Floating 3D badge sprite for X-Cones (C1, C2...)
+function createXConeBadgeSprite(label) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.95)'; // HOOKT safety amber
+    if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(4, 8, 120, 48, 12);
+        ctx.fill();
+    } else {
+        ctx.fillRect(4, 8, 120, 48);
+    }
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(4, 8, 120, 48, 12);
+        ctx.stroke();
+    } else {
+        ctx.strokeRect(4, 8, 120, 48);
+    }
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 26px "Outfit", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, 64, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(0.65, 0.32, 1);
+    return sprite;
+}
+
+// Procedural 3D X-Cone Mesh (sleeve + conical deflector + clamp collar)
 function createProceduralXConeMesh() {
     const group = new THREE.Group();
-    const coneGeo = new THREE.ConeGeometry(0.045, 0.14, 16);
-    const coneMat = new THREE.MeshStandardMaterial({
-        color: 0xcbd5e1,
-        metalness: 0.88,
-        roughness: 0.2
+
+    const matSteel = new THREE.MeshStandardMaterial({
+        color: 0xe2e8f0,
+        metalness: 0.92,
+        roughness: 0.15
     });
-    const coneMesh = new THREE.Mesh(coneGeo, coneMat);
-    // Orient cone along -Z so lookAt downDir points tip downwards along cable
-    coneMesh.rotation.x = -Math.PI / 2;
+    const matAccent = new THREE.MeshStandardMaterial({
+        color: 0xf59e0b,
+        metalness: 0.85,
+        roughness: 0.25
+    });
+
+    // 1. Central cylindrical sleeve passing around cable along Z axis
+    const sleeveGeo = new THREE.CylinderGeometry(0.016, 0.016, 0.22, 16);
+    sleeveGeo.rotateX(Math.PI / 2);
+    const sleeveMesh = new THREE.Mesh(sleeveGeo, matSteel);
+    group.add(sleeveMesh);
+
+    // 2. Conical sliding deflector (pointing towards -Z along cable slope)
+    const coneGeo = new THREE.ConeGeometry(0.065, 0.15, 20);
+    coneGeo.rotateX(-Math.PI / 2);
+    const coneMesh = new THREE.Mesh(coneGeo, matSteel);
+    coneMesh.position.set(0, 0, -0.02);
     group.add(coneMesh);
+
+    // 3. Central clamp ring / fastener block (Boulons M5 housing)
+    const clampGeo = new THREE.CylinderGeometry(0.038, 0.038, 0.06, 16);
+    clampGeo.rotateX(Math.PI / 2);
+    const clampMesh = new THREE.Mesh(clampGeo, matAccent);
+    clampMesh.position.set(0, 0, 0.06);
+    group.add(clampMesh);
+
     return group;
 }
 
 // Render X-CONE safety elements ON the cable at 1.0m (15°-30°), 0.5m (30°-40°), or 0.3m (40°-75°) intervals (STRICTLY when selected by user)
 function renderXConesAlongCable(ptsArray, customSpans = null) {
-    const list = COMPONENTS_DB[state.product] || [];
+    const currentProd = (typeof normalizeProduct === "function" ? normalizeProduct(state.product) : state.product) || "CORE";
+    const list = (typeof COMPONENTS_DB !== "undefined" ? (COMPONENTS_DB[currentProd] || COMPONENTS_DB[state.product]) : []) || [];
     const xconeComp = list.find(c => c.id === "X-Cone");
     const isChecked = (xconeComp && xconeComp.checked) || (state.checkedComponents && state.checkedComponents["X-Cone"]);
 
     if (!isChecked) return;
     if (!ptsArray || ptsArray.length < 2) return;
+
+    const activeSpans = customSpans || state.spans || [];
+    let globalConeIndex = 1;
 
     for (let i = 0; i < ptsArray.length - 1; i++) {
         const pA = ptsArray[i];
@@ -10823,52 +13126,104 @@ function renderXConesAlongCable(ptsArray, customSpans = null) {
 
         // Determine slope degree for segment i
         let segSlopeDeg = 0;
-        if (customSpans && customSpans[i]) {
-            segSlopeDeg = parseFloat(customSpans[i].slopeDeg !== undefined ? customSpans[i].slopeDeg : customSpans[i].slope_deg) || 0;
-        } else if (state.layoutType === "slope_horizontal_comb") {
-            if (state.spans && state.spans[i] && state.spans[i].isSloped) {
-                segSlopeDeg = state.spans[i].slopeDeg || 15;
-            } else {
-                segSlopeDeg = 0;
+        let explicitCount = null;
+
+        if (activeSpans && activeSpans[i]) {
+            const sp = activeSpans[i];
+            const parsedSlope = parseFloat(sp.slopeDeg !== undefined ? sp.slopeDeg : sp.slope_deg);
+            if (!isNaN(parsedSlope) && Math.abs(parsedSlope) >= 15) {
+                segSlopeDeg = Math.abs(parsedSlope);
             }
-        } else if (state.layoutType === "slope_single" || state.layoutType === "slope_multi") {
-            const spans = (state.layoutType === "slope_single") ? [state.spans?.[0] || { length: 20, slopeDeg: 30 }] : (state.spans || []);
-            segSlopeDeg = (spans[i] && spans[i].slopeDeg !== undefined) ? spans[i].slopeDeg : (state.roofSlope || 15);
-        } else if (state.roofShape === "sloped" || state.roofShape === "triangle") {
-            segSlopeDeg = state.roofSlope || 15;
+            if (typeof sp.xconesCount === "number" && sp.xconesCount > 0) {
+                explicitCount = sp.xconesCount;
+            }
         }
 
+        // Measure physical inclination in 3D
+        const dy = Math.abs(pB.y - pA.y);
+        const dHoriz = Math.hypot(pB.x - pA.x, pB.z - pA.z);
+        const physicalSlopeDeg = (dHoriz > 0.05) ? (Math.atan2(dy, dHoriz) * 180 / Math.PI) : 0;
+
+        if (segSlopeDeg === 0) {
+            if (state.layoutType === "slope_single" || state.layoutType === "slope_multi") {
+                const spans = (state.layoutType === "slope_single") ? [state.spans?.[0] || { length: 20, slopeDeg: 30 }] : (state.spans || []);
+                const sSlope = parseFloat(spans[i]?.slopeDeg || state.roofSlope || 0);
+                if (sSlope >= 15) segSlopeDeg = sSlope;
+            } else if ((state.roofShape === "sloped" || state.roof_type === "sloped" || state.roofShape === "triangle" || state.roof_type === "triangle") && physicalSlopeDeg >= 14.5) {
+                const rSlope = parseFloat(state.roofSlope || state.roof_slope_deg || 0);
+                if (rSlope >= 15) segSlopeDeg = rSlope;
+            }
+        }
+
+        // STRICT HOOKT RULE: X-Cones are EXCLUSIVELY for sloped segments (>= 15 deg and <= 75 deg).
+        // Horizontal spans or slopes < 15 deg MUST NEVER have X-cones!
+        if (segSlopeDeg < 15 || segSlopeDeg > 75) continue;
+        if (dHoriz > 0.05 && physicalSlopeDeg < 14.0 && explicitCount === null) continue;
+
         const spacing = Calculator.getXConeSpacing(segSlopeDeg);
-        if (spacing <= 0) continue;
-        if (segLen < spacing) continue;
+        let count = 0;
+        if (explicitCount !== null) {
+            count = explicitCount;
+        } else if (spacing > 0 && segLen >= spacing) {
+            count = Math.floor(segLen / spacing);
+        } else if (segSlopeDeg >= 15) {
+            count = Math.max(1, Math.floor(segLen / (Calculator.getXConeSpacing(segSlopeDeg) || 1.0)));
+        }
+
+        if (count <= 0) continue;
 
         const unitDir = dir.clone().normalize();
-        const count = Math.floor(segLen / spacing);
+        // The tip of the cone must ALWAYS point downwards along the slope (towards lower elevation Y, in direction of fall/gravity)
+        let downDir;
+        if (Math.abs(pB.y - pA.y) > 0.001) {
+            downDir = (pB.y > pA.y) ? unitDir.clone().negate() : unitDir.clone();
+        } else {
+            const spDeg = (activeSpans && activeSpans[i]) ? parseFloat(activeSpans[i].slopeDeg !== undefined ? activeSpans[i].slopeDeg : activeSpans[i].slope_deg) : 0;
+            downDir = (spDeg > 0) ? unitDir.clone().negate() : unitDir.clone();
+        }
 
         for (let k = 1; k <= count; k++) {
-            const dist = k * spacing;
-            if (dist > segLen - 0.2) break;
+            let dist = 0;
+            if (explicitCount !== null) {
+                dist = (k / (count + 1)) * segLen;
+            } else {
+                dist = k * spacing;
+                if (dist > segLen - 0.2) {
+                    if (k === 1) dist = segLen / 2;
+                    else break;
+                }
+            }
 
             const posCone = pA.clone().add(unitDir.clone().multiplyScalar(dist));
-            let coneObj;
+            const coneContainer = new THREE.Group();
+
+            let coneMeshObj;
             if (xconeComp && xconeComp.file && objCache[xconeComp.file]) {
-                coneObj = prepareOBJModel(objCache[xconeComp.file], 0, xconeComp.file);
+                coneMeshObj = prepareOBJModel(objCache[xconeComp.file], 0, xconeComp.file);
             } else {
-                coneObj = createProceduralXConeMesh();
-                if (xconeComp && xconeComp.file) {
+                coneMeshObj = createProceduralXConeMesh();
+                if (xconeComp && xconeComp.file && !objCache[xconeComp.file]) {
                     loadOBJModel(xconeComp.file).then(() => {
                         if (typeof update3DScene === "function") update3DScene();
                     });
                 }
             }
-            coneObj.position.copy(posCone);
+
+            coneContainer.add(coneMeshObj);
 
             // Orient cone tip pointing DOWNWARDS along the cable slope (-unitDir)
-            const downDir = unitDir.clone().negate();
-            const rotMatrix = new THREE.Matrix4().lookAt(new THREE.Vector3(0, 0, 0), downDir, new THREE.Vector3(0, 1, 0));
-            coneObj.quaternion.setFromRotationMatrix(rotMatrix);
+            coneContainer.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), downDir);
+            coneContainer.position.copy(posCone);
+            coneContainer.userData.isXCone = true;
 
-            anchorGroup.add(coneObj);
+            // Spec V2 — 14 / Criterion 4: Floating 3D label (C1, C2...)
+            const coneLabel = createXConeBadgeSprite(`C${globalConeIndex}`);
+            coneLabel.position.set(0, 0.25, 0);
+            coneLabel.userData.isXConeLabel = true;
+            coneContainer.add(coneLabel);
+
+            anchorGroup.add(coneContainer);
+            globalConeIndex++;
         }
     }
 }
@@ -10950,7 +13305,7 @@ function renderConfig8_9SlopeSystem3D() {
         }
 
         // Attachment point of the cable (clamp height)
-        const clampH = (state.product === "LONG RANGE") ? activePostHeight : Math.max(0.05, activePostHeight - 0.035);
+        const clampH = isExtreme(state.product) ? activePostHeight : Math.max(0.05, activePostHeight - 0.035);
         const attachPt = new THREE.Vector3(pt.x, pt.y, 0).add(normalVec.clone().multiplyScalar(clampH));
         attachPoints.push(attachPt);
     }
@@ -10979,7 +13334,7 @@ function renderConfig8_9SlopeSystem3D() {
     }
 
     // 5. Terminations & Buffers
-    const cableExt = (state.product === "LONG RANGE") ? 0.30 : 0.20;
+    const cableExt = isExtreme(state.product) ? 0.30 : 0.20;
     const rad0 = (spans[0].slopeDeg * Math.PI) / 180;
     const tan0 = new THREE.Vector3(Math.cos(rad0), Math.sin(rad0), 0);
     const bufferPt0 = attachPoints[0].clone().add(tan0.clone().multiplyScalar(-cableExt));
@@ -11063,6 +13418,10 @@ function update3DScene() {
         anchorGroup.remove(anchorGroup.children[0]);
     }
 
+    if (typeof cleanupCollinearXMatrixBranches === "function") {
+        cleanupCollinearXMatrixBranches(state.spans);
+    }
+
     const maxSpan = Calculator.getMaxSpan(state.product);
     const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
     const positions = layout.all;
@@ -11107,7 +13466,7 @@ function update3DScene() {
 
     // Default product if not set
     if (!state.product) {
-        state.product = "NEW PRO";
+        state.product = "CORE";
     }
 
     const line1TopPts = [];
@@ -11143,6 +13502,22 @@ function update3DScene() {
 
         const roofLift = (state.roofShape === "sloped" || state.roofShape === "triangle") ? 0.02 : 0.0;
 
+        // Spec V2_14: X-Matrix Junction (Suspended at cable height, NO post underneath)
+        if (pos.hasXMatrix || pos.type === "x_matrix") {
+            const cableTopY = pos.y + roofY + roofLift + activePostHeight;
+            const xmatMesh = createXMatrixPieceMesh(rotY);
+            xmatMesh.position.set(pos.x, cableTopY, pos.z);
+            xmatMesh.rotation.x = rotX;
+            anchorGroup.add(xmatMesh);
+
+            targetPtsArray.push(new THREE.Vector3(pos.x, cableTopY, pos.z));
+
+            if (typeof renderXMatrixBranches3D === "function") {
+                renderXMatrixBranches3D(pos, cableTopY, rotX, activePostHeight);
+            }
+            return;
+        }
+
         anchor.rotation.x = rotX;
         anchor.rotation.z = 0;
         anchor.position.set(pos.x, pos.y + roofY + roofLift, pos.z);
@@ -11166,7 +13541,7 @@ function update3DScene() {
 
         // Uniform cable height passing 100% straight through top clamp head of posts
         const currentPostH = (anchor && anchor.userData && anchor.userData.height > 0.05) ? anchor.userData.height : activePostHeight;
-        const clampH = (state.product === "LONG RANGE") ? currentPostH : Math.max(0.05, currentPostH - 0.035);
+        const clampH = isExtreme(state.product) ? currentPostH : Math.max(0.05, currentPostH - 0.035);
 
         const topY = pos.y + roofY + roofLift + clampH * Math.cos(rotX);
         const topZ = pos.z + clampH * Math.sin(rotX);
@@ -11206,100 +13581,58 @@ function update3DScene() {
                 rotY = Math.atan2(dz, dx);
             }
 
-            const bendAngle = Math.abs(pos.bendDeg || 0);
-            const isDoubledCorner = pos.isDoubled || (pos.type === "angle" && bendAngle > 40);
+            let rotYIn = rotY;
+            if (idx > 0) {
+                rotYIn = Math.atan2(pos.z - nodesList[idx - 1].z, pos.x - nodesList[idx - 1].x);
+            } else if (state.closedLoop && nodesList.length > 1) {
+                const prevNode = nodesList[nodesList.length - 2] || nodesList[nodesList.length - 1];
+                rotYIn = Math.atan2(pos.z - prevNode.z, pos.x - prevNode.x);
+            }
 
-            let calculatedRotY = rotY;
+            let rotYOut = rotYIn + ((pos.bendDeg || 0) * Math.PI) / 180;
+            if (idx < nodesList.length - 1) {
+                rotYOut = Math.atan2(nodesList[idx + 1].z - pos.z, nodesList[idx + 1].x - pos.x);
+            } else if (state.closedLoop && nodesList.length > 1) {
+                const nextNode = nodesList[0];
+                rotYOut = Math.atan2(nextNode.z - pos.z, nextNode.x - pos.x);
+            }
 
-            if (layoutHasBends && nodesList.length > 1) {
-                let rotYIn = rotY;
-                if (idx > 0) {
-                    rotYIn = Math.atan2(pos.z - nodesList[idx - 1].z, pos.x - nodesList[idx - 1].x);
-                } else if (state.closedLoop && nodesList.length > 1) {
-                    const prevNode = nodesList[nodesList.length - 2] || nodesList[nodesList.length - 1];
-                    rotYIn = Math.atan2(pos.z - prevNode.z, pos.x - prevNode.x);
-                }
-
-                let rotYOut = rotYIn + ((pos.bendDeg || 0) * Math.PI) / 180;
-                if (idx < nodesList.length - 1) {
-                    rotYOut = Math.atan2(nodesList[idx + 1].z - pos.z, nodesList[idx + 1].x - pos.x);
-                } else if (state.closedLoop && nodesList.length > 1) {
-                    const nextNode = nodesList[0];
-                    rotYOut = Math.atan2(nextNode.z - pos.z, nextNode.x - pos.x);
-                }
-
-                const vInX = Math.cos(rotYIn), vInZ = Math.sin(rotYIn);
-                const vOutX = Math.cos(rotYOut), vOutZ = Math.sin(rotYOut);
-                const vInsideX = -vInX + vOutX;
-                const vInsideZ = -vInZ + vOutZ;
-
-                let insideRotY = rotYIn + dominantTurnSide * (Math.PI / 2);
-
-                if (Math.hypot(vInsideX, vInsideZ) > 0.001) {
-                    insideRotY = Math.atan2(vInsideZ, vInsideX);
-                }
-
-                if (orientMode === "outside") {
-                    calculatedRotY = insideRotY + Math.PI;
+            // The piece and the line must ALWAYS be on the same directing vector (vecteur directeur, collinear with the cable)
+            let calculatedRotY = (pos.rotY !== undefined) ? pos.rotY : rotY;
+            if (pos.customRotY !== undefined) {
+                calculatedRotY = pos.customRotY;
+            } else if (state.layoutType === "multi_bend_circle") {
+                calculatedRotY = pos.rotY || 0;
+            } else if (nodesList.length > 1) {
+                // Aligned strictly with the directing vector of the line (rotYOut for start and bends, rotYIn for line ends):
+                if (idx === 0 || (idx < nodesList.length - 1 && (Math.abs(pos.bendDeg || 0) > 0 || pos.type === "angle"))) {
+                    calculatedRotY = rotYOut;
+                } else if (idx === nodesList.length - 1 && state.closedLoop) {
+                    calculatedRotY = rotYOut;
                 } else {
-                    calculatedRotY = insideRotY;
+                    calculatedRotY = rotYIn;
                 }
             }
 
+            // Spec V2 — 17: Coudes supérieurs à 40° -> Ancrage double A#a / A#b avec 2 potelets physiques 3D espacés de +/- 0.45m
+            const bendAngle = Math.abs(pos.bendDeg || 0);
+            const isDoubledCorner = pos.isDoubled || (pos.type === "angle" && bendAngle > 40);
             if (isDoubledCorner && nodesList.length > 1) {
-                let rotYIn = rotY;
-                if (idx > 0) {
-                    rotYIn = Math.atan2(pos.z - nodesList[idx - 1].z, pos.x - nodesList[idx - 1].x);
-                } else if (state.closedLoop && nodesList.length > 1) {
-                    const prevNode = nodesList[nodesList.length - 2] || nodesList[nodesList.length - 1];
-                    rotYIn = Math.atan2(pos.z - prevNode.z, pos.x - prevNode.x);
-                }
-
-                let rotYOut = rotYIn + ((pos.bendDeg || 0) * Math.PI) / 180;
-                if (idx < nodesList.length - 1) {
-                    rotYOut = Math.atan2(nodesList[idx + 1].z - pos.z, nodesList[idx + 1].x - pos.x);
-                } else if (state.closedLoop && nodesList.length > 1) {
-                    const nextNode = nodesList[0];
-                    rotYOut = Math.atan2(nextNode.z - pos.z, nextNode.x - pos.x);
-                }
-
-                // Enlarge corner offset distance so the two corner post pieces are clearly spaced apart at 90° angles (0.45m offset = ~0.64m gap between posts)
                 const offsetDist = 0.45;
-
-                const p1 = {
+                const posA = {
                     ...pos,
                     x: pos.x - offsetDist * Math.cos(rotYIn),
                     z: pos.z - offsetDist * Math.sin(rotYIn),
-                    rotY: calculatedRotY
+                    rotY: rotYIn
                 };
-
-                const p2 = {
+                const posB = {
                     ...pos,
                     x: pos.x + offsetDist * Math.cos(rotYOut),
                     z: pos.z + offsetDist * Math.sin(rotYOut),
-                    rotY: calculatedRotY
+                    rotY: rotYOut
                 };
-
-                // Process first corner post
-                processSingleNodeMesh(p1, targetPtsArray);
-
-                // Generate smooth enlarged circular arc points connecting p1 to p2 around corner vertex
-                if (targetPtsArray && targetPtsArray.length > 0) {
-                    const topY1 = p1.y + activePostHeight + getRoofHeightAt(p1.x, p1.z);
-                    const topY2 = p2.y + activePostHeight + getRoofHeightAt(p2.x, p2.z);
-                    const numArcSamples = 8;
-                    for (let k = 1; k < numArcSamples; k++) {
-                        const t = k / numArcSamples;
-                        const invT = 1 - t;
-                        const arcX = invT * invT * p1.x + 2 * invT * t * pos.x + t * t * p2.x;
-                        const arcZ = invT * invT * p1.z + 2 * invT * t * pos.z + t * t * p2.z;
-                        const arcY = invT * topY1 + t * topY2;
-                        targetPtsArray.push(new THREE.Vector3(arcX, arcY, arcZ));
-                    }
-                }
-
-                // Process second corner post
-                processSingleNodeMesh(p2, targetPtsArray);
+                processSingleNodeMesh(posA, targetPtsArray);
+                processSingleNodeMesh(posB, targetPtsArray);
             } else {
                 processSingleNodeMesh({ ...pos, rotY: calculatedRotY }, targetPtsArray);
             }
@@ -11358,15 +13691,15 @@ function update3DScene() {
     }
 
     processNodes(layout.line1, line1TopPts);
-    renderXConesAlongCable(line1TopPts);
+    renderXConesAlongCable(line1TopPts, state.spans);
 
 
-    const cableExt = (state.product === "LONG RANGE") ? 0.30 : 0.20;
+    const cableExt = isExtreme(state.product) ? 0.30 : 0.20;
 
     if (state.hasLine2 && state.xMatrixLocation === "end" && layout.line2.length > 0) {
         // END CORNER JUNCTION: Single continuous curved cable bending around corner
         processNodes(layout.line2, line2TopPts);
-        renderXConesAlongCable(line2TopPts);
+        renderXConesAlongCable(line2TopPts, state.spans);
 
         if (line1TopPts.length > 0 && line2TopPts.length > 0) {
             const fullPathCombined = [];
@@ -11490,7 +13823,7 @@ function update3DScene() {
             const jTopPt = line1TopPts[jIndex];
 
             processNodes(layout.line2, line2TopPts);
-            renderXConesAlongCable(line2TopPts);
+            renderXConesAlongCable(line2TopPts, state.spans);
 
             if (jTopPt && line2TopPts.length > 0) {
                 const fullPath2 = [jTopPt, ...line2TopPts];
@@ -11611,7 +13944,7 @@ function countTotalAnchorPosts(positions) {
     if (!positions || positions.length === 0) return 0;
     let count = 0;
     positions.forEach(p => {
-        if (p.type === "x_matrix") return;
+        if (p.type === "x_matrix" || p.noPost || p.hasXMatrix) return;
         const bendAngle = Math.abs(p.bendDeg || 0);
         if (p.isDoubled || (p.type === "angle" && bendAngle > 40)) {
             count += 2;
@@ -11619,8 +13952,23 @@ function countTotalAnchorPosts(positions) {
             count += 1;
         }
     });
-    return count > 0 ? count : positions.length;
+    // Add posts from X-Matrix branches (intermediate and end posts)
+    if (state.spans) {
+        state.spans.forEach(s => {
+            if (s && s.hasXMatrix && s.xMatrixBranches && s.xMatrixBranches.length > 0) {
+                s.xMatrixBranches.forEach(b => {
+                    const bDeg = (b.angleDeg !== undefined) ? parseFloat(b.angleDeg) : 90;
+                    const normAng = ((bDeg % 360) + 360) % 360;
+                    if (normAng < 15 || normAng > 345 || Math.abs(normAng - 180) < 15) return;
+                    const bSpans = (typeof getBranchSpans === "function") ? getBranchSpans(b) : (b.spans || [{ id: "xmb_s1", length: b.length || 5.0 }]);
+                    count += bSpans.length;
+                });
+            }
+        });
+    }
+    return count;
 }
+window.countTotalAnchorPosts = countTotalAnchorPosts;
 
 function collectSceneGeometryContext(layout) {
     const layoutType = state.layoutType || "single_span";
@@ -11832,7 +14180,7 @@ function updateCalculationsUI(layout, maxSpan) {
     const l = state.lang || 0;
 
     const isOSHA = (state.norm === "OSHA");
-    const isMultiSpanAllowed = isOSHA && (state.product === "NEW PRO" || state.product === "LIGHT PRO" || state.product === "LightPro");
+    const isMultiSpanAllowed = isOSHA && (isPro(state.product) || isCore(state.product));
 
     const tabEN = document.getElementById("tab-en795");
     const tabOSHA = document.getElementById("tab-osha");
@@ -11860,7 +14208,7 @@ function updateCalculationsUI(layout, maxSpan) {
     }
 
     if (!state.product) {
-        const valEngCoef0 = document.getElementById("val-engineer-coef"); if (valEngCoef0) valEngCoef0.textContent = (state.engineerCoefficient || 1.0).toFixed(2);
+        const valEngCoef0 = document.getElementById("val-engineer-coef"); if (valEngCoef0) valEngCoef0.textContent = (state.norm === "OSHA") ? (state.engineerCoefficient || 1.0).toFixed(2) : String(computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition));
         document.getElementById("val-max-allowed-span").textContent = formatDistance(null, 1, l);
         const lenElem = document.getElementById("val-total-line-len");
         if (lenElem) lenElem.textContent = formatDistance(state.lineLength || 15.0, 2, l);
@@ -11893,7 +14241,7 @@ function updateCalculationsUI(layout, maxSpan) {
 
     const warningElem = document.getElementById("canvas-warning");
     const warningTextElem = document.getElementById("warning-text");
-    const isLongRange = (state.product === "LONG RANGE" || state.product === "LongRange");
+    const isLongRange = isExtreme(state.product);
     let isLongRangeInvalid = false;
     if (isLongRange) {
         if (state.layoutType === "grid_system") {
@@ -11918,7 +14266,7 @@ function updateCalculationsUI(layout, maxSpan) {
         if (lblAbsorber) lblAbsorber.textContent = `${TRANSLATIONS.lblAbsorberCount[l]} (${state.product})`;
         document.getElementById("val-absorber-count").textContent = "--";
 
-        const valEngCoef1 = document.getElementById("val-engineer-coef"); if (valEngCoef1) valEngCoef1.textContent = (state.engineerCoefficient || 1.0).toFixed(2);
+        const valEngCoef1 = document.getElementById("val-engineer-coef"); if (valEngCoef1) valEngCoef1.textContent = (state.norm === "OSHA") ? (state.engineerCoefficient || 1.0).toFixed(2) : String(computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition));
         document.getElementById("val-max-allowed-span").textContent = formatDistance(maxSpan, 1, l);
 
         const lenElem = document.getElementById("val-total-line-len");
@@ -11941,7 +14289,7 @@ function updateCalculationsUI(layout, maxSpan) {
         const strL1 = formatDistance(state.lineLength, 2, l);
         const strL2 = formatDistance(state.line2Length, 2, l);
         document.getElementById("header-dims-display").innerHTML = `<i class="fa-solid fa-ruler-combined"></i> ${shapeName} | L1: ${strL1} ${state.hasLine2 ? `+ L2: ${strL2}` : ""}`;
-        const activeSysName = (state.product === "LONG RANGE" || state.product === "LongRange") ? getLongRangeSubRange(realSpanMax) : (state.product || ["Choisissez un système", "Choose a system", "Elija un sistema"][l]);
+        const activeSysName = isExtreme(state.product) ? getLongRangeSubRange(realSpanMax) : (state.product || ["Choisissez un système", "Choose a system", "Elija un sistema"][l]);
         document.getElementById("header-system-display").textContent = activeSysName;
 
         return;
@@ -11958,11 +14306,21 @@ function updateCalculationsUI(layout, maxSpan) {
     const support = getActiveSupportType();
     const activeSpans = (state.spans && state.spans.length > 0) ? state.spans : [{ length: realSpanMax }];
     const arrestKn = state.arrestLoadValue || 6.0;
-    const isRangeProd = (state.product === "LONG RANGE");
+    const isRangeProd = isExtreme(state.product);
     const p0Kn = isRangeProd ? 5.886 : 0.981;
     const isSlopedRoof = (state.roofShape === "sloped");
 
     // Calculate exact 2-point values for EVERY span (entraxe)
+    const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+    if (!isOSHA) {
+        state.fallFactor = enFF;
+    }
+    const ff = isOSHA
+        ? ((typeof state.fallFactor === "number" && !isNaN(state.fallFactor) && state.fallFactor > 0)
+            ? state.fallFactor
+            : ((typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00))
+        : enFF;
+
     const spanCalculations = activeSpans.map((sp, idx) => {
         const spanLen = Math.max(0.1, parseFloat(sp.length) || 5.0);
         let sEffort = 0, sDefl = 0, sExt1 = 0, sExt2 = 0;
@@ -11970,24 +14328,29 @@ function updateCalculationsUI(layout, maxSpan) {
             const slopedRep = SlopedSystemConesModule.getFullScenarioReport(state.roofSlope || 15, spanLen, state.lineLength);
             sExt1 = slopedRep.retainedMax.loadCellTopKn;
             sExt2 = slopedRep.retainedMax.loadCellBottomKn;
-            sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, state.norm, state.fallFactor, support, false);
-            sDefl = Calculator.deflection(state.product, spanLen, state.fallFactor, support, state.nbUsers, state.norm, false);
+            sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, state.norm, isOSHA ? 1.0 : enFF, support, false);
+            sDefl = Calculator.deflection(state.product, spanLen, isOSHA ? 1.0 : enFF, support, state.nbUsers, state.norm, false);
+        } else if (!isOSHA) {
+            sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, "EN 795", enFF, support, isMultiSpan);
+            sDefl = Calculator.deflection(state.product, spanLen, enFF, support, state.nbUsers, "EN 795", isMultiSpan);
+            sExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, "EN 795", sEffort, sDefl, enFF, support, isMultiSpan);
+            sExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, "EN 795", sEffort, sDefl, enFF, support, isMultiSpan);
         } else {
-            sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, state.norm, state.fallFactor, support, isMultiSpan);
-            sDefl = Calculator.deflection(state.product, spanLen, state.fallFactor, support, state.nbUsers, state.norm, isMultiSpan);
-            sExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, isMultiSpan);
-            sExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, isMultiSpan);
+            sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, "OSHA", 1.0, support, isMultiSpan);
+            sDefl = Calculator.deflection(state.product, spanLen, 1.0, support, state.nbUsers, "OSHA", isMultiSpan);
+            sExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, "OSHA", sEffort, sDefl, 1.0, support, isMultiSpan);
+            sExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, "OSHA", sEffort, sDefl, 1.0, support, isMultiSpan);
         }
         return {
             idx,
             id: `S${idx + 1}`,
             internalSpanId: sp.id || `spn_${idx + 1}`,
             length: spanLen,
-            effortKn: sEffort,
+            effortKn: isOSHA ? (sEffort * ff) : sEffort,
             deflMm: sDefl,
-            ext1Kn: sExt1,
-            ext2Kn: sExt2,
-            maxTensionKn: Math.max(sExt1, sExt2)
+            ext1Kn: isOSHA ? (sExt1 * ff) : sExt1,
+            ext2Kn: isOSHA ? (sExt2 * ff) : sExt2,
+            maxTensionKn: isOSHA ? Math.max(sExt1 * ff, sExt2 * ff) : Math.max(sExt1, sExt2)
         };
     });
 
@@ -12068,9 +14431,9 @@ function updateCalculationsUI(layout, maxSpan) {
 
     const subtabMulti = document.getElementById("subtab-span-multi");
     if (subtabMulti) {
-        const countTxt = totalAnchors > 0 ? (totalAnchors > 6 ? ` (max 6)` : ` (${totalAnchors} ancr.)`) : "";
-        const countTxtEn = totalAnchors > 0 ? (totalAnchors > 6 ? ` (max 6)` : ` (${totalAnchors} anc.)`) : "";
-        const countTxtEs = totalAnchors > 0 ? (totalAnchors > 6 ? ` (máx 6)` : ` (${totalAnchors} anc.)`) : "";
+        const countTxt = totalAnchors > 0 ? ` (${totalAnchors} ancr.)` : "";
+        const countTxtEn = totalAnchors > 0 ? ` (${totalAnchors} anc.)` : "";
+        const countTxtEs = totalAnchors > 0 ? ` (${totalAnchors} anc.)` : "";
         const base = TRANSLATIONS.subtabSpanMulti[l];
         const sfx = [countTxt, countTxtEn, countTxtEs][l];
         subtabMulti.textContent = `${base}${sfx}`;
@@ -12109,7 +14472,7 @@ function updateCalculationsUI(layout, maxSpan) {
     const valAnchor = document.getElementById("val-anchor-count");
     if (valAnchor) valAnchor.innerHTML = formatReadoutVal(displayedAnchorCount);
 
-    const activeSubRange = (state.product === "LONG RANGE" || state.product === "LongRange") ? getLongRangeSubRange(realSpanMax) : state.product;
+    const activeSubRange = isExtreme(state.product) ? getLongRangeSubRange(realSpanMax) : state.product;
     const lblAbsorber = document.getElementById("lbl-absorber-count");
     if (lblAbsorber) lblAbsorber.textContent = `${TRANSLATIONS.lblAbsorberCount[l]} (${activeSubRange})`;
     const valAbsorber = document.getElementById("val-absorber-count");
@@ -12117,11 +14480,11 @@ function updateCalculationsUI(layout, maxSpan) {
 
     const allowedSpanForProduct = Calculator.getMaxSpan(state.product, realSpanMax);
 
-    const valEngCoef2 = document.getElementById("val-engineer-coef"); if (valEngCoef2) valEngCoef2.textContent = (state.engineerCoefficient || 1.0).toFixed(2);
+    const valEngCoef2 = document.getElementById("val-engineer-coef"); if (valEngCoef2) valEngCoef2.textContent = isOSHA ? (state.engineerCoefficient || 1.0).toFixed(2) : String(enFF);
     document.getElementById("val-max-allowed-span").textContent = formatDistance(allowedSpanForProduct, 1, l);
 
     const lenElem = document.getElementById("val-total-line-len");
-    const marginCm = (state.product === "LONG RANGE") ? 30 : 20;
+    const marginCm = isExtreme(state.product) ? 30 : 20;
     if (lenElem) lenElem.textContent = `${formatDistance(totalLineLen, 2, l)} ${formatLineMargin(marginCm)}`;
 
     const lblSpanLRow = document.getElementById("lbl-span-l-row");
@@ -12279,7 +14642,7 @@ function updateCalculationsUI(layout, maxSpan) {
             const sExt4 = Calculator.extremiteForce4(state.product, sc.length, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, true);
             const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(sExt1, sExt2, sExt3, sExt4);
             const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, sIdx);
-            const adapted = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, sIdx, p0Kn);
+            const adapted = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, sIdx, p0Kn, state.spans);
             return { sIdx, sc, adapted, ext3: sExt3, ext4: sExt4 };
         });
 
@@ -12293,7 +14656,8 @@ function updateCalculationsUI(layout, maxSpan) {
             // Critical Case mode: calculate maximum envelope load across all spans for each anchor
             const primaryAdapted = multiSpanResultsPerSpan[critSpanIdx]?.adapted || multiSpanResultsPerSpan[0]?.adapted;
             const envelopePoints = [];
-            for (let aIdx = 0; aIdx < totalAnchors; aIdx++) {
+            const numPts = primaryAdapted?.points ? primaryAdapted.points.length : totalAnchors;
+            for (let aIdx = 0; aIdx < numPts; aIdx++) {
                 let maxVal = -1;
                 let causeSpanIdx = critSpanIdx;
                 for (let sIdx = 0; sIdx < activeSpans.length; sIdx++) {
@@ -12327,8 +14691,8 @@ function updateCalculationsUI(layout, maxSpan) {
                     ? "Cargas Envolvente Anclajes - Caso Crítico:"
                     : "Efforts Enveloppe aux Ancrages - Cas Critique :");
             adaptedRes = {
-                count: totalAnchors,
-                totalAnchors: totalAnchors,
+                count: envelopePoints.length,
+                totalAnchors: envelopePoints.length,
                 points: envelopePoints,
                 uiSubtitle: subTitle
             };
@@ -12360,7 +14724,7 @@ function updateCalculationsUI(layout, maxSpan) {
     const strL1 = formatDistance(state.lineLength, 2, l);
     const strL2 = formatDistance(state.line2Length, 2, l);
     document.getElementById("header-dims-display").innerHTML = `<i class="fa-solid fa-ruler-combined"></i> ${shapeName} | L1: ${strL1} ${state.hasLine2 ? `+ L2: ${strL2}` : ""}`;
-    const sysDisplayTitle = (state.product === "LONG RANGE") ? `LONG / SUPER / ULTRA RANGE - ${activeSubRange}` : (state.product || ["Choisissez un système", "Choose a system", "Elija un sistema"][l]);
+    const sysDisplayTitle = isExtreme(state.product) ? `EXTREME - ${activeSubRange}` : (state.product || ["Choisissez un système", "Choose a system", "Elija un sistema"][l]);
     document.getElementById("header-system-display").textContent = sysDisplayTitle;
 
     if (realSpanMax > maxSpan + 0.05) {
@@ -12460,10 +14824,16 @@ function updateCalculationsUI(layout, maxSpan) {
         }
     }
 
-    // Total Fall Clearance Breakdown
-    const srl = SRL_CATALOG[state.selectedSrlId];
-    const srdMad = srl ? srl.mad : 1.40;
-    const srdRetracted = srl ? srl.retracted_len : 0.60;
+    // Total Fall Clearance Breakdown (Spec V2 — 04, Spec V2 — 09 & Spec V2 — 10 / Prompt 16)
+    const srl = (state.connectingDevice === "srd" && state.selectedSrlId) ? SRL_CATALOG[state.selectedSrlId] : null;
+    const madMVal = (typeof state.madM === "number" && state.madM > 0) ? state.madM : ((typeof state.customMad === "number" && state.customMad > 0) ? state.customMad : 1.07);
+    const userRetractedM = (typeof state.retractedLengthM === "number" && state.retractedLengthM > 0)
+        ? state.retractedLengthM
+        : ((state.connectingDevice === "srd")
+            ? (srl ? (srl.retracted_length_m || srl.retracted_len || 0.60) : 0.60)
+            : ((state.connectingDevice === "custom_srd" || state.connectingDevice === "custom_lanyard")
+                ? (state.customDeviceLengthM || 0.60)
+                : 1.80));
     const isOverEdge = state.isOverEdgeFall || (state.line_to_edge < 1.0);
     const bodyPos = state.bodyPosition || "standing";
     const dRingH = state.dRingHeightM || 1.50;
@@ -12475,21 +14845,23 @@ function updateCalculationsUI(layout, maxSpan) {
         else if (bodyPos === "lying") bodyOffset = dRingH;
     }
 
-    let devComp = srdMad;
-    if (isOverEdge) devComp += srdRetracted;
+    // Spec V2 — 10: Retracted length feeds total fall clearance in real-time
+    let devComp = madMVal + userRetractedM;
 
     const defl_in_meters = (deflL > 20.0) ? (deflL / 1000.0) : deflL;
-    const totalClr = defl_in_meters + devComp + dRingH + bodyOffset + safetyMarg;
+    const totalClr = defl_in_meters + devComp + safetyMarg;
 
     const clrDefl = document.getElementById("clr-val-defl");
+    const clrRetracted = document.getElementById("clr-val-retracted");
     const clrMad = document.getElementById("clr-val-mad");
     const clrBody = document.getElementById("clr-val-body");
     const clrMargin = document.getElementById("clr-val-margin");
     const clrTotal = document.getElementById("val-total-clearance");
 
     if (clrDefl) clrDefl.textContent = UnitsModule.formatDeflection(defl_in_meters);
-    if (clrMad) clrMad.textContent = UnitsModule.formatLength(srdMad);
-    if (clrBody) clrBody.textContent = `${UnitsModule.formatLength(dRingH + bodyOffset)} (${bodyPos})`;
+    if (clrRetracted) clrRetracted.textContent = UnitsModule.formatLength(userRetractedM);
+    if (clrMad) clrMad.textContent = UnitsModule.formatLength(madMVal);
+    if (clrBody) clrBody.textContent = `0.00 m (${bodyPos})`;
     if (clrMargin) clrMargin.textContent = UnitsModule.formatLength(safetyMarg);
     if (clrTotal) clrTotal.textContent = UnitsModule.formatLength(totalClr);
 
@@ -12578,6 +14950,7 @@ function setupCarouselEventListeners() {
 // UI INTERACTIVITY & EVENT BINDINGS
 // ==========================================
 function setupUIEventListeners() {
+    initSrlMadControls();
     const homeScreen = document.getElementById("home-screen");
     const dashboardScreen = document.getElementById("dashboard-screen");
     const configModal = document.getElementById("config-modal");
@@ -12654,7 +15027,7 @@ function setupUIEventListeners() {
                 state.nbUsers = 1;
             } else {
                 if (uInput) {
-                    const maxU = (state.product === "LIGHT PRO" || state.product === "LONG RANGE") ? 3 : 5;
+                    const maxU = isPro(state.product) ? 5 : 3;
                     uInput.max = maxU;
                 }
             }
@@ -12669,8 +15042,8 @@ function setupUIEventListeners() {
                 state.hasLine2 = false;
             }
             if (val !== "sloped") {
-                const newProComps = COMPONENTS_DB["NEW PRO"] || [];
-                const xcone = newProComps.find(c => c.id === "X-Cone");
+                const proComps = COMPONENTS_DB[state.product || "PRO"] || [];
+                const xcone = proComps.find(c => c.id === "X-Cone");
                 if (xcone) xcone.checked = false;
             }
         });
@@ -12699,7 +15072,7 @@ function setupUIEventListeners() {
                 return;
             }
             const locVal = selectXLoc ? selectXLoc.value : "mid";
-            if (e.target.checked && locVal === "mid" && state.product !== "NEW PRO") {
+            if (e.target.checked && locVal === "mid" && !isPro(state.product)) {
                 alert(TRANSLATIONS.alerts.xmatrixNewProOnly[state.lang || 0]);
                 if (selectXLoc) selectXLoc.value = "end";
             }
@@ -12709,7 +15082,7 @@ function setupUIEventListeners() {
 
     if (selectXLoc) {
         selectXLoc.addEventListener("change", (e) => {
-            if (e.target.value === "mid" && state.product !== "NEW PRO") {
+            if (e.target.value === "mid" && !isPro(state.product)) {
                 alert(TRANSLATIONS.alerts.xmatrixNewProOnly[state.lang || 0]);
                 e.target.value = "end";
             }
@@ -12722,12 +15095,12 @@ function setupUIEventListeners() {
         layoutTypeSelect.addEventListener("change", (e) => {
             state.layoutType = e.target.value;
             if (state.layoutType === "grid_system") {
-                state.product = "LONG RANGE";
+                state.product = "EXTREME";
                 state.roofShape = "flat_overhead";
                 state.mountingType = "overhead";
                 state.bufferLength = 0.30;
                 const prodSel = document.getElementById("select-product");
-                if (prodSel) prodSel.value = "LONG RANGE";
+                if (prodSel) prodSel.value = "EXTREME";
                 const uInp = document.getElementById("input-users");
                 if (uInp) {
                     uInp.max = 3;
@@ -12738,12 +15111,12 @@ function setupUIEventListeners() {
                     bufferInfo.innerHTML = `Buffer d'extrémité fixe : <strong>${formatDistance(0.30, 2, state.lang)}</strong> (non modifiable par l'utilisateur)`;
                 }
             } else if (state.layoutType === "cross_spans") {
-                state.product = "NEW PRO";
+                state.product = "PRO";
                 if (state.roofShape === "flat_overhead") state.roofShape = "flat";
                 state.mountingType = "standard";
                 state.bufferLength = 0.20;
                 const prodSel = document.getElementById("select-product");
-                if (prodSel) prodSel.value = "NEW PRO";
+                if (prodSel) prodSel.value = "PRO";
                 const uInp = document.getElementById("input-users");
                 if (uInp) uInp.max = 5;
                 const bufferInfo = document.getElementById("lbl-buffer-len-info");
@@ -12778,9 +15151,15 @@ function setupUIEventListeners() {
     const productSelect = document.getElementById("select-product");
     if (productSelect) {
         productSelect.addEventListener("change", (e) => {
-            const chosenProduct = e.target.value;
+            const chosenProduct = normalizeProduct(e.target.value);
+            const hasXMat = (state.spans && state.spans.some(s => s && s.hasXMatrix)) || (state.layoutType === "cross_spans");
+            if (isCore(chosenProduct) && hasXMat) {
+                alert(["⚠️ La X-Matrix est indisponible sur la gamme CORE. Veuillez retirer les X-Matrix ou conserver NewPRO / Extreme Overhead.", "⚠️ X-Matrix is not available on CORE systems. Please remove X-Matrix or keep NewPRO / Extreme Overhead."][state.lang || 0]);
+                e.target.value = state.product;
+                return;
+            }
             state.product = chosenProduct;
-            if (chosenProduct === "LONG RANGE") {
+            if (isExtreme(chosenProduct)) {
                 state.roofShape = "flat_overhead";
                 state.mountingType = "overhead";
                 state.bufferLength = 0.30;
@@ -12806,7 +15185,7 @@ function setupUIEventListeners() {
             }
 
             const uInput = document.getElementById("input-users");
-            const maxAllowedU = (chosenProduct === "NEW PRO") ? 5 : 3;
+            const maxAllowedU = isPro(chosenProduct) ? 5 : 3;
             if (uInput) {
                 uInput.max = maxAllowedU;
                 if (parseInt(uInput.value) > maxAllowedU) uInput.value = maxAllowedU;
@@ -12865,7 +15244,7 @@ function setupUIEventListeners() {
     if (usersInput) {
         const onUsersChange = (e) => {
             let u = parseInt(e.target.value) || 1;
-            const maxU = (state.product === "NEW PRO") ? 5 : 3;
+            const maxU = isPro(state.product) ? 5 : 3;
             u = Math.max(1, Math.min(maxU, u));
             state.nbUsers = u;
             if (state.arrestLoadMode !== "custom") {
@@ -12880,6 +15259,14 @@ function setupUIEventListeners() {
 
     document.getElementById("config-form").addEventListener("submit", (e) => {
         e.preventDefault();
+
+        // Spec V2 — 04 / Prompt 13: Arrest load validation (1 lbf to 5000 lbf for direct entry)
+        const currentKn = state.arrestLoadValue || state.arrestLoadKn || 6.0;
+        const arrestCheck = validateArrestLoad(currentKn, state.arrestLoadMode === "custom");
+        if (!arrestCheck.valid && state.arrestLoadMode === "custom") {
+            alert(arrestCheck.message);
+            return;
+        }
 
         // Save Project Info
         const pName = document.getElementById("input-proj-name");
@@ -12900,6 +15287,12 @@ function setupUIEventListeners() {
         setUnitSystem(nextSys, true);
         const appSel = document.getElementById("select-app-mode");
         state.appMode = appSel ? appSel.value : "fall_arrest";
+
+        // Save Regulatory Standard
+        const rNormSel = document.getElementById("select-roof-norm");
+        if (rNormSel) {
+            setNorm(rNormSel.value, true);
+        }
 
         // Spec V2 — 03: Save & Validate Roof Surface Parameters
         const rTypeSel = document.getElementById("select-roof-type");
@@ -12926,7 +15319,9 @@ function setupUIEventListeners() {
             state.l = state.roof_width;
         }
         if (rSlope1Inp) {
-            state.roof_slope_deg = parseFloat(rSlope1Inp.value) || 0;
+            const parsedSlope = parseFloat(rSlope1Inp.value);
+            const isSloped = (state.roofShape === "sloped" || state.roofShape === "triangle");
+            state.roof_slope_deg = (!isNaN(parsedSlope) && parsedSlope > 0) ? parsedSlope : (isSloped ? 15.0 : 0);
             state.roofSlope = state.roof_slope_deg;
         }
         if (rSlope2Inp) {
@@ -12991,23 +15386,23 @@ function setupUIEventListeners() {
 
         // Lanyard over-edge fall check
         if (state.connectingDevice === "lanyard" && (state.isOverEdgeFall || state.line_to_edge < 1.0)) {
-            alert("⚠️ Restriction de sécurité :\nL'utilisation d'une longe simple est strictement interdite en cas de risque de chute par-dessus le bord de toiture. Un SRD Classe 2 (Falcon Leading-Edge) est obligatoire.");
+            alert("⚠️ Restriction de sécurité :\nL'utilisation d'une longe simple est strictement interdite en cas de risque de chute par-dessus le bord de toiture. Un SRD Classe 2 est obligatoire.");
             return;
         }
 
         // Save Product & adapt roof settings
         const prodSel = document.getElementById("select-product");
         if (prodSel) {
-            state.product = prodSel.value;
+            state.product = normalizeProduct(prodSel.value);
         }
 
         // Save Layout Type
         const layoutSel = document.getElementById("select-layout-type");
         state.layoutType = layoutSel ? layoutSel.value : "single_span";
         if (state.layoutType === "grid_system") {
-            state.product = "LONG RANGE";
+            state.product = "EXTREME";
         }
-        if (state.product === "LONG RANGE") {
+        if (isExtreme(state.product)) {
             state.roofShape = "flat_overhead";
             state.mountingType = "overhead";
             state.bufferLength = 0.30;
@@ -13041,8 +15436,13 @@ function setupUIEventListeners() {
                 });
                 document.querySelectorAll(".span-slopedeg-input").forEach(inp => {
                     const idx = parseInt(inp.dataset.idx);
-                    const val = parseFloat(inp.value) || 20.0;
-                    if (state.spans[idx]) state.spans[idx].slopeDeg = val;
+                    const parsed = parseFloat(inp.value);
+                    const val = !isNaN(parsed) ? parsed : 20.0;
+                    if (state.spans[idx]) {
+                        state.spans[idx].slopeDeg = val;
+                        state.spans[idx].slope_deg = val;
+                        state.spans[idx].isSloped = Math.abs(val) >= 15;
+                    }
                 });
             }
 
@@ -13056,7 +15456,7 @@ function setupUIEventListeners() {
 
         // Validate & Save Users
         let requestedUsers = parseInt(document.getElementById("input-users").value) || 1;
-        const maxAllowedUsers = (state.product === "NEW PRO") ? 5 : 3;
+        const maxAllowedUsers = isPro(state.product) ? 5 : 3;
         if (requestedUsers > maxAllowedUsers) {
             alert(TRANSLATIONS.alerts.usersLimit[state.lang || 0]);
             requestedUsers = maxAllowedUsers;
@@ -13108,14 +15508,14 @@ function setupUIEventListeners() {
 
         // Ensure default components are checked ONLY if product changed
         if (state.previousProduct !== state.product) {
-            setDefaultComponentsForSystem(state.product || "NEW PRO");
+            setDefaultComponentsForSystem(state.product || "CORE");
             state.previousProduct = state.product;
         }
 
         // Synchronize active card on dashboard
         const allCards = document.querySelectorAll(".system-card");
         allCards.forEach(c => {
-            if (c.dataset.system === state.product) {
+            if (normalizeProduct(c.dataset.system) === normalizeProduct(state.product)) {
                 c.classList.add("active");
             } else {
                 c.classList.remove("active");
@@ -13155,10 +15555,10 @@ function setupUIEventListeners() {
     const sysCards = document.querySelectorAll(".system-card");
     sysCards.forEach(card => {
         card.addEventListener("click", () => {
-            const chosenSystem = card.dataset.system;
+            const chosenSystem = normalizeProduct(card.dataset.system);
 
             // Automatically adapt roof shape and mounting type based on chosen system
-            if (chosenSystem === "LONG RANGE") {
+            if (isExtreme(chosenSystem)) {
                 state.roofShape = "flat_overhead";
                 state.mountingType = "overhead";
                 state.bufferLength = 0.30;
@@ -13184,22 +15584,22 @@ function setupUIEventListeners() {
                 bufferInfo.innerHTML = `Buffer d'extrémité fixe : <strong>${formatDistance(state.bufferLength, 2, state.lang)}</strong> (non modifiable par l'utilisateur)`;
             }
 
-            // Compatibility Check: Mono-slope (sloped) is reserved strictly for NEW PRO
-            if (chosenSystem !== "NEW PRO" && state.roofShape === "sloped") {
+            // Compatibility Check: Mono-slope (sloped) is reserved strictly for PRO
+            if (!isPro(chosenSystem) && state.roofShape === "sloped") {
                 alert(TRANSLATIONS.alerts.slopedNewProOnly[state.lang || 0]);
                 return;
             }
 
-            // Compatibility Check: Legacy mid-span X-Matrix junction on 2-line corner requires NEW PRO
+            // Compatibility Check: Legacy mid-span X-Matrix junction on 2-line corner requires PRO
             const isLegacyMidXMat = state.hasLine2 && state.xMatrixLocation === "mid" && state.layoutType !== "cross_spans" && state.layoutType !== "grid_system";
-            if (isLegacyMidXMat && chosenSystem !== "NEW PRO") {
+            if (isLegacyMidXMat && !isPro(chosenSystem) && !isExtreme(chosenSystem)) {
                 alert(TRANSLATIONS.alerts.xmatrixNewProOnly[state.lang || 0]);
                 return;
             }
 
-            // User capacity limit check (5 users max for NEW PRO, 3 users max for LIGHT PRO and RANGE family)
+            // User capacity limit check (5 users max for PRO, 3 users max for CORE and EXTREME)
             const uInput = document.getElementById("input-users");
-            const maxAllowedU = (chosenSystem === "NEW PRO") ? 5 : 3;
+            const maxAllowedU = isPro(chosenSystem) ? 5 : 3;
             if (uInput) uInput.max = (state.roofShape === "sloped") ? 1 : maxAllowedU;
             if (state.nbUsers > maxAllowedU) {
                 alert(TRANSLATIONS.alerts.usersLimit[state.lang || 0]);
@@ -13207,17 +15607,18 @@ function setupUIEventListeners() {
                 if (uInput) uInput.value = maxAllowedU;
             }
 
-            sysCards.forEach(c => c.classList.remove("active"));
-            card.classList.add("active");
+            sysCards.forEach(c => {
+                c.classList.toggle("active", normalizeProduct(c.dataset.system) === chosenSystem);
+            });
             state.product = chosenSystem;
 
             // Filter layout dropdown options and update dynamic form
             filterLayoutDropdownOptions();
             renderDynamicLayoutForm();
 
-            // Reset multi-span mode if the selected product does not support multi-span (e.g. LONG RANGE)
+            // Reset multi-span mode if the selected product does not support multi-span (e.g. EXTREME)
             const isOSHA = (state.norm === "OSHA");
-            const isMultiSpanAllowed = isOSHA && (chosenSystem === "NEW PRO" || chosenSystem === "LIGHT PRO" || chosenSystem === "LightPro");
+            const isMultiSpanAllowed = isOSHA && !isExtreme(chosenSystem);
             if (!isMultiSpanAllowed) {
                 state.oshaSpanMode = "unique";
                 const subtabUnique = document.getElementById("subtab-span-unique");
@@ -13586,6 +15987,98 @@ function setupUIEventListeners() {
         });
     }
 
+    // Spec V2 — 08: X-Cones field for Sloped Spans
+    const inspXCones = document.getElementById("insp-xcones-val");
+    const btnAddXCone = document.getElementById("btn-add-xcone");
+    const updateSpanXCones = (count) => {
+        const sIdx = (state.selectedSpanIndex !== undefined && state.selectedSpanIndex >= 0) ? state.selectedSpanIndex : (state.selectedNodeIndex >= 0 ? Math.min(state.selectedNodeIndex, (state.spans ? state.spans.length - 1 : 0)) : 0);
+        if (state.spans && sIdx >= 0 && sIdx < state.spans.length) {
+            const sp = state.spans[sIdx];
+            const slope = (sp.slope_deg !== undefined ? sp.slope_deg : sp.slopeDeg) || 0;
+            if (slope === 0 && !sp.isSloped) {
+                alert(["⚠️ Les X-cones sont autorisés uniquement sur une portée en pente.", "⚠️ X-Cones are only allowed on sloped spans."][state.lang || 0]);
+                if (inspXCones) inspXCones.value = 0;
+                return;
+            }
+            sp.xconesCount = Math.max(0, parseInt(count) || 0);
+            update3DScene();
+        }
+    };
+    if (inspXCones) {
+        inspXCones.addEventListener("change", (e) => updateSpanXCones(e.target.value));
+    }
+    if (btnAddXCone) {
+        btnAddXCone.addEventListener("click", () => {
+            const current = inspXCones ? (parseInt(inspXCones.value) || 0) : 0;
+            const next = current + 1;
+            if (inspXCones) inspXCones.value = next;
+            updateSpanXCones(next);
+        });
+    }
+
+    // Spec V2 — 08: X-Matrix Toggle for Intermediate Anchors
+    const btnXMat = document.getElementById("btn-insp-toggle-xmatrix");
+    if (btnXMat) {
+        btnXMat.addEventListener("click", () => {
+            if (state.selectedNodeIndex <= 0) {
+                alert(["⚠️ Veuillez sélectionner un ancrage intermédiaire pour placer une X-Matrix.", "⚠️ Please select an intermediate anchor to place an X-Matrix."][state.lang || 0]);
+                return;
+            }
+            const activeLayout = Calculator.calculateAnchorPositions(state.L, state.l, Calculator.getMaxSpan(state.product));
+            const nodes = activeLayout.line1 || [];
+            if (state.selectedNodeIndex >= nodes.length - 1) {
+                alert(["⚠️ La X-Matrix ne peut pas être placée sur un ancrage d'extrémité.", "⚠️ X-Matrix cannot be placed on an end anchor."][state.lang || 0]);
+                return;
+            }
+            const isRange = isExtreme(state.product);
+            const isOverhead = (state.mountingType === "overhead" || state.roofShape === "flat_overhead");
+            if (!isPro(state.product) && !(isRange && isOverhead)) {
+                alert(["⚠️ La X-Matrix est autorisée uniquement pour le système PRO ou en pose suspendue (overhead) pour Extreme.", "⚠️ X-Matrix is only allowed for PRO systems or overhead Extreme systems."][state.lang || 0]);
+                return;
+            }
+            const n = nodes[state.selectedNodeIndex];
+            n.hasXMatrix = !n.hasXMatrix;
+            n.type = n.hasXMatrix ? "x_matrix" : "intermediaire";
+            n.noPost = n.hasXMatrix;
+
+            // Synchronize with state.spans
+            const spanIdx = state.selectedNodeIndex - 1;
+            if (state.spans && state.spans[spanIdx]) {
+                state.spans[spanIdx].hasXMatrix = n.hasXMatrix;
+                if (n.hasXMatrix) {
+                    if (!state.spans[spanIdx].xMatrixBranches) {
+                        state.spans[spanIdx].xMatrixBranches = [];
+                    }
+                    cleanupCollinearXMatrixBranches(state.spans);
+                    n.xMatrixBranches = state.spans[spanIdx].xMatrixBranches;
+                } else {
+                    state.spans[spanIdx].xMatrixBranches = [];
+                    n.xMatrixBranches = [];
+                }
+            }
+
+            // Sync X-Matrix in nomenclature (Spec V2 — 08 / Prompt 14)
+            const curProd = normalizeProduct(state.product || "PRO");
+            const comps = COMPONENTS_DB[curProd] || [];
+            const xMatComp = comps.find(c => c.id === "X-Matrix");
+            if (xMatComp) {
+                const anyNodeHasX = nodes.some(node => node.hasXMatrix || node.type === "x_matrix");
+                xMatComp.checked = anyNodeHasX;
+                if (state.checkedComponents) state.checkedComponents["X-Matrix"] = anyNodeHasX;
+                if (typeof renderComponentsChecklist === "function") renderComponentsChecklist();
+            }
+            syncXMatrixNomenclature();
+
+            const btnText = document.getElementById("btn-insp-xmatrix-text");
+            if (btnText) {
+                btnText.textContent = n.hasXMatrix ? (parseInt(state.lang) === 1 ? "Remove X-Matrix" : "Retirer la X-Matrix") : (parseInt(state.lang) === 1 ? "Add X-Matrix" : "Ajouter une X-Matrix");
+            }
+            highlightSelectedNode(state.selectedNodeIndex);
+            if (typeof renderDynamicLayoutForm === "function") renderDynamicLayoutForm();
+            update3DScene();
+        });
+    }
+
     const btnInsertAfter = document.getElementById("btn-insp-insert-after");
     if (btnInsertAfter) {
         btnInsertAfter.addEventListener("click", () => {
@@ -13632,32 +16125,13 @@ function setupUIEventListeners() {
 
     if (tabEN) {
         tabEN.addEventListener("click", () => {
-            tabEN.classList.add("active");
-            if (tabOSHA) tabOSHA.classList.remove("active");
-            state.norm = "EN 795";
-            state.oshaSpanMode = "unique";
-            if (oshaSubtabs) oshaSubtabs.style.display = "none";
-            if (subtabUnique) subtabUnique.classList.add("active");
-            if (subtabMulti) subtabMulti.classList.remove("active");
-            update3DScene();
+            setNorm("EN 795");
         });
     }
 
     if (tabOSHA) {
         tabOSHA.addEventListener("click", () => {
-            tabOSHA.classList.add("active");
-            if (tabEN) tabEN.classList.remove("active");
-            state.norm = "OSHA";
-            const isMultiSpanAllowed = (state.product === "NEW PRO" || state.product === "LIGHT PRO" || state.product === "LightPro");
-            if (oshaSubtabs) {
-                oshaSubtabs.style.display = isMultiSpanAllowed ? "flex" : "none";
-            }
-            if (!isMultiSpanAllowed) {
-                state.oshaSpanMode = "unique";
-                if (subtabUnique) subtabUnique.classList.add("active");
-                if (subtabMulti) subtabMulti.classList.remove("active");
-            }
-            update3DScene();
+            setNorm("OSHA");
         });
     }
 
@@ -13673,7 +16147,7 @@ function setupUIEventListeners() {
     if (subtabMulti) {
         subtabMulti.addEventListener("click", () => {
             const isOSHA = (state.norm === "OSHA");
-            const isMultiSpanAllowed = isOSHA && (state.product === "NEW PRO" || state.product === "LIGHT PRO" || state.product === "LightPro");
+            const isMultiSpanAllowed = isOSHA && !isExtreme(state.product);
             if (!isMultiSpanAllowed) return;
 
             subtabMulti.classList.add("active");
@@ -13699,6 +16173,18 @@ function setupUIEventListeners() {
 // ==========================================
 const FIXATIONS_DB = {
     ancrages: {
+        "CORE": {
+            "matrice_platine": { nombre: 4, type_fixation: "—" },
+            "platine_support": { nombre: 1, type_fixation: "—" }
+        },
+        "PRO": {
+            "matrice_platine": { nombre: 6, type_fixation: "Boulons" },
+            "platine_support": { nombre: 2, type_fixation: "—" }
+        },
+        "EXTREME": {
+            "matrice_platine": { nombre: 8, type_fixation: "—" },
+            "platine_support": { nombre: 1, type_fixation: "—" }
+        },
         "NEW PRO": {
             "matrice_platine": { nombre: 6, type_fixation: "Boulons" },
             "platine_support": { nombre: 2, type_fixation: "—" }
@@ -13752,7 +16238,8 @@ function normalizeSupportKey(roofTextureOrSupport) {
 }
 
 function getFixationInfo(piece, niveau, support, ligneModel) {
-    const model = (ligneModel || state.product || "NEW PRO").toUpperCase().includes("LONG") ? "LONG RANGE" : ((ligneModel || state.product || "NEW PRO").toUpperCase().includes("LIGHT") ? "LIGHT PRO" : "NEW PRO");
+    const rawModel = ligneModel || state.product || "CORE";
+    const model = isExtreme(rawModel) ? "EXTREME" : (isCore(rawModel) ? "CORE" : "PRO");
     const supportKey = normalizeSupportKey(support || state.roofTexture);
 
     if (niveau === "matrice_platine" || niveau === "platine_support") {
@@ -13787,14 +16274,14 @@ function getFixationInfo(piece, niveau, support, ligneModel) {
 }
 
 function validateProductAssociations() {
-    const list = COMPONENTS_DB[state.product] || [];
+    const list = COMPONENTS_DB[normalizeProduct(state.product || "CORE")] || [];
     const hasMiniOmega = list.some(c => c.checked && (c.id === "Mini_Omega" || c.name.toLowerCase().includes("mini omega")));
     const hasBasculant = list.some(c => c.checked && (c.id === "PB_HOOKt" || c.name.toLowerCase().includes("basculant")));
     const hasRigide = list.some(c => c.checked && (c.id === "P_Galva" || c.id === "P_Inox" || c.name.toLowerCase().includes("rigide")));
     const hasAFix = list.some(c => c.checked && (c.id === "A-Fix" || c.name.toLowerCase().includes("a-fix")));
     const isXMatrixChecked = list.some(c => c.id === "X-Matrix" && c.checked);
 
-    if (state.roofShape === "sloped" && state.product !== "NEW PRO") {
+    if (state.roofShape === "sloped" && !isPro(state.product)) {
         alert(TRANSLATIONS.alerts.slopedNewProOnly[state.lang || 0]);
         return false;
     }
@@ -13802,27 +16289,27 @@ function validateProductAssociations() {
     const isLegacyMidXMatrix = (state.hasLine2 && state.xMatrixLocation === "mid") || 
         ((isXMatrixChecked || (state.checkedComponents && state.checkedComponents["X-Matrix"])) && state.layoutType !== "cross_spans" && state.layoutType !== "grid_system");
 
-    if (isLegacyMidXMatrix && state.product !== "NEW PRO") {
+    if (isLegacyMidXMatrix && !isPro(state.product) && !isExtreme(state.product)) {
         alert(TRANSLATIONS.alerts.xmatrixNewProOnly[state.lang || 0]);
         return false;
     }
 
-    if (hasMiniOmega && state.product !== "NEW PRO") {
+    if (hasMiniOmega && !isPro(state.product)) {
         alert(TRANSLATIONS.alerts.miniOmegaNewPro[state.lang || 0]);
         return false;
     }
 
-    if (hasBasculant && state.product !== "LIGHT PRO" && state.product !== "NEW PRO") {
+    if (hasBasculant && !isCore(state.product) && !isPro(state.product)) {
         alert(TRANSLATIONS.alerts.basculantLightPro[state.lang || 0]);
         return false;
     }
 
-    if (hasRigide && state.product === "LONG RANGE") {
+    if (hasRigide && isExtreme(state.product)) {
         alert(TRANSLATIONS.alerts.rigideNotLongRange[state.lang || 0]);
         return false;
     }
 
-    if (hasAFix && state.product !== "LONG RANGE") {
+    if (hasAFix && !isExtreme(state.product)) {
         alert(TRANSLATIONS.alerts.afixLongRangeOnly[state.lang || 0]);
         return false;
     }
@@ -13850,17 +16337,22 @@ function calculateXConeCount(layout) {
 
             let segSlopeDeg = 0;
             if (state.spans && state.spans[i]) {
-                if (state.layoutType === "slope_horizontal_comb") {
-                    if (state.spans[i].isSloped) segSlopeDeg = state.spans[i].slopeDeg || 15;
-                } else if (state.layoutType === "slope_single" || state.layoutType === "slope_multi") {
-                    segSlopeDeg = state.spans[i].slopeDeg || state.roofSlope || 15;
-                } else if (state.spans[i].isSloped) {
-                    segSlopeDeg = state.spans[i].slopeDeg || 15;
+                const parsed = parseFloat(state.spans[i].slopeDeg !== undefined ? state.spans[i].slopeDeg : state.spans[i].slope_deg);
+                if (!isNaN(parsed) && Math.abs(parsed) >= 15) {
+                    segSlopeDeg = Math.abs(parsed);
                 }
             }
-            if (segSlopeDeg === 0 && state.roofShape === "sloped") {
-                segSlopeDeg = state.roofSlope || 15;
+            if (segSlopeDeg === 0) {
+                if (state.layoutType === "slope_single" || state.layoutType === "slope_multi") {
+                    const sSlope = parseFloat(state.spans?.[i]?.slopeDeg || state.roofSlope || 0);
+                    if (sSlope >= 15) segSlopeDeg = sSlope;
+                } else if (state.roofShape === "sloped" || state.roof_type === "sloped" || state.roofShape === "triangle" || state.roof_type === "triangle") {
+                    const rSlope = parseFloat(state.roofSlope || state.roof_slope_deg || 0);
+                    if (rSlope >= 15) segSlopeDeg = rSlope;
+                }
             }
+
+            if (segSlopeDeg < 15 || segSlopeDeg > 75) continue;
 
             const spacing = Calculator.getXConeSpacing(segSlopeDeg);
             if (spacing <= 0) continue;
@@ -14121,30 +16613,67 @@ function generatePDFReport() {
         const isEn = (parseInt(l) === 1);
         const pdfTrans = TRANSLATIONS.pdf;
 
-        // Spec V2 — 04: Mandatory SRL Selection & Class Validation Gate
-        if (!state.selectedSrlId) {
+        // Spec V2 — 10 / Prompt 16: Mandatory Retracted Length / Lanyard Length check
+        const isLanyardDev = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
+        const retrM = (typeof state.retractedLengthM === "number" && !isNaN(state.retractedLengthM)) ? state.retractedLengthM : parseFloat(state.retractedLengthM);
+        if (!retrM || isNaN(retrM) || retrM <= 0) {
+            const fieldFr = isLanyardDev ? "La longueur de la longe" : "La longueur rétractée";
+            const fieldEn = isLanyardDev ? "Lanyard length" : "Retracted length";
+            alert(isEn
+                ? `⚠️ Missing Mandatory Field: ${fieldEn} must be specified and strictly greater than 0 before generating the report.`
+                : `⚠️ Champ obligatoire manquant : ${fieldFr} doit être renseignée et strictement supérieure à 0 avant de générer le rapport.`);
+            return;
+        }
+
+        // Spec V2 — 09 / Prompt 15: Mandatory MAD and Arrest Force checks
+        const madM = (typeof state.madM === "number" && !isNaN(state.madM)) ? state.madM : parseFloat(state.madM);
+        if (!madM || isNaN(madM) || madM <= 0) {
+            alert(isEn
+                ? "⚠️ Missing Mandatory Field: Maximum Arrest Distance (MAD) must be specified and strictly greater than 0 before generating the report."
+                : "⚠️ Champ obligatoire manquant : La distance d'arrêt maximale (MAD) doit être renseignée et strictement supérieure à 0 avant de générer le rapport.");
+            return;
+        }
+
+        const fKn = (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn)) ? state.arrestForceKn : parseFloat(state.arrestForceKn);
+        if (!fKn || isNaN(fKn) || fKn <= 0) {
+            alert(isEn
+                ? "⚠️ Missing Mandatory Field: Arrest Force (1 user) must be specified and strictly greater than 0 before generating the report."
+                : "⚠️ Champ obligatoire manquant : La force d'arrêt (Arrest Force 1 user) doit être renseignée et strictement supérieure à 0 avant de générer le rapport.");
+            return;
+        }
+        const fLbf = fKn * UnitsModule.KN_TO_LBF;
+        if (fLbf > 5000.0) {
+            alert(isEn
+                ? `⚠️ Arrest Force Out of Range: ${Math.round(fLbf)} lbf exceeds the 5,000 lbf maximum threshold.`
+                : `⚠️ Force d'arrêt hors limites : ${Math.round(fLbf)} lbf dépasse le maximum autorisé de 5 000 lbf.`);
+            return;
+        }
+
+        // Spec V2 — 04 / Prompt 15 & Spec V2 — 10 / Prompt 16: Mandatory SRL Selection & Class Validation Gate
+        if (state.connectingDevice === "srd" && !state.selectedSrlId) {
             const srlCard = document.getElementById("srl-selection-card");
             if (srlCard && typeof srlCard.scrollIntoView === 'function') {
                 srlCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 srlCard.classList.add("pulse-attention");
                 setTimeout(() => srlCard.classList.remove("pulse-attention"), 3500);
             }
-            alert(l === 1
-                ? "⚠️ SRL Selection Required: Please select an SRL model (Turbo Light 9ft or Falcon Leading-Edge) in the right panel before generating the report."
-                : "⚠️ Sélection SRL obligatoire : Veuillez sélectionner un modèle de SRL (Turbo Light 9ft ou Falcon Leading-Edge) dans le panneau latéral droit avant de générer le rapport.");
+            alert(isEn
+                ? "⚠️ SRL Selection Required: Please select an SRL model (TurboLite+ or Falcon+) in the right panel before generating the report."
+                : "⚠️ Sélection SRL obligatoire : Veuillez sélectionner un modèle de SRL (TurboLite+ ou Falcon+) dans le panneau latéral droit avant de générer le rapport.");
             return;
         }
 
-    const srlData = SRL_CATALOG[state.selectedSrlId];
-    const hllElev = parseFloat(state.hllElevation) || 0.45;
-    if (srlData && srlData.classe === 1 && (state.hllElevationPreset === "knee" || hllElev < 1.49)) {
-        alert(l === 1
-            ? `⚠️ SRL Class 1 Rejected: Lifeline is below D-ring height. A Class 2 SRL (Falcon Leading-Edge) is mandatory for this report.`
-            : `⚠️ Non-conformité SRL Classe 1 : La ligne de vie est sous l'anneau D. Un SRL Classe 2 (Falcon Leading-Edge) est obligatoire pour éditer ce rapport.`);
-        return;
-    }
+        const srlData = (state.connectingDevice === "srd" && state.selectedSrlId) ? SRL_CATALOG[state.selectedSrlId] : null;
+        const hllElev = parseFloat(state.hllElevation) || 0.45;
+        const targetClass = (state.connectingDevice === "srd" && srlData) ? srlData.classe : (state.connectingDevice === "custom_srd" ? (parseInt(state.customDeviceClass) || 2) : 2);
+        if (targetClass === 1 && (state.hllElevationPreset === "knee" || hllElev < 1.49)) {
+            alert(isEn
+                ? `⚠️ SRL Class 1 Rejected: Lifeline is below D-ring height. A Class 2 device is mandatory for this report.`
+                : `⚠️ Non-conformité SRL Classe 1 : La ligne de vie est sous l'anneau D. Un dispositif Classe 2 est obligatoire pour éditer ce rapport.`);
+            return;
+        }
 
-    if ((state.product === "LONG RANGE" || state.product === "LongRange") && (state.lineLength < 10.0 || state.lineLength > 56.0)) {
+    if (isExtreme(state.product) && (state.lineLength < 10.0 || state.lineLength > 56.0)) {
         alert(TRANSLATIONS.alerts.longRangeLengthRange[l]);
         return;
     }
@@ -14177,22 +16706,24 @@ function generatePDFReport() {
     const totalLineLen = Calculator.calculateTotalLineLength(activeLayout, state.product);
     const realSpanMax = Calculator.calculateMaxRealSpan(activeLayout);
     const isOSHA = (state.norm === "OSHA");
-    const isMultiSpanAllowed = isOSHA && (state.product === "NEW PRO" || state.product === "LIGHT PRO" || state.product === "LightPro");
+    const isMultiSpanAllowed = isOSHA && !isExtreme(state.product);
     const isMultiSpan = isMultiSpanAllowed ? (state.oshaSpanMode === "multi") : false;
     const support = getActiveSupportType();
 
     const postName = getActivePostName();
-    const displayProductPdf = (state.product === "LONG RANGE")
-        ? `LONG / SUPER / ULTRA RANGE - ${getLongRangeSubRange(state.lineLength)}`
-        : (state.product || "NEW PRO");
-    const displayAbsorberPdf = (state.product === "LONG RANGE") ? getLongRangeSubRange(state.lineLength) : (state.product || "NEW PRO");
+    const displayProductPdf = isExtreme(state.product)
+        ? `EXTREME - ${getLongRangeSubRange(state.lineLength)}`
+        : normalizeProduct(state.product || "CORE");
+    const displayAbsorberPdf = isExtreme(state.product)
+        ? `EXTREME (${getLongRangeSubRange(state.lineLength)})`
+        : normalizeProduct(state.product || "CORE");
 
     const pInfo = state.projectInfo || {};
 
     const elevPresetNames = {
         "knee": l === 1 ? "Knee height - ~0.45 m" : "Hauteur de genou - ~0,45 m",
         "d_ring": l === 1 ? "D-ring - 1.50 m" : "Anneau D - 1,50 m",
-        "overhead": (state.product.includes("RANGE") ? "Overhead - 3,00 m" : "Overhead - 1,80 m"),
+        "overhead": (isExtreme(state.product) ? "Overhead - 3,00 m" : "Overhead - 1,80 m"),
         "custom": `Personnalisée - ${parseFloat(state.hllElevation).toFixed(2)} m`
     };
     const elevLabel = elevPresetNames[state.hllElevationPreset] || `${parseFloat(state.hllElevation).toFixed(2)} m`;
@@ -14246,7 +16777,7 @@ function generatePDFReport() {
         devLen: ["Longueur développée", "Developed Length", "Longitud desarrollada"][l],
         realSpan: ["Portée réelle max", "Max Real Span", "Luz real máxima"][l],
         maxUsers: ["Utilisateurs max", "Max Users", "Usuarios máx."][l],
-        srl: ["Dispositif SRL", "SRL Device", "Dispositivo SRL"][l]
+        srl: ["Dispositif de connexion", "Connecting Device", "Dispositivo de conexión"][l]
     };
 
     const sec1TableBody = [
@@ -14276,7 +16807,7 @@ function generatePDFReport() {
         ],
         [
             sec1Labels.elev, `${elevLabel}`,
-            sec1Labels.srl, `${srlData ? `${srlData.name} (Classe ${srlData.classe})` : "Classe 1"}`
+            sec1Labels.srl, getConnectingDeviceReportName(l)
         ]
     ];
 
@@ -14375,7 +16906,7 @@ function generatePDFReport() {
             const sampleExt4 = Calculator.extremiteForce4(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
             const sampleSix = AnchorEffortDistributionModule.calculateRule1_MultiSpan(sampleExt1, sampleExt2, sampleExt3, sampleExt4);
             const sampleFinalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sampleSix, state.spans, state.fallPosition?.segmentIndex || 0);
-            const adaptedSample = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(sampleFinalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0);
+            const adaptedSample = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(sampleFinalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
 
             doc.text(adaptedSample.pdfSubtitle, 14, currentSubY);
 
@@ -14396,7 +16927,7 @@ function generatePDFReport() {
 
                 const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(uExt1, uExt2, uExt3, uExt4);
                 const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, state.fallPosition?.segmentIndex || 0);
-                const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0);
+                const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
 
                 adaptedU.points.forEach((pt, pIdx) => {
                     anchorRows[pIdx].push(`${pt.val.toFixed(2)} kN`);
@@ -14547,10 +17078,25 @@ function generatePDFReport() {
             const rowExt2 = [pdfTrans.rowExt2[l]];
 
             for (let u = 1; u <= maxSysUsers; u++) {
-                const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, state.fallFactor, support, false);
-                const uDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, u, state.norm, false);
-                const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, false);
-                const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, false);
+                let uEffort = 0, uDefl = 0, uExt1 = 0, uExt2 = 0;
+                if (!isOSHA) {
+                    const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+                    uEffort = Calculator.effortLonge(state.product, realSpanMax, u, "EN 795", enFF, support, false);
+                    uDefl = Calculator.deflection(state.product, realSpanMax, enFF, support, u, "EN 795", false);
+                    uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
+                    uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
+                } else {
+                    const oshaFF = (typeof state.fallFactor === "number" && !isNaN(state.fallFactor) && state.fallFactor > 0)
+                        ? state.fallFactor
+                        : ((typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00);
+                    const baseEff = Calculator.effortLonge(state.product, realSpanMax, u, "OSHA", 1.0, support, false);
+                    uDefl = Calculator.deflection(state.product, realSpanMax, 1.0, support, u, "OSHA", false);
+                    const baseExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, "OSHA", baseEff, uDefl, 1.0, support, false);
+                    const baseExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, "OSHA", baseEff, uDefl, 1.0, support, false);
+                    uEffort = baseEff * oshaFF;
+                    uExt1 = baseExt1 * oshaFF;
+                    uExt2 = baseExt2 * oshaFF;
+                }
 
                 rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
                 rowForceL.push(`${uEffort.toFixed(2)} kN`);
@@ -14589,7 +17135,7 @@ function generatePDFReport() {
             const sampleExt4 = Calculator.extremiteForce4(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
             const sampleSix = AnchorEffortDistributionModule.calculateRule1_MultiSpan(sampleExt1, sampleExt2, sampleExt3, sampleExt4);
             const sampleFinalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sampleSix, state.spans, state.fallPosition?.segmentIndex || 0);
-            const adaptedSample = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(sampleFinalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0);
+            const adaptedSample = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(sampleFinalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
 
             const table2HeaderRow = [adaptedSample.pdfColHeader];
             for (let u = 1; u <= maxSysUsers; u++) {
@@ -14611,7 +17157,7 @@ function generatePDFReport() {
 
                 const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(uExt1, uExt2, uExt3, uExt4);
                 const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, state.fallPosition?.segmentIndex || 0);
-                const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0);
+                const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
 
                 rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
                 rowForceL.push(`${uEffort.toFixed(2)} kN`);
@@ -14646,7 +17192,7 @@ function generatePDFReport() {
     doc.setTextColor(30, 41, 59);
     doc.text(pdfTrans.sec3Title[l], 14, currentY);
 
-    const compsList = COMPONENTS_DB[state.product] || [];
+    const compsList = (COMPONENTS_DB[normalizeProduct(state.product)] || COMPONENTS_DB[state.product]) || [];
     const checkedComps = compsList.filter(c => c.checked);
 
     const hasOmegaOrMini = checkedComps.some(c => {
@@ -14659,12 +17205,12 @@ function generatePDFReport() {
 
     // 1. Matrice (Absorbeur) selon la gamme / sous-gamme
     const pdfSubRange = getLongRangeSubRange(state.lineLength);
-    const matriceLongRangeText = pdfSubRange === "LONG RANGE"
-        ? ["Matrice Longue Portée - Long Range", "Long Range Matrix", "Matriz Larga Distancia - Long Range"][l]
+    const matriceExtremeText = pdfSubRange === "LONG RANGE"
+        ? ["Matrice Extreme - Long Range", "Extreme Matrix - Long Range", "Matriz Extreme - Long Range"][l]
         : (pdfSubRange === "SUPER RANGE"
-            ? ["Matrice Super Portée - Super Range", "Super Range Matrix", "Matriz Super Distancia - Super Range"][l]
-            : ["Matrice Ultra Portée - Ultra Range", "Ultra Range Matrix", "Matriz Ultra Distancia - Ultra Range"][l]);
-    const matriceName = state.product === "NEW PRO" ? pdfTrans.matriceNewPro[l] : (state.product === "LIGHT PRO" ? pdfTrans.matriceLightPro[l] : matriceLongRangeText);
+            ? ["Matrice Extreme - Super Range", "Extreme Matrix - Super Range", "Matriz Extreme - Super Range"][l]
+            : ["Matrice Extreme - Ultra Range", "Extreme Matrix - Ultra Range", "Matriz Extreme - Ultra Range"][l]);
+    const matriceName = isPro(state.product) ? (pdfTrans.matricePro || pdfTrans.matriceNewPro)[l] : (isCore(state.product) ? (pdfTrans.matriceCore || pdfTrans.matriceLightPro)[l] : matriceExtremeText);
     const lvl1 = getFixationInfo(state.product, "matrice_platine", state.roofTexture, state.product);
     const countLvl1 = typeof lvl1.nombre === 'number' ? `${lvl1.nombre * totalAnchors} - ${lvl1.nombre}/matrice` : lvl1.nombre;
     tableRows.push([
@@ -14674,7 +17220,7 @@ function generatePDFReport() {
     ]);
 
     // 2. Platine de fixation au support / potelet
-    const platineName = state.product === "NEW PRO" ? pdfTrans.platineNewPro[l] : (state.product === "LIGHT PRO" ? pdfTrans.platineLightPro[l] : pdfTrans.platineLongRange[l]);
+    const platineName = isPro(state.product) ? (pdfTrans.platinePro || pdfTrans.platineNewPro)[l] : (isCore(state.product) ? (pdfTrans.platineCore || pdfTrans.platineLightPro)[l] : (pdfTrans.platineExtreme || pdfTrans.platineLongRange)[l]);
     const lvl2 = getFixationInfo(state.product, "platine_support", state.roofTexture, state.product);
     const countLvl2 = typeof lvl2.nombre === 'number' ? `${lvl2.nombre * totalAnchors} - ${lvl2.nombre}/platine` : lvl2.nombre;
     const typeFixPlatine = hasOmegaOrMini ? pdfTrans.inoxBolts[l] : formatFixationType(lvl2.type_fixation);
@@ -14934,14 +17480,19 @@ function generatePDFReport() {
     doc.text(isEn ? "3. Comprehensive Table of All Anchors (A1 to An) :" : "3. Tableau Exhaustif de Tous les Ancrages (A1 à An) :", 14, currentP4Y);
 
     const allGeneratedAnchors = generateAllAnchorsTable(state.spans, fallSpanIdx, baseTensionKn, state.product);
-    const pdfEngCoef = (typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00;
-    const isPdfAdjusted = Math.abs(pdfEngCoef - 1.00) > 0.001;
+    const isPdfOSHA = (state.norm === "OSHA");
+    const pdfEngCoef = isPdfOSHA
+        ? ((typeof state.fallFactor === "number" && !isNaN(state.fallFactor))
+            ? state.fallFactor
+            : ((typeof state.engineerCoefficient === "number" && !isNaN(state.engineerCoefficient)) ? state.engineerCoefficient : 1.00))
+        : 1.00;
+    const isPdfAdjusted = isPdfOSHA && (Math.abs(pdfEngCoef - 1.00) > 0.001);
 
     let anchorHeaders, anchorRows;
     if (isPdfAdjusted) {
         anchorHeaders = isEn
-            ? [["Tag", "Type / Role", "Adjacent Spans", "Test Result", `Adjusted (${pdfEngCoef.toFixed(2)})`, "Status / Remark"]]
-            : [["Étiquette", "Type / Rôle", "Portées Adjacentes", "Résultat d'essai", `Résultat ajusté (${pdfEngCoef.toFixed(2)})`, "Statut / Remarque"]];
+            ? [["Tag", "Type / Role", "Adjacent Spans", "Test Result", `Adjusted (Fall Factor ${pdfEngCoef.toFixed(2)})`, "Status / Remark"]]
+            : [["Étiquette", "Type / Rôle", "Portées Adjacentes", "Résultat d'essai", `Résultat ajusté (Fall Factor ${pdfEngCoef.toFixed(2)})`, "Statut / Remarque"]];
         anchorRows = allGeneratedAnchors.map(a => [
             a.id,
             a.role,
@@ -15065,19 +17616,73 @@ function generatePDFReport() {
 
     p3Y = doc.lastAutoTable.finalY + 6;
 
-    // B. Fiche Technique SRL & Facteurs d'Ingénierie
+    // B. Fiche Technique Dispositif de Connexion & Paramètres d'Arrêt
     doc.setFontSize(10);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(30, 41, 59);
-    doc.text("Fiche Technique SRL Sélectionné & Paramètres d'Arrêt :", 14, p3Y);
+    doc.text(isEn ? "Connecting Device Technical Datasheet & Arrest Parameters :" : "Fiche Technique Dispositif & Paramètres d'Arrêt :", 14, p3Y);
+
+    const devName = getConnectingDeviceReportName(l);
+    const madMVal = (typeof state.madM === "number" && state.madM > 0) ? state.madM : ((typeof state.customMad === "number" && state.customMad > 0) ? state.customMad : 1.07);
+    const madInVal = madMVal / 0.0254;
+    const madDualStr = `${madMVal.toFixed(2)} m (${madInVal.toFixed(1)} in)`;
+
+    const arrestFKn = (typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) ? state.arrestForceKn : 4.5;
+    const arrestFLbf = arrestFKn * UnitsModule.KN_TO_LBF;
+    const arrestForce1UserStr = `${arrestFLbf.toFixed(0)} lbf (${arrestFKn.toFixed(2)} kN)`;
+
+    const globalArrestStr = (state.arrestLoadMode === "custom")
+        ? UnitsModule.formatForce(state.arrestLoadValue || state.arrestLoadKn || arrestFKn)
+        : `${(lumpM * arrestFLbf).toFixed(1)} lbf (${(lumpM * arrestFKn).toFixed(2)} kN)`;
+
+    const devClassStr = (state.connectingDevice === "srd")
+        ? (srlData ? `${isEn ? "Class" : "Classe"} ${srlData.classe}` : "Classe 2")
+        : (state.connectingDevice === "custom_srd"
+            ? `${isEn ? "Class" : "Classe"} ${state.customDeviceClass || 2}`
+            : "N/A");
+
+    const isLanyard = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
+    const userRetractedM = (typeof state.retractedLengthM === "number" && state.retractedLengthM > 0)
+        ? state.retractedLengthM
+        : ((state.connectingDevice === "srd")
+            ? (srlData ? (srlData.retracted_length_m || srlData.retracted_len || 0.60) : 0.60)
+            : ((state.connectingDevice === "custom_srd" || state.connectingDevice === "custom_lanyard")
+                ? (state.customDeviceLengthM || 0.60)
+                : 1.80));
+
+    // Determine modified flags for report (Spec V2 — 10 / Prompt 16)
+    const isRetractedMod = state.isRetractedLengthModified || (
+        state.connectingDevice === "srd" && srlData && srlData.retracted_length_m != null &&
+        Math.abs(userRetractedM - srlData.retracted_length_m) > 0.005
+    );
+    const isArrestForceMod = state.isArrestForceModified || (
+        state.connectingDevice === "srd" && srlData &&
+        Math.abs(state.arrestForceKn - srlData.default_arrest_force_kn) > 0.05
+    );
+    const isMadMod = (state.isMadModified === true);
+
+    const modTag = isEn ? " (user modified value)" : " (valeur modifiée par l'utilisateur)";
+
+    const lenLabel = isLanyard
+        ? (isEn ? "Lanyard Length" : "Longueur de la Longe")
+        : (isEn ? "Retracted Length" : "Longueur Rétractée");
+
+    let lenValStr = UnitsModule.formatLength(userRetractedM);
+    if (isRetractedMod) lenValStr += modTag;
+
+    let madValStr = madDualStr;
+    if (isMadMod) madValStr += modTag;
+
+    let afValStr = arrestForce1UserStr;
+    if (isArrestForceMod) afValStr += modTag;
 
     const srlRows = [
-        ["Modèle SRL Sélectionné", srlData ? srlData.name : "N/A", "Fabricant", srlData ? srlData.manufacturer : "Miller / Honeywell"],
-        ["Classe OSHA / ANSI", srlData ? `Classe ${srlData.classe}` : "Classe 1", "Élévation de Ligne (HLL)", `${elevLabel}`],
-        ["Distance d'Arrêt Max (MAD)", srlData ? UnitsModule.formatLength(srlData.mad) : "--", "Longueur Rétractée", srlData ? UnitsModule.formatLength(srlData.retracted_len) : "--"],
-        ["Charge d'Arrêt Nominale", srlData ? UnitsModule.formatForce(srlData.arrest_load_preset_kn) : "--", "Charge Intermédiaire Max", UnitsModule.formatForce(currentArrestKn)],
-        ["Prétension Câble P0", UnitsModule.formatPretension(state.product.includes("RANGE") ? 600 : 100), "Longueur de Travail Max", srlData ? UnitsModule.formatLength(srlData.working_len) : "--"],
-        ["Recul du Buffer", "Donnée à renseigner", "Facteur de Sécurité", "Donnée à renseigner"]
+        [isEn ? "Connecting Device" : "Dispositif Sélectionné", devName, isEn ? "Manufacturer" : "Fabricant", (srlData && srlData.manufacturer) ? srlData.manufacturer : "Miller / Honeywell / Custom"],
+        [isEn ? "OSHA / ANSI Class" : "Classe OSHA / ANSI", devClassStr, isEn ? "Lifeline Elevation" : "Élévation de Ligne (HLL)", `${elevLabel}`],
+        [isEn ? "Max Arrest Distance (MAD)" : "Distance d'Arrêt Max (MAD)", madValStr, lenLabel, lenValStr],
+        [isEn ? "Arrest Force (1 user)" : "Force d'Arrêt (1 user)", afValStr, isEn ? "Global Arrest Load" : "Charge d'Arrêt Globale", globalArrestStr],
+        [isEn ? "Cable Pretension P0" : "Prétension Câble P0", UnitsModule.formatPretension(state.product.includes("RANGE") ? 600 : 100), isEn ? "Fall Factor" : "Facteur de chute", `${pdfEngCoef.toFixed(2)}`],
+        [isEn ? "Buffer Setback" : "Recul du Buffer", "Donnée à renseigner", isEn ? "Safety Margin" : "Marge de Sécurité", "0.60 m"]
     ];
 
     doc.autoTable({
@@ -15159,12 +17764,9 @@ function generatePDFReport() {
     const postureStr = (bodyPos === "kneeling") ? "À genoux" : (bodyPos === "lying" ? "Allongé" : "Debout");
     const calcDefl = Calculator.deflection(state.product, longestSpanLen, state.fallFactor || 1, support, 1, state.norm, isMultiSpan);
     const calcDeflMeters = (calcDefl > 20.0) ? (calcDefl / 1000.0) : calcDefl;
-    const srlMad = srlData ? srlData.mad : 1.40;
-    const srlRetracted = srlData ? (srlData.retracted_len || 0.60) : 0.60;
-    let devComp = srlMad;
-    if (isOverEdge) devComp += srlRetracted;
+    let devComp = madMVal + userRetractedM;
     const safetyMargin = 0.60;
-    const totalRequiredClearance = calcDeflMeters + devComp + totalBody + safetyMargin;
+    const totalRequiredClearance = calcDeflMeters + devComp + safetyMargin;
 
     // Vector Fall Illustration Schematic
     const schX = 14;
@@ -15196,25 +17798,21 @@ function generatePDFReport() {
     doc.setTextColor(239, 68, 68);
     doc.text(`Flèche : ${UnitsModule.formatDeflection(calcDefl)}`, schX + 48, schY + 13);
 
-    // SRL connection & MAD
+    // SRL connection & MAD + Retracted
     doc.setDrawColor(245, 158, 11);
-    doc.line(schX + 45, schY + 14, schX + 45, schY + 24);
+    doc.line(schX + 45, schY + 14, schX + 45, schY + 25);
     doc.setTextColor(217, 119, 6);
-    const devLabel = isOverEdge ? `MAD SRL + Retr. : ${UnitsModule.formatLength(devComp)}` : `MAD SRL : ${UnitsModule.formatLength(srlMad)}`;
-    doc.text(devLabel, schX + 48, schY + 20);
-
-    // Worker D-Ring & posture
-    doc.setDrawColor(15, 23, 42);
-    doc.line(schX + 45, schY + 24, schX + 45, schY + 30);
-    doc.setTextColor(15, 23, 42);
-    doc.text(`Anneau D - ${postureStr} : ${UnitsModule.formatLength(totalBody)}`, schX + 48, schY + 27);
+    const devLabel = isOverEdge ? `Arrêt SRL + Rétracté (${UnitsModule.formatLength(devComp)})` : `Arrêt SRL (MAD) + Rétracté : ${UnitsModule.formatLength(devComp)}`;
+    doc.text(devLabel, schX + 48, schY + 21);
 
     // Ground line & Safety margin
     doc.setDrawColor(100, 116, 139);
     doc.setLineWidth(0.8);
     doc.line(schX + 10, schY + 34, schX + 80, schY + 34);
+    doc.setDrawColor(16, 185, 129);
+    doc.line(schX + 45, schY + 25, schX + 45, schY + 34);
     doc.setTextColor(16, 185, 129);
-    doc.text(`Marge de sécurité : ${UnitsModule.formatLength(safetyMargin)}`, schX + 12, schY + 33);
+    doc.text(`Marge de sécurité : ${UnitsModule.formatLength(safetyMargin)}`, schX + 48, schY + 30);
 
     // Total required box
     doc.setFillColor(239, 246, 255);
@@ -15276,6 +17874,7 @@ function renderComponentsChecklist() {
 
     const l = state.lang || 0;
     listContainer.innerHTML = "";
+
     if (!state.product) {
         listContainer.innerHTML = `
             <div class="empty-state-notice" style="padding: 1.25rem; text-align: center; color: #94a3b8; font-size: 0.95rem; background: rgba(255,255,255,0.04); border: 1px dashed #334155; border-radius: 10px; margin-top: 0.5rem; line-height: 1.5;">
@@ -15287,7 +17886,8 @@ function renderComponentsChecklist() {
         return;
     }
 
-    const comps = COMPONENTS_DB[state.product] || [];
+    const currentProd = normalizeProduct(state.product || "CORE");
+    const comps = COMPONENTS_DB[currentProd] || [];
 
     comps.forEach(c => {
         const item = document.createElement("div");
@@ -15320,11 +17920,12 @@ function renderComponentsChecklist() {
 
             // Constraint A: X-Cone restriction (allowed on sloped roof or sloped layouts/spans between 15° and 75°)
             if (c.id === "X-Cone" && c.checked) {
-                const hasSlope = (state.roofShape === "sloped" && state.roofSlope >= 15 && state.roofSlope <= 75) ||
-                    state.layoutType === "slope_single" ||
-                    state.layoutType === "slope_multi" ||
-                    state.layoutType === "slope_horizontal_comb" ||
-                    (state.spans && state.spans.some(s => s.isSloped || ((s.slopeDeg || 0) >= 15 && (s.slopeDeg || 0) <= 75)));
+                const isSlopedRoof = (state.roofShape === "sloped" || state.roof_type === "sloped" || state.roofShape === "triangle" || state.roof_type === "triangle");
+                const roofSlopeVal = parseFloat(state.roofSlope || state.roof_slope_deg || (isSlopedRoof ? 15 : 0));
+                const hasRoofSlope = isSlopedRoof && roofSlopeVal >= 15 && roofSlopeVal <= 75;
+                const hasSlopedLayout = state.layoutType === "slope_single" || state.layoutType === "slope_multi" || state.layoutType === "slope_horizontal_comb";
+                const hasSlopedSpans = state.spans && state.spans.some(s => s.isSloped || ((s.slopeDeg || s.slope_deg || 0) >= 15 && (s.slopeDeg || s.slope_deg || 0) <= 75));
+                const hasSlope = hasRoofSlope || hasSlopedLayout || hasSlopedSpans;
 
                 if (!hasSlope) {
                     alert("⚠️ CONFIGURATION INCOMPATIBLE :\nL'option X-CONE est utilisable uniquement sur les configurations comportant une pente (toit incliné ou portées en pente entre 15° and 75°).");
@@ -15338,8 +17939,8 @@ function renderComponentsChecklist() {
             // Constraint B: X-Matrix restriction
             if (c.id === "X-Matrix") {
                 if (state.layoutType === "grid_system") {
-                    // Configuration 12: Grid Systems with Long / Super / Ultra Range
-                    const isRange = state.product === "LONG RANGE" || (state.product && state.product.includes("RANGE"));
+                    // Configuration 12: Grid Systems with EXTREME
+                    const isRange = isExtreme(state.product);
                     if (c.checked && !isRange) {
                         alert(TRANSLATIONS.alerts.xmatrixNewProOnly[state.lang || 0]);
                         c.checked = false;
@@ -15349,8 +17950,8 @@ function renderComponentsChecklist() {
                     }
                     // In Grid Systems, X-Matrix does not toggle legacy line2
                 } else if (state.layoutType === "cross_spans") {
-                    // Configuration 11: Cross Spans with New PRO
-                    if (c.checked && state.product !== "NEW PRO") {
+                    // Configuration 11: Cross Spans with PRO
+                    if (c.checked && !isPro(state.product)) {
                         alert(TRANSLATIONS.alerts.xmatrixNewProOnly[state.lang || 0]);
                         c.checked = false;
                         chk.checked = false;
@@ -15360,7 +17961,7 @@ function renderComponentsChecklist() {
                     // In Cross Spans, X-Matrix does not toggle legacy line2
                 } else {
                     // Legacy 2-line layout
-                    if (c.checked && state.product !== "NEW PRO") {
+                    if (c.checked && !isPro(state.product) && !isExtreme(state.product)) {
                         alert(TRANSLATIONS.alerts.xmatrixNewProOnly[state.lang || 0]);
                         c.checked = false;
                         chk.checked = false;
@@ -15381,11 +17982,11 @@ function renderComponentsChecklist() {
                 }
             }
 
-            // Constraint C: Mutual Exclusivity for Main System Models (Absorbers & Posts) within NEW PRO and LIGHT PRO (LONG RANGE allows both Absorber & A-Fix checked)
-            if (state.product !== "LONG RANGE") {
+            // Constraint C: Mutual Exclusivity for Main System Models (Absorbers & Posts) within PRO and CORE (EXTREME allows both Absorber & A-Fix checked)
+            if (!isExtreme(state.product)) {
                 const mainModelVariantIds = ["New_Pro", "Mini_Omega", "P_Inox", "LightPro", "PB_HOOKt", "P_Galva"];
                 if (c.checked && mainModelVariantIds.includes(c.id)) {
-                    const sysList = COMPONENTS_DB[state.product || "NEW PRO"] || [];
+                    const sysList = COMPONENTS_DB[currentProd] || [];
                     sysList.forEach(otherComp => {
                         if (otherComp.id !== c.id && mainModelVariantIds.includes(otherComp.id)) {
                             otherComp.checked = false;

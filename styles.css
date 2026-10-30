@@ -1009,8 +1009,8 @@ html, body {
 .system-cards-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
 }
 .system-card {
     background: #ffffff;
@@ -1053,9 +1053,14 @@ html, body {
     font-size: 0.8rem;
     color: var(--text-muted);
     line-height: 1.4;
+    margin: 0;
 }
 
 /* Components checklist */
+.components-selector {
+    margin-top: 1rem;
+}
+
 .section-label {
     display: block;
     font-size: 0.8rem;
@@ -2424,13 +2429,16 @@ html, body {
     background: #ffffff;
     border: 2px solid #e2e8f0;
     border-radius: var(--radius-md);
-    padding: 12px;
+    padding: 10px 12px;
     cursor: pointer;
     transition: var(--transition-fast);
     position: relative;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    min-height: 44px;
 }
 
 .srl-card:hover {
@@ -2456,7 +2464,9 @@ html, body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 0;
+    width: 100%;
+    gap: 8px;
 }
 
 .srl-name {
@@ -2669,5 +2679,91 @@ html, body {
     border: 1px solid #fca5a5;
 }
 
+/* ==========================================
+   X-Matrix Multi-Directions in Configuration 2
+   ========================================== */
+.btn-table-xmatrix {
+    transition: all 0.2s ease;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #475569;
+}
 
+.btn-table-xmatrix:hover {
+    background: #eff6ff;
+    color: #2563eb;
+    border-color: #93c5fd;
+}
 
+.btn-table-xmatrix.active-xmat {
+    background: #2563eb !important;
+    color: #ffffff !important;
+    border-color: #1d4ed8 !important;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.3);
+}
+
+.xmatrix-table-subrow {
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.07) 0%, rgba(99, 102, 241, 0.05) 100%);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.xmatrix-branch-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    background: #ffffff;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 0.78rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+
+.xmatrix-branch-item:hover {
+    border-color: #3b82f6;
+}
+
+.xmatrix-branch-item input {
+    height: 24px;
+    padding: 2px 4px;
+    font-size: 0.78rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.xmatrix-branch-item input:focus {
+    border-color: #2563eb;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.xmatrix-branch-card {
+    background: #ffffff;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.xmatrix-branch-item-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #ffffff;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+}
+
+.insp-branch-spans-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-left: 6px;
+    border-left: 2px solid #93c5fd;
+    margin: 4px 0 4px 2px;
+}
