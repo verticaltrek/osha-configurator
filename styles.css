@@ -2724,6 +2724,16 @@ html, body {
     border-color: #3b82f6;
 }
 
+.xmatrix-branch-item.active-fall-branch-item {
+    background: #fff7ed !important;
+    border-color: #ea580c !important;
+    box-shadow: 0 0 0 2px rgba(234, 88, 12, 0.25) !important;
+}
+
+.xmatrix-branch-item.active-fall-branch-item:hover {
+    border-color: #c2410c !important;
+}
+
 .xmatrix-branch-item input {
     height: 24px;
     padding: 2px 4px;

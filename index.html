@@ -44,14 +44,11 @@
          ========================================== -->
     <section id="home-screen" class="screen active">
         <div class="home-glass-card">
-            <div class="brand-badge" id="home-brand-badge">
-                <i class="fa-solid fa-shield-halved"></i> <span>SÉCURITÉ EN HAUTEUR</span>
-            </div>
             <h1 class="logo-title">HOOKT</h1>
             <p id="home-subtitle" class="home-subtitle">Configurateur Intelligent de Lignes de Vie pour Toitures</p>
             <p class="home-description" id="home-description">
                 Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (EN 795-C,
-                OSHA) pour les systèmes HOOKT Core, Pro et Extreme.
+                OSHA) pour les systèmes HOOKT Core, Pro et Xtreme.
             </p>
 
             <button type="button" id="start-config-btn" class="btn btn-primary btn-hero" onclick="openConfigModal()">
@@ -81,7 +78,7 @@
                 <button type="button" class="modal-close" id="modal-close-btn"
                     onclick="closeConfigModal()">&times;</button>
             </div>
-            <form id="config-form">
+            <form id="config-form" novalidate>
                 <!-- Section 1: Informations Projet & Générales -->
                 <div class="modal-section-title"><i class="fa-solid fa-folder-open"></i> <span
                         id="lbl-sec-project">Informations Projet & Système</span></div>
@@ -111,10 +108,20 @@
                         <label id="lbl-product" for="select-product"><i class="fa-solid fa-shield-halved"></i> Gamme de
                             Système HOOKT :</label>
                         <select id="select-product" class="select-custom" style="font-weight: 600;">
-                            <option value="CORE" selected>CORE (Toitures légères & tertiaires | Max 15m | 3 pers.)
+                            <option value="CORE" selected>CORE (Toitures légères & tertiaires | 2 à 12m | 3 pers.)
                             </option>
-                            <option value="PRO">PRO (Standard / Toitures plates & bacs | Max 15m | 5 pers.)</option>
-                            <option value="EXTREME">EXTREME (Overhead / Poteaux hauts | Max 56m | 3 pers.)</option>
+                            <option value="PRO">PRO (Standard / Toitures plates & bacs | 3 à 15m | 5 pers.)</option>
+                            <option value="XTREME">XTREME (Overhead / Poteaux hauts | 10 à 56m | 3 pers.)</option>
+                        </select>
+                    </div>
+
+                    <!-- Norme réglementaire / Regulatory Standard -->
+                    <div class="form-group full-width">
+                        <label id="lbl-roof-norm" for="select-roof-norm"><i class="fa-solid fa-scale-balanced"></i>
+                            Norme réglementaire :</label>
+                        <select id="select-roof-norm" class="select-custom" style="font-weight: 600;">
+                            <option value="OSHA" selected>OSHA (Standard américain / OSHA 1910 - 1926)</option>
+                            <option value="EN 795">EN 795-C (Standard européen)</option>
                         </select>
                     </div>
 
@@ -146,8 +153,9 @@
                     </div>
 
                     <!-- Facteur de chute / Fall Factor (Spec V2 — 09 / Prompt 15) -->
-                    <div class="form-group" id="group-engineer-coefficient">
-                        <label id="lbl-engineer-coefficient" for="input-engineer-coefficient">Facteur de chute (Fall Factor) :</label>
+                    <div class="form-group" id="group-engineer-coefficient" style="display:none;">
+                        <label id="lbl-engineer-coefficient" for="input-engineer-coefficient">Facteur de chute (Fall
+                            Factor) :</label>
                         <div class="input-with-unit">
                             <input type="number" id="input-engineer-coefficient" min="0.10" max="5.00" value="1.00"
                                 step="0.05" placeholder="1.00">
@@ -163,17 +171,14 @@
                             :</label>
                         <select id="select-arrest-load-mode" class="select-custom">
                             <option value="lump_sum" selected>Masse Globale (Lump Sum : M × F)</option>
-                            <option value="custom">Saisie Forfaitaire Libre (Ingénieur)</option>
-                            <option value="turbolite">Shortcut : TurboLite+ (Essais 4.5 kN)</option>
-                            <option value="falcon">Shortcut : Falcon+ (Essais 6.0 kN)</option>
                         </select>
                     </div>
 
                     <div class="form-group" id="group-arrest-load-val">
                         <label id="lbl-arrest-load-val" for="input-arrest-load-val">Valeur Charge d'arrêt (kN) :</label>
                         <div class="input-with-unit">
-                            <input type="number" id="input-arrest-load-val" min="0.1" max="10000" value="6.0"
-                                step="any">
+                            <input type="number" id="input-arrest-load-val" min="0.1" max="10000" value="6.0" step="any"
+                                readonly style="background:#f8fafc; cursor:default;">
                             <span class="unit" id="unit-arrest-load">kN</span>
                         </div>
                         <small id="hint-arrest-load"
@@ -189,16 +194,21 @@
                             <option value="d_ring">Anneau D (1,5 m / 5 ft)</option>
                             <option value="overhead">Overhead (3,0 m / 10 ft)</option>
                             <option value="custom">Personnalisée (Saisie libre)</option>
+                            <option value="custom_active" hidden>Personnalisée (1,50 m)</option>
                         </select>
                     </div>
 
                     <div class="form-group" id="group-hll-elevation-val">
                         <label id="lbl-hll-elevation-val" for="input-hll-elevation-val">Hauteur Élévation :</label>
                         <div class="input-with-unit">
-                            <input type="number" id="input-hll-elevation-val" min="0.2" max="100.0" value="0.45"
+                            <input type="number" id="input-hll-elevation-val" min="0" max="2.13" value="0.45"
                                 step="any">
                             <span class="unit" id="unit-hll-elevation">m</span>
                         </div>
+                        <small id="hint-hll-elevation-limit"
+                            style="color:#64748b; font-size:0.75rem; display:block; margin-top:3px;">Limites : 0 à 2.13
+                            m (0 à 7 ft)</small>
+                        <div id="hll-elevation-warning" style="margin-top: 6px;"></div>
                     </div>
 
                     <!-- Connecting Device & Fall Calculation Inputs (Spec V2 - 04 & Spec V2 — 09 / Prompt 15) -->
@@ -206,10 +216,8 @@
                         <label id="lbl-connecting-device" for="select-connecting-device"><i
                                 class="fa-solid fa-link"></i> Dispositif de Connexion :</label>
                         <select id="select-connecting-device" class="select-custom">
-                            <option value="srd" selected>SRD / Enrouleur à rappel automatique (Catalogue SRL)</option>
-                            <option value="custom_srd">SRL personnalisé (Saisie libre)</option>
-                            <option value="lanyard">Longe avec absorbeur d'énergie</option>
-                            <option value="custom_lanyard">Longe personnalisée (Saisie libre)</option>
+                            <option value="custom_srd" selected>Autre Enrouleur SRL (Saisie libre)</option>
+                            <option value="custom_lanyard">Autre Longe absorbante (Saisie libre)</option>
                         </select>
                     </div>
 
@@ -217,23 +225,48 @@
                     <div id="group-custom-device-fields"
                         style="display:none; background:#f8fafc; padding:10px; border-radius:6px; border:1px solid #e2e8f0; margin-bottom:12px;">
                         <div class="form-group" id="group-custom-device-name">
-                            <label id="lbl-custom-device-name" for="input-custom-device-name">Nom de l'appareil
-                                personnalisé :</label>
+                            <label id="lbl-custom-device-name" for="input-custom-device-name">Nom / Modèle du dispositif
+                                :</label>
                             <input type="text" id="input-custom-device-name" class="input-text-custom"
                                 placeholder="ex: SRL Personnalisé 10m">
                         </div>
                         <div class="form-group" id="group-custom-device-class" style="display:none;">
-                            <label id="lbl-custom-device-class" for="select-custom-device-class">Classe SRL :</label>
+                            <label id="lbl-custom-device-class" for="select-custom-device-class">Classe ANSI / OSHA
+                                :</label>
                             <select id="select-custom-device-class" class="select-custom">
                                 <option value="1">Classe 1 (Pose Anneau D ou Overhead uniquement)</option>
                                 <option value="2" selected>Classe 2 (Tous niveaux / Bords / Leading-Edge)</option>
                             </select>
+                            <div id="custom-class1-warning"
+                                style="display:none; margin-top:6px; font-size:0.78rem; color:#b45309; background:#fffbeb; padding:6px 10px; border-radius:4px; border:1px solid #fde68a;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> <span
+                                    id="custom-class1-warning-text">Avertissement : Les données pour la Classe 1 ne sont
+                                    pas disponibles pour le moment. Veuillez sélectionner la Classe 2.</span>
+                            </div>
+                        </div>
+                        <div class="form-group" id="group-custom-retracted-length">
+                            <label id="lbl-custom-retracted-length" for="input-custom-retracted-length">Longueur
+                                rétractée :</label>
+                            <div class="input-with-unit">
+                                <input type="number" id="input-custom-retracted-length" min="0" max="100.0" value="0"
+                                    step="0.05">
+                                <span class="unit" id="unit-custom-retracted-length">m</span>
+                            </div>
+                        </div>
+                        <div class="form-group" id="group-custom-device-fad">
+                            <label id="lbl-custom-device-fad" for="input-custom-device-fad">FAD (Distance d'arrêt de
+                                chute) :</label>
+                            <div class="input-with-unit">
+                                <input type="number" id="input-custom-device-fad" min="0" max="100.0" value="0"
+                                    step="0.05">
+                                <span class="unit" id="unit-custom-device-fad">m</span>
+                            </div>
                         </div>
                         <div class="form-group" id="group-custom-device-length">
-                            <label id="lbl-custom-device-length" for="input-custom-device-length">Longueur (rétractée /
-                                longe) :</label>
+                            <label id="lbl-custom-device-length" for="input-custom-device-length">Longueur de la longe
+                                :</label>
                             <div class="input-with-unit">
-                                <input type="number" id="input-custom-device-length" min="0.1" max="100.0" value="0.60"
+                                <input type="number" id="input-custom-device-length" min="0" max="100.0" value="0"
                                     step="0.05">
                                 <span class="unit" id="unit-custom-device-length">m</span>
                             </div>
@@ -246,26 +279,31 @@
                         <select id="select-fall-mode" class="select-custom">
                             <option value="critical_case" selected>Cas Critique (Simule chaque portée et sort le pire
                                 cas)</option>
-                            <option value="selected_span">Portée Choisie (Calcul ciblé sur la portée active)</option>
+                            <option value="selected_span">Chute sur portée spécifiée</option>
                         </select>
                     </div>
 
                     <div class="form-group">
                         <label id="lbl-body-pos" for="select-body-pos"><i class="fa-solid fa-person"></i> Position du
-                            Corps (Opérateur) :</label>
+                            Corps :</label>
                         <select id="select-body-pos" class="select-custom">
                             <option value="standing" selected>Debout (Anneau D à 1,50 m / 5 ft)</option>
                             <option value="kneeling">À genoux (+ 0,91 m / 3 ft au dégagement)</option>
-                            <option value="lying">Allongé (+ hauteur anneau D au dégagement)</option>
+                            <option value="lying">Allongé au sol (+ hauteur anneau D au dégagement)</option>
                         </select>
                     </div>
 
                     <div class="form-group">
-                        <label id="lbl-wws-elevation" for="input-wws-elevation">WWS Elevation (Alt. surface travail)
-                            :</label>
+                        <label id="lbl-wws-elevation" for="input-wws-elevation">WWS/Available Fall Clearance :</label>
                         <div class="input-with-unit">
                             <input type="number" id="input-wws-elevation" min="0.5" max="100.0" value="6.0" step="any">
                             <span class="unit" id="unit-wws-elevation">m</span>
+                        </div>
+                        <div id="wws-elevation-warning"
+                            style="display:none; margin-top:6px; font-size:0.78rem; color:#b45309; background:#fffbeb; padding:6px 10px; border-radius:4px; border:1px solid #fde68a;">
+                            <i class="fa-solid fa-triangle-exclamation"></i> <span
+                                id="wws-elevation-warning-text">Avertissement : L'élévation WWS ne peut pas être
+                                supérieure à la hauteur du toit (H).</span>
                         </div>
                     </div>
 
@@ -276,44 +314,12 @@
                         <input type="text" id="input-substrate-info" class="input-text-custom"
                             placeholder="ex: Bac acier 0.75mm, Béton C25/30, Poutre HEB">
                     </div>
-
-                    <!-- End buffer length (Readonly info) -->
-                    <div class="form-group full-width">
-                        <div class="info-readout-box">
-                            <i class="fa-solid fa-circle-info"></i>
-                            <span id="lbl-buffer-len-info">Buffer d'extrémité fixe : <strong>0.20 m</strong> (non
-                                modifiable par l'utilisateur)</span>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Section 1bis: Paramètres de Toiture & Surface de Pose (Spec V2 — 03) -->
                 <div class="modal-section-title margin-top-md"><i class="fa-solid fa-building"></i> <span
                         id="lbl-sec-roof">Toiture & Surface de Pose (Spec V2 — 03)</span></div>
                 <div class="form-grid">
-                    <div class="form-group">
-                        <label id="lbl-roof-norm" for="select-roof-norm"><i class="fa-solid fa-scale-balanced"></i>
-                            Norme réglementaire :</label>
-                        <select id="select-roof-norm" class="select-custom" style="font-weight: 600;">
-                            <option value="OSHA" selected>OSHA (Standard américain / OSHA 1910 - 1926)</option>
-                            <option value="EN 795">EN 795-C (Standard européen)</option>
-                        </select>
-                        <small id="hint-roof-norm-en"
-                            style="color:#b45309; font-size:0.75rem; display:none; margin-top:4px;">
-                            <i class="fa-solid fa-circle-exclamation"></i> En norme EN 795, les toitures en pente ne
-                            sont pas admises.
-                        </small>
-                    </div>
-
-                    <div class="form-group">
-                        <label id="lbl-roof-type" for="select-roof-type">Typologie de Toiture :</label>
-                        <select id="select-roof-type" class="select-custom">
-                            <option value="flat" selected>Toiture Plate (Terrasse)</option>
-                            <option value="sloped">Toiture à Une Pente (Monopente)</option>
-                            <option value="triangle">Toiture à Deux Pentes (Double versant / Pignon)</option>
-                        </select>
-                    </div>
-
                     <div class="form-group">
                         <label id="lbl-roof-length" for="input-roof-length">Longueur du Toit (L) :</label>
                         <div class="input-with-unit">
@@ -330,28 +336,12 @@
                         </div>
                     </div>
 
-                    <div class="form-group" id="group-roof-slope-1" style="display: none;">
-                        <label id="lbl-roof-slope-1" for="input-roof-slope-1">Angle Pente 1 (max 75°) :</label>
+                    <div class="form-group">
+                        <label id="lbl-roof-height-ground" for="input-roof-height-ground">Hauteur du Toit (H) :</label>
                         <div class="input-with-unit">
-                            <input type="number" id="input-roof-slope-1" min="0" max="75" value="15.0" step="any">
-                            <span class="unit">°</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group" id="group-roof-slope-2" style="display: none;">
-                        <label id="lbl-roof-slope-2" for="input-roof-slope-2">Angle Pente 2 (Deux pentes, max 75°)
-                            :</label>
-                        <div class="input-with-unit">
-                            <input type="number" id="input-roof-slope-2" min="0" max="75" value="15.0" step="any">
-                            <span class="unit">°</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group" id="group-ridge-pos" style="display: none;">
-                        <label id="lbl-ridge-pos" for="input-ridge-pos">Position du Faîtage (depuis le bord) :</label>
-                        <div class="input-with-unit">
-                            <input type="number" id="input-ridge-pos" min="0.5" max="500.0" value="7.5" step="any">
-                            <span class="unit" id="unit-ridge-pos">m</span>
+                            <input type="number" id="input-roof-height-ground" min="0.5" max="150.0" value="6.0"
+                                step="any">
+                            <span class="unit" id="unit-roof-height">m</span>
                         </div>
                     </div>
 
@@ -362,32 +352,20 @@
                             <span class="unit" id="unit-line-to-edge">m</span>
                         </div>
                     </div>
-
-                    <div class="form-group">
-                        <label id="lbl-roof-height-ground" for="input-roof-height-ground">Hauteur Toit au-dessus du Sol
-                            :</label>
-                        <div class="input-with-unit">
-                            <input type="number" id="input-roof-height-ground" min="0.5" max="150.0" value="6.0"
-                                step="any">
-                            <span class="unit" id="unit-roof-height">m</span>
-                        </div>
-                    </div>
                 </div>
 
-                <!-- Section 2: Sélection de Configuration de Pose (12 Layouts) -->
+                <!-- Section 2: Sélection de Configuration de Pose -->
                 <div class="modal-section-title margin-top-md"><i class="fa-solid fa-diagram-project"></i> <span
-                        id="lbl-sec-layout">Configuration de Pose (12 Layouts OSHA)</span></div>
+                        id="lbl-sec-layout">Configuration de Pose</span></div>
                 <div class="form-grid">
                     <div class="form-group full-width">
                         <label id="lbl-layout-type" for="select-layout-type">Configuration de pose :</label>
                         <select id="select-layout-type" class="select-custom">
-                            <option value="single_span" selected>1. Single Span (Portée Unique)</option>
-                            <option value="multi_straight">2. Multi-span (Multi-portée - Standard)</option>
-                            <option value="multi_bend_circle">6. Multi-span – Variable-degree bends (Cercle / Réservoir)
-                            </option>
-                            <option value="slope_single">8. Single-span – Slope System (Portée Unique en Pente)</option>
-                            <option value="cross_spans">11. Cross-spans (Système en Croix - Exclusif PRO)</option>
-                            <option value="grid_system">12. Grid Systems (Système en Grille - Exclusif EXTREME)</option>
+                            <option value="single_span" selected>Portée Unique (Single Span)</option>
+                            <option value="multi_straight">Multi-portée standard</option>
+                            <option value="multi_bend_circle">Multi-portée avec coudes</option>
+                            <option value="cross_spans">Système en croix (Cross-spans)</option>
+                            <option value="grid_system">Système en grille (Grid Systems)</option>
                         </select>
                     </div>
                 </div>
@@ -400,7 +378,8 @@
                 <div class="modal-buttons margin-top-md">
                     <button type="button" id="config-cancel-btn" class="btn btn-secondary"
                         onclick="closeConfigModal()">Annuler</button>
-                    <button type="submit" id="config-submit-btn" class="btn btn-primary"><i
+                    <button type="submit" id="config-submit-btn" class="btn btn-primary"
+                        onclick="if(window.handleConfigFormSubmit) { window.handleConfigFormSubmit(event); } else { const f = document.getElementById('config-form'); if(f) f.requestSubmit(); }"><i
                             class="fa-solid fa-check"></i> Valider et Générer 3D</button>
                 </div>
             </form>
@@ -496,7 +475,17 @@
                                     <option value="d_ring">Anneau D (1,50 m)</option>
                                     <option value="overhead">Overhead (3,0 m)</option>
                                     <option value="custom">Personnalisée...</option>
+                                    <option value="custom_active" hidden>Personnalisée (1,50 m)</option>
                                 </select>
+                                <div id="toolbar-custom-elev-box"
+                                    style="display:inline-flex; align-items:center; gap:3px; border-left:1px solid #cbd5e1; padding-left:6px;">
+                                    <input type="number" id="input-hll-elevation-toolbar" min="0" max="2.13" step="0.05"
+                                        value="0.45"
+                                        style="width:58px; height:24px; padding:2px 4px; font-size:0.8rem; font-weight:600; border:1px solid #cbd5e1; border-radius:4px; text-align:center; color:#0f172a; background:#fff;"
+                                        title="Modifier la hauteur d'élévation">
+                                    <span id="unit-hll-elevation-toolbar"
+                                        style="font-size:0.75rem; font-weight:600; color:#475569;">m</span>
+                                </div>
                             </div>
                             <button type="button" id="btn-undo" class="toolbar-btn" title="Annuler (Ctrl+Z)" disabled>
                                 <i class="fa-solid fa-rotate-left"></i>
@@ -577,26 +566,26 @@
                             <div class="system-card active" data-system="CORE">
                                 <div class="sys-card-header">
                                     <span class="sys-name" id="sys-name-core">CORE</span>
-                                    <span class="sys-span-tag" id="sys-tag-core">Max 15m | 3 pers.</span>
+                                    <span class="sys-span-tag" id="sys-tag-core">2 à 12m | 3 pers.</span>
                                 </div>
                                 <p class="sys-desc" id="sys-desc-core">Solution légère et économique pour toitures
-                                    tertiaires et industrielles.</p>
+                                    tertiaires et industrielles (2 à 12 m).</p>
                             </div>
                             <div class="system-card" data-system="PRO">
                                 <div class="sys-card-header">
                                     <span class="sys-name" id="sys-name-pro">PRO</span>
-                                    <span class="sys-span-tag" id="sys-tag-pro">Max 15m | 5 pers.</span>
+                                    <span class="sys-span-tag" id="sys-tag-pro">3 à 15m | 5 pers.</span>
                                 </div>
                                 <p class="sys-desc" id="sys-desc-pro">Système haute performance avec absorbeurs intégrés
-                                    pour bac acier et béton.</p>
+                                    pour bac acier et béton (3 à 15 m).</p>
                             </div>
-                            <div class="system-card" data-system="EXTREME">
+                            <div class="system-card" data-system="XTREME">
                                 <div class="sys-card-header">
-                                    <span class="sys-name" id="sys-name-extreme">EXTREME</span>
-                                    <span class="sys-span-tag" id="sys-tag-extreme">Max 56m | 3 pers.</span>
+                                    <span class="sys-name" id="sys-name-xtreme">XTREME</span>
+                                    <span class="sys-span-tag" id="sys-tag-xtreme">10 à 56m | 3 pers.</span>
                                 </div>
-                                <p class="sys-desc" id="sys-desc-extreme">Ligne de vie pour très grandes portées (Long
-                                    Range 10-20m, Super Range 20-34m, Ultra Range 34-56m).</p>
+                                <p class="sys-desc" id="sys-desc-xtreme">Ligne de vie pour très grandes portées (10 à 56
+                                    m).</p>
                             </div>
                         </div>
 
@@ -632,9 +621,7 @@
                             </label>
                             <select id="select-sidebar-connecting-device" class="select-custom"
                                 style="padding:4px 8px; height:32px; font-size:0.85rem; width:100%;">
-                                <option value="srd" selected>SRL (Enrouleur à rappel automatique)</option>
-                                <option value="custom_srd">SRL personnalisé (Saisie libre)</option>
-                                <option value="lanyard">Longe avec absorbeur d'énergie</option>
+                                <option value="custom_srd" selected>SRL personnalisé (Saisie libre)</option>
                                 <option value="custom_lanyard">Longe personnalisée (Saisie libre)</option>
                             </select>
                         </div>
@@ -645,7 +632,8 @@
                                 onclick="selectSrlModel('turbo_light_9ft')">
                                 <div class="srl-card-header">
                                     <span class="srl-name">TurboLite+</span>
-                                    <span class="badge-srl-class badge-srl-class2" id="badge-turbolite-class">Classe 2</span>
+                                    <span class="badge-srl-class badge-srl-class2" id="badge-turbolite-class">Classe
+                                        2</span>
                                 </div>
                             </div>
 
@@ -653,7 +641,8 @@
                                 onclick="selectSrlModel('falcon_leading_edge')">
                                 <div class="srl-card-header">
                                     <span class="srl-name">Falcon+</span>
-                                    <span class="badge-srl-class badge-srl-class2" id="badge-falcon-class">Classe 2</span>
+                                    <span class="badge-srl-class badge-srl-class2" id="badge-falcon-class">Classe
+                                        2</span>
                                 </div>
                             </div>
                         </div>
@@ -674,7 +663,7 @@
                             <div style="display:flex; gap: 8px; align-items:center;">
                                 <div class="input-with-unit" style="flex:1;">
                                     <input type="number" id="input-srl-retracted-length" class="input-text-custom"
-                                        step="any" min="0.01" max="100.0" value="0.60"
+                                        step="any" min="0" max="100.0" value="0"
                                         style="padding:4px 8px; height:32px; font-size:0.85rem; width:100%;">
                                     <select id="select-retracted-length-unit"
                                         style="height:32px; border:none; background:transparent; font-weight:600; font-size:0.8rem; cursor:pointer; padding-right:4px;">
@@ -707,15 +696,15 @@
                                 style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
                                 <label for="input-srl-mad" style="font-size:0.8rem; font-weight:600; color:#1e293b;">
                                     <i class="fa-solid fa-arrows-left-right-to-line" style="color:#0284c7;"></i> <span
-                                        id="lbl-srl-mad-title">Distance d'arrêt maximale (MAD) :</span>
+                                        id="lbl-srl-mad-title">Distance d'arrêt de chute (FAD) :</span>
                                 </label>
                                 <span id="mad-equivalent-display"
                                     style="font-size:0.75rem; color:#64748b; font-weight:600;">(43.3 in)</span>
                             </div>
                             <div style="display:flex; gap: 8px; align-items:center;">
                                 <div class="input-with-unit" style="flex:1;">
-                                    <input type="number" id="input-srl-mad" class="input-text-custom" step="any"
-                                        min="0.01" max="100.0" value="1.10"
+                                    <input type="number" id="input-srl-mad" class="input-text-custom" step="any" min="0"
+                                        max="100.0" value="0"
                                         style="padding:4px 8px; height:32px; font-size:0.85rem; width:100%;">
                                     <select id="select-mad-unit"
                                         style="height:32px; border:none; background:transparent; font-weight:600; font-size:0.8rem; cursor:pointer; padding-right:4px;">
@@ -734,42 +723,38 @@
                             <div id="mad-warning-box"
                                 style="display:none; margin-top:6px; font-size:0.75rem; color:#b45309; background:#fffbeb; padding:4px 8px; border-radius:4px; border:1px solid #fde68a;">
                                 <i class="fa-solid fa-triangle-exclamation"></i> <span
-                                    id="mad-warning-text">Avertissement : MAD supérieure à 2,00 m (78.7 in).</span>
+                                    id="mad-warning-text">Avertissement : FAD supérieure à 2,00 m (78.7 in).</span>
                             </div>
-                            <small style="color:#94a3b8; font-size:0.7rem; display:block; margin-top:4px;"
-                                id="hint-mad-suggestion">Suggestion ANSI Z359.6 : 42 in (1.07 m) à titre
-                                indicatif</small>
                         </div>
 
                         <!-- Section Arrest Force Saisie Libre (Spec V2 — 09 / Prompt 15) -->
                         <div id="srl-arrest-force-container"
-                            style="margin-top: 10px; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            style="display: none; margin-top: 10px; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
                             <div
                                 style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
                                 <label for="input-arrest-force"
                                     style="font-size:0.8rem; font-weight:600; color:#1e293b;">
                                     <i class="fa-solid fa-bolt" style="color:#0284c7;"></i> <span
-                                        id="lbl-arrest-force-title">Force d'arrêt 1 utilisateur (Arrest Force) :</span>
+                                        id="lbl-arrest-force-title">Force d'arrêt :</span>
                                 </label>
                                 <span id="arrest-force-equivalent-display"
-                                    style="font-size:0.75rem; color:#64748b; font-weight:600;">(4.50 kN)</span>
+                                    style="font-size:0.75rem; color:#64748b; font-weight:600;">(1349 lbf)</span>
                             </div>
                             <div style="display:flex; gap: 8px; align-items:center;">
                                 <div class="input-with-unit" style="flex:1;">
                                     <input type="number" id="input-arrest-force" class="input-text-custom" step="any"
-                                        min="1" max="10000" value="1012"
+                                        min="0.1" max="10000" value="6.0"
                                         style="padding:4px 8px; height:32px; font-size:0.85rem; width:100%;">
                                     <select id="select-arrest-force-unit"
                                         style="height:32px; border:none; background:transparent; font-weight:600; font-size:0.8rem; cursor:pointer; padding-right:4px;">
-                                        <option value="lbf" selected>lbf</option>
-                                        <option value="kN">kN</option>
+                                        <option value="kN" selected>kN</option>
+                                        <option value="lbf">lbf</option>
                                     </select>
                                 </div>
                             </div>
                             <div id="arrest-force-load-readout"
                                 style="font-size:0.75rem; color:#0369a1; font-weight:600; margin-top:5px;">
-                                <span id="val-global-arrest-load-str">Charge globale : 1012.0 lbf (M=1.00 × 1012
-                                    lbf)</span>
+                                <span id="val-global-arrest-load-str">Charge globale : 6.00 kN (M=1.00 × 6.00 kN)</span>
                             </div>
                             <div id="arrest-force-error-box"
                                 style="display:none; margin-top:6px; font-size:0.75rem; color:#dc2626; background:#fef2f2; padding:4px 8px; border-radius:4px; border:1px solid #fecaca;">
@@ -951,8 +936,8 @@
                             </button>
                             <button type="button" class="fall-mode-tab" id="tab-mode-selected"
                                 onclick="setFallCalculationMode('selected_span')">
-                                <i class="fa-solid fa-crosshairs"></i> <span id="lbl-tab-mode-selected">Portée
-                                    Choisie</span>
+                                <i class="fa-solid fa-crosshairs"></i> <span id="lbl-tab-mode-selected">Chute sur portée
+                                    spécifiée</span>
                             </button>
                         </div>
 
@@ -982,12 +967,12 @@
                                 </div>
                             </div>
 
-                            <div class="readout-grid-2col">
-                                <div class="readout-subbox">
+                            <div class="readout-grid-2col" id="readout-grid-coef-span">
+                                <div class="readout-subbox" id="box-engineer-coef-calc" style="display:none;">
                                     <span class="sub-label" id="lbl-engineer-coef-calc">Facteur de chute :</span>
                                     <span class="sub-val" id="val-engineer-coef">1.00</span>
                                 </div>
-                                <div class="readout-subbox">
+                                <div class="readout-subbox" id="box-max-allowed-span-calc" style="grid-column: 1 / -1;">
                                     <span class="sub-label" id="lbl-max-allowed-span-calc">Portée Max Aut. :</span>
                                     <span class="sub-val" id="val-max-allowed-span">-- m</span>
                                 </div>
@@ -1025,7 +1010,7 @@
                                 </div>
                                 <div class="readout-row warning-yellow">
                                     <span class="row-label" id="lbl-defl-l-row">Flèche maximale :</span>
-                                    <span class="row-val" id="val-defl-l">-- mm</span>
+                                    <span class="row-val" id="val-defl-l">-- m</span>
                                 </div>
 
                                 <!-- Spec V2 - 05: System Pretension, Sag & Intermediate Post Load -->
@@ -1075,13 +1060,9 @@
                                     <div id="dynamic-anchor-distribution-content"></div>
                                 </div>
 
-                                <!-- Spec V2 - 05: Resolved Corner Forces (Efforts de Coin) -->
-                                <div id="corner-forces-container" class="corner-forces-container" style="display:none;">
-                                    <h4 class="side-title" style="margin-bottom:6px;"><i
-                                            class="fa-solid fa-arrows-split-up-and-left"></i> <span
-                                            id="lbl-corner-forces-title">Efforts de Coin Résolus</span></h4>
-                                    <div id="corner-forces-content"></div>
-                                </div>
+                                <!-- Spec V2 - 05: Resolved Corner Forces (Supprimé à la demande de l'utilisateur) -->
+                                <div id="corner-forces-container" class="corner-forces-container"
+                                    style="display:none !important;"></div>
 
                                 <!-- Spec V2 - 04 & 05: Total Fall Clearance Breakdown -->
                                 <div id="clearance-breakdown-box" class="clearance-breakdown-box">
@@ -1097,28 +1078,60 @@
                                         <span id="clr-val-retracted">0.60 m (2.0 ft)</span>
                                     </div>
                                     <div class="readout-row" style="font-size:0.75rem;">
-                                        <span id="lbl-clr-mad">Arrêt SRL (MAD) :</span>
+                                        <span id="lbl-clr-mad">Arrêt SRL (FAD) :</span>
                                         <span id="clr-val-mad">-- m</span>
                                     </div>
-                                    <div class="readout-row" id="row-clr-body" style="font-size:0.75rem; display:none;">
-                                        <span id="lbl-clr-body">Corps / Anneau D :</span>
-                                        <span id="clr-val-body">-- m</span>
+                                    <div class="readout-row" id="row-clr-edge" style="font-size:0.75rem;">
+                                        <span id="lbl-clr-edge">Distance ligne / bord :</span>
+                                        <span id="clr-val-edge">-- m</span>
+                                    </div>
+                                    <div class="readout-row" id="row-clr-body" style="font-size:0.75rem;">
+                                        <span id="lbl-clr-body">Hauteur Anneau D :</span>
+                                        <span id="clr-val-body">1.50 m (4.9 ft)</span>
                                     </div>
                                     <div class="readout-row" style="font-size:0.75rem;">
                                         <span id="lbl-clr-margin">Marge de sécurité :</span>
-                                        <span id="clr-val-margin">0.60 m (2.0 ft)</span>
+                                        <span id="clr-val-margin">1.00 m (3.3 ft)</span>
                                     </div>
                                     <div class="clearance-total-row">
                                         <span id="lbl-clearance-total">Dégagement Total :</span>
                                         <span id="val-total-clearance">-- m</span>
                                     </div>
+                                    <div id="clearance-wws-warning"
+                                        style="display:none; margin-top:8px; font-size:0.75rem; color:#b45309; background:#fffbeb; padding:8px 10px; border-radius:6px; border:1px solid #fde68a; line-height:1.35;">
+                                        <div
+                                            style="font-weight:700; margin-bottom:4px; display:flex; align-items:center; gap:5px;">
+                                            <i class="fa-solid fa-triangle-exclamation" style="color:#d97706;"></i>
+                                            <span id="clearance-wws-warning-title">Dégagement insuffisant (Total &ge;
+                                                Available Fall Clearance)</span>
+                                        </div>
+                                        <div id="clearance-wws-warning-text" style="margin-bottom:6px;">
+                                            Le tirant d'air disponible (Available Fall Clearance) est inférieur au
+                                            dégagement requis.
+                                        </div>
+                                        <div id="clearance-wws-optimization-box"
+                                            style="margin-top:6px; padding-top:6px; border-top:1px dashed #fcd34d;">
+                                            <span id="clearance-wws-opt-suggestion"
+                                                style="display:block; font-weight:600; color:#92400e; margin-bottom:4px;">
+                                                Optimisation suggérée : Augmenter la distance ligne/bord à <strong><span
+                                                        id="opt-suggested-edge-val">--</span></strong>
+                                            </span>
+                                            <button type="button" id="btn-apply-edge-optimization"
+                                                class="btn btn-warning btn-sm"
+                                                style="font-size:0.75rem; padding:3px 8px; width:100%; font-weight:600; cursor:pointer;"
+                                                onclick="applyEdgeOptimization()">
+                                                <i class="fa-solid fa-wand-magic-sparkles"></i> <span
+                                                    id="btn-apply-edge-opt-text">Appliquer cette optimisation</span>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                <!-- Buffer recoil & Safety Factor (Unprovided formulas) -->
+                                <!-- Fixed End Buffer & Safety Factor -->
                                 <div class="readout-row margin-top-xs">
-                                    <span class="row-label" id="lbl-buffer-recoil-row">Recul du Buffer :</span>
-                                    <span class="row-val to-be-provided-badge" id="val-buffer-recoil">Donnée à
-                                        renseigner</span>
+                                    <span class="row-label" id="lbl-buffer-recoil-row">Buffer d'extrémité :</span>
+                                    <span class="row-val" id="val-buffer-recoil"
+                                        style="font-weight:600; color:#1e293b;">0.20 m</span>
                                 </div>
                                 <div class="readout-row">
                                     <span class="row-label" id="lbl-safety-factor-row">Facteur de Sécurité :</span>
