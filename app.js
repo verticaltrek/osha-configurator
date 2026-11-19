@@ -4682,7 +4682,8 @@ function updateUnitLabelsInDOM() {
         const optTurbo = selArrestMode.querySelector("option[value='turbolite']");
         const optFal = selArrestMode.querySelector("option[value='falcon']");
         if (optLump) optLump.textContent = isEn ? "Lump Mass / Lump Sum (M × F)" : "Masse Globale (Lump Sum : M × F)";
-        if (optCust) optCust.textContent = isEn ? "Custom Direct Input (Engineer)" : "Saisie Forfaitaire Libre (Ingénieur)";
+        if (optLump) optLump.textContent = isEn ? "Lump Mass (Lump Sum: M × F)" : "Masse Globale (Lump Sum : M × F)";
+        if (optCust) optCust.textContent = isEn ? "Custom Loading" : "Saisie Libre (Custom Loading)";
         if (optTurbo) optTurbo.textContent = isEn ? (isUS ? "Shortcut: TurboLite+ (1012 lbf)" : "Shortcut: TurboLite+ (4.5 kN)") : (isUS ? "Shortcut : TurboLite+ (1012 lbf)" : "Shortcut : TurboLite+ (Essais 4.5 kN)");
         if (optFal) optFal.textContent = isEn ? (isUS ? "Shortcut: Falcon+ (1349 lbf)" : "Shortcut: Falcon+ (6.0 kN)") : (isUS ? "Shortcut : Falcon+ (1349 lbf)" : "Shortcut : Falcon+ (Essais 6.0 kN)");
     }
@@ -4792,6 +4793,12 @@ function setNorm(nextNorm, skipRender = false) {
         }
     }
 
+    if (state.arrestLoadMode !== "custom") {
+        recalculateLumpSumArrestLoad();
+    } else {
+        updateLumpSumHint();
+    }
+
     if (!skipRender) {
         if (typeof update3DScene === "function") update3DScene();
         if (typeof updateCalculationsUI === "function") {
@@ -4830,8 +4837,10 @@ function getSrlBaseArrestForceKn() {
 }
 
 function computeLumpArrestLoad(nbUsers, baseForceKn) {
+    const isOSHA = (typeof state !== "undefined" && state.norm === "OSHA");
+    const isCustom = (typeof state !== "undefined" && state.arrestLoadMode === "custom");
     const u = Math.max(1, Math.min(5, parseInt(nbUsers) || 1));
-    const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
+    const m = (isOSHA || isCustom) ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
     const fKn = (typeof baseForceKn === "number" && baseForceKn > 0) ? baseForceKn : getSrlBaseArrestForceKn();
     const fLbf = (typeof state.arrestForceLbf === "number" && state.arrestForceLbf > 0 && Math.abs(fKn - state.arrestForceKn) < 0.001)
         ? state.arrestForceLbf
@@ -4840,7 +4849,7 @@ function computeLumpArrestLoad(nbUsers, baseForceKn) {
     const totalLbf = parseFloat((m * fLbf).toFixed(1));
     return {
         factorM: m,
-        isProvisional: (u === 5),
+        isProvisional: (u === 5 && !isOSHA && !isCustom),
         arrestLoadKn: totalKn,
         arrestLoadLbf: totalLbf
     };
@@ -4854,29 +4863,39 @@ function updateLumpSumHint() {
     if (!hintEl) return;
     const isEn = (parseInt(state.lang) === 1);
     const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+    const isOSHA = (state.norm === "OSHA");
+    const isCustom = (state.arrestLoadMode === "custom");
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-    const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
+    const m = (isOSHA || isCustom) ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
     const baseFKn = getSrlBaseArrestForceKn();
     const knToLbf = (typeof UnitsModule !== "undefined") ? UnitsModule.KN_TO_LBF : 224.8089;
     const baseFLbf = Math.round(baseFKn * knToLbf);
     const calcKn = parseFloat((m * baseFKn).toFixed(2));
     const calcLbf = Math.round(calcKn * knToLbf);
-    const provStr = (u === 5) ? (isEn ? " (provisional value)" : " (valeur provisoire)") : "";
+    const provStr = (u === 5 && !isOSHA && !isCustom) ? (isEn ? " (provisional value)" : " (valeur provisoire)") : "";
 
     const userBaseStr = isUS ? `${baseFLbf} lbf` : `${baseFKn.toFixed(2)} kN`;
     const totalStr = isUS ? `${calcLbf} lbf` : `${calcKn.toFixed(2)} kN`;
 
-    hintEl.innerHTML = isEn
-        ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Sum: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} user${u > 1 ? "s" : ""}) × ${userBaseStr} = <strong>${totalStr}</strong>`
-        : `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Masse Globale : <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} utilisateur${u > 1 ? "s" : ""}) × ${userBaseStr} = <strong>${totalStr}</strong>`;
+    if (isOSHA || isCustom) {
+        hintEl.innerHTML = isEn
+            ? `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Design Arrest Load: <strong>${userBaseStr}</strong> (fixed load, M factor not applied in OSHA)`
+            : `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Charge de dimensionnement : <strong>${userBaseStr}</strong> (charge fixe, facteur M non appliqué en OSHA)`;
+    } else {
+        hintEl.innerHTML = isEn
+            ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Sum: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} user${u > 1 ? "s" : ""}) × ${userBaseStr} = <strong>${totalStr}</strong>`
+            : `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Masse Globale : <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} utilisateur${u > 1 ? "s" : ""}) × ${userBaseStr} = <strong>${totalStr}</strong>`;
+    }
 }
 if (typeof window !== "undefined") {
     window.updateLumpSumHint = updateLumpSumHint;
 }
 
 function recalculateLumpSumArrestLoad() {
+    const isOSHA = (state.norm === "OSHA");
+    const isCustom = (state.arrestLoadMode === "custom");
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-    const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
+    const m = (isOSHA || isCustom) ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
     let baseFKn = getSrlBaseArrestForceKn();
     if (Math.abs(baseFKn - 6.0) < 0.02) baseFKn = 6.0;
     let totalKn = parseFloat((m * baseFKn).toFixed(3));
@@ -10738,21 +10757,25 @@ const Calculator = {
     },
 
     getEffectiveArrestLoad: function (nbUsers) {
+        const isOSHA = (typeof state !== "undefined" && state.norm === "OSHA");
+        const isCustom = (typeof state !== "undefined" && state.arrestLoadMode === "custom");
         const u = Math.max(1, Math.min(5, parseInt(nbUsers) || 1));
-        const m = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u])
-            ? LUMP_FACTOR_BY_USERS[u]
-            : (1.0 + (u - 1) * 0.25);
+        const m = (isOSHA || isCustom)
+            ? 1.00
+            : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u])
+                ? LUMP_FACTOR_BY_USERS[u]
+                : (1.0 + (u - 1) * 0.25));
         let baseKn = 6.0;
         if (typeof state !== "undefined") {
             if (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn) && state.arrestForceKn > 0) {
                 baseKn = state.arrestForceKn;
             } else if (typeof state.arrestLoadKn === "number" && !isNaN(state.arrestLoadKn) && state.arrestLoadKn > 0) {
                 const curU = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-                const curM = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0;
+                const curM = (isOSHA || isCustom) ? 1.0 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0);
                 baseKn = state.arrestLoadKn / curM;
             } else if (typeof state.arrestLoadValue === "number" && !isNaN(state.arrestLoadValue) && state.arrestLoadValue > 0) {
                 const curU = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-                const curM = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0;
+                const curM = (isOSHA || isCustom) ? 1.0 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0);
                 baseKn = state.arrestLoadValue / curM;
             }
         }
@@ -18708,9 +18731,10 @@ function setupUIEventListeners() {
                 state.arrestLoadMode = "custom";
                 if (arrestModeSelect) arrestModeSelect.value = "custom";
 
-                // Compute total arrest load based on active users (Lump Sum M * F_user)
+                // Compute total arrest load based on active users (M=1 in OSHA or Custom mode)
+                const isOSHA = (state.norm === "OSHA");
                 const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-                const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
+                const m = (isOSHA || state.arrestLoadMode === "custom") ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
                 const totalKn = parseFloat((m * baseKn).toFixed(3));
                 state.arrestLoadValue = totalKn;
                 state.arrestLoadKn = totalKn;
@@ -18731,7 +18755,11 @@ function setupUIEventListeners() {
             const maxU = isPro(state.product) ? 5 : 3;
             u = Math.max(1, Math.min(maxU, u));
             state.nbUsers = u;
-            recalculateLumpSumArrestLoad();
+            if (state.norm !== "OSHA" && state.arrestLoadMode !== "custom") {
+                recalculateLumpSumArrestLoad();
+            } else {
+                updateLumpSumHint();
+            }
             updateCalculationsUI();
         };
         usersInput.addEventListener("input", onUsersChange);
@@ -20547,11 +20575,15 @@ function generatePDFReport() {
         }
         const currentArrestKn = state.arrestLoadValue || state.arrestLoadKn || 6.0;
         const lumpU = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-        const lumpM = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[lumpU]) ? LUMP_FACTOR_BY_USERS[lumpU] : 1.0;
-        const isProvisional = (lumpU === 5);
-        const lumpDetail = (state.arrestLoadMode === "custom")
-            ? ""
-            : (" (Lump Sum M=" + formatLocalizedNumber(lumpM, 2, l) + (isProvisional ? " prov." : "") + ")");
+        const lumpM = (isOSHA ? 1.0 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[lumpU]) ? LUMP_FACTOR_BY_USERS[lumpU] : 1.0));
+        const isProvisional = (lumpU === 5 && !isOSHA);
+        const isCustomMode = (state.arrestLoadMode === "custom");
+        let lumpDetail = "";
+        if (!isOSHA && !isCustomMode) {
+            lumpDetail = " (Lump Sum M=" + formatLocalizedNumber(lumpM, 2, l) + (isProvisional ? " prov." : "") + ")";
+        } else if (isCustomMode) {
+            lumpDetail = isEn ? " (Custom Loading)" : " (Saisie Libre)";
+        }
         const arrestForceStr = (isEn ? (currentArrestKn.toFixed(2) + " kN") : (formatLocalizedNumber(currentArrestKn, 2, l) + " kN")) + lumpDetail;
 
         const prodUpper = (state.product || "").toUpperCase();
@@ -20746,28 +20778,15 @@ function generatePDFReport() {
 
                 doc.text(adaptedSample.pdfSubtitle, 14, currentSubY);
 
-                const table2HeaderRow = [adaptedSample.pdfColHeader];
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    table2HeaderRow.push(l === 1 ? (u === 1 ? "1 user" : `${u} users`) : `${u} pers.`);
-                }
+                const table2HeaderRow = [
+                    adaptedSample.pdfColHeader,
+                    (l === 1 ? "Calculated Value" : (l === 2 ? "Valor Calculado" : "Valeur Calculée"))
+                ];
 
-                const anchorRows = adaptedSample.points.map(pt => [pt.pdfLabel]);
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, fallFactorVal, support, true);
-                    const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, u, state.norm, true);
-                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-                    const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-                    const uExt3 = Calculator.extremiteForce3(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-                    const uExt4 = Calculator.extremiteForce4(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-
-                    const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(uExt1, uExt2, uExt3, uExt4);
-                    const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, state.fallPosition?.segmentIndex || 0);
-                    const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
-
-                    adaptedU.points.forEach((pt, pIdx) => {
-                        anchorRows[pIdx].push(`${formatLocalizedNumber(pt.val, 2, l)} kN`);
-                    });
-                }
+                const anchorRows = adaptedSample.points.map(pt => [
+                    pt.pdfLabel,
+                    `${formatLocalizedNumber(pt.val, 2, l)} kN`
+                ]);
 
                 doc.autoTable({
                     startY: currentSubY + 3,
@@ -20788,37 +20807,26 @@ function generatePDFReport() {
 
             if (isCrossLayout && isOSHA) {
                 const fallBr = state.fallPosition?.branch || "north";
-                const table2HeaderRow = [["Indicateur / Branche (Croix)", "Indicator / Branch (Cross)", "Indicador / Rama (Cruz)"][l]];
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    table2HeaderRow.push(l === 1 ? (u === 1 ? "1 user" : `${u} users`) : `${u} pers.`);
-                }
-
-                const rowMaxSpan = [pdfTrans.rowMaxSpan[l]];
-                const rowForceL = [pdfTrans.rowForceL[l]];
-                const rowDefl = [pdfTrans.rowDefl[l]];
+                const table2HeaderRow = [
+                    ["Indicateur / Branche (Croix)", "Indicator / Branch (Cross)", "Indicador / Rama (Cruz)"][l],
+                    (l === 1 ? "Calculated Value" : (l === 2 ? "Valor Calculado" : "Valeur Calculée"))
+                ];
 
                 const tagFall = (l === 1 ? " - Fall 100%" : (l === 2 ? " - Caída 100%" : " - Chute 100%"));
                 const tagOther = " - 25%";
-                const rowNorth = [pdfTrans.rowCrossNorth[l] + (fallBr === "north" ? tagFall : tagOther)];
-                const rowEast = [pdfTrans.rowCrossEast[l] + (fallBr === "east" ? tagFall : tagOther)];
-                const rowSouth = [pdfTrans.rowCrossSouth[l] + (fallBr === "south" ? tagFall : tagOther)];
-                const rowWest = [pdfTrans.rowCrossWest[l] + (fallBr === "west" ? tagFall : tagOther)];
+                const uEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, fallFactorVal, support, false);
+                const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, 1, state.norm, false);
+                const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, 1, state.norm, uEffort, uDefl, fallFactorVal, support, false);
+                const crossRes = AnchorEffortDistributionModule.calculateRule3_Cross(uExt1, fallBr);
 
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, fallFactorVal, support, false);
-                    const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, u, state.norm, false);
-                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, false);
-                    const crossRes = AnchorEffortDistributionModule.calculateRule3_Cross(uExt1, fallBr);
+                const rowMaxSpan = [pdfTrans.rowMaxSpan[l], formatDistance(realSpanMax, 2, l)];
+                const rowForceL = [pdfTrans.rowForceL[l], `${formatLocalizedNumber(uEffort, 2, l)} kN`];
+                const rowDefl = [pdfTrans.rowDefl[l], formatDeflection(uDefl, l)];
 
-                    rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
-                    rowForceL.push(`${formatLocalizedNumber(uEffort, 2, l)} kN`);
-                    rowDefl.push(formatDeflection(uDefl, l));
-
-                    rowNorth.push(`${formatLocalizedNumber(crossRes.values[0], 2, l)} kN`);
-                    rowEast.push(`${formatLocalizedNumber(crossRes.values[1], 2, l)} kN`);
-                    rowSouth.push(`${formatLocalizedNumber(crossRes.values[2], 2, l)} kN`);
-                    rowWest.push(`${formatLocalizedNumber(crossRes.values[3], 2, l)} kN`);
-                }
+                const rowNorth = [pdfTrans.rowCrossNorth[l] + (fallBr === "north" ? tagFall : tagOther), `${formatLocalizedNumber(crossRes.values[0], 2, l)} kN`];
+                const rowEast = [pdfTrans.rowCrossEast[l] + (fallBr === "east" ? tagFall : tagOther), `${formatLocalizedNumber(crossRes.values[1], 2, l)} kN`];
+                const rowSouth = [pdfTrans.rowCrossSouth[l] + (fallBr === "south" ? tagFall : tagOther), `${formatLocalizedNumber(crossRes.values[2], 2, l)} kN`];
+                const rowWest = [pdfTrans.rowCrossWest[l] + (fallBr === "west" ? tagFall : tagOther), `${formatLocalizedNumber(crossRes.values[3], 2, l)} kN`];
 
                 doc.autoTable({
                     startY: sec2StartY + 3,
@@ -20885,47 +20893,65 @@ function generatePDFReport() {
                     styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
                 });
             } else if (!isOSHA || isSingleSpan || (state.oshaSpanMode === "unique")) {
-                const table2HeaderRow = [pdfTrans.table2Headers[l][0]];
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    table2HeaderRow.push(l === 1 ? (u === 1 ? "1 user" : `${u} users`) : `${u} pers.`);
-                }
+                if (isOSHA) {
+                    const table2HeaderRow = [
+                        pdfTrans.table2Headers[l][0],
+                        pdfTrans.table2Headers[l][1]
+                    ];
+                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, 1, "OSHA", 1.0, support, false);
+                    const uDefl = Calculator.deflection(state.product, realSpanMax, 1.0, support, 1, "OSHA", false);
+                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, 1, "OSHA", uEffort, uDefl, 1.0, support, false);
+                    const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, 1, "OSHA", uEffort, uDefl, 1.0, support, false);
 
-                const rowMaxSpan = [pdfTrans.rowMaxSpan[l]];
-                const rowForceL = [pdfTrans.rowForceL[l]];
-                const rowDefl = [pdfTrans.rowDefl[l]];
-                const rowExt1 = [pdfTrans.rowExt1[l]];
-                const rowExt2 = [pdfTrans.rowExt2[l]];
+                    const rowMaxSpan = [pdfTrans.rowMaxSpan[l], formatDistance(realSpanMax, 2, l)];
+                    const rowForceL = [pdfTrans.rowForceL[l], `${formatLocalizedNumber(uEffort, 2, l)} kN`];
+                    const rowDefl = [pdfTrans.rowDefl[l], formatDeflection(uDefl, l)];
+                    const rowExt1 = [pdfTrans.rowExt1[l], `${formatLocalizedNumber(uExt1, 2, l)} kN`];
+                    const rowExt2 = [pdfTrans.rowExt2[l], `${formatLocalizedNumber(uExt2, 2, l)} kN`];
 
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    let uEffort = 0, uDefl = 0, uExt1 = 0, uExt2 = 0;
-                    if (!isOSHA) {
-                        const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
-                        uEffort = Calculator.effortLonge(state.product, realSpanMax, u, "EN 795", enFF, support, false);
-                        uDefl = Calculator.deflection(state.product, realSpanMax, enFF, support, u, "EN 795", false);
-                        uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
-                        uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
-                    } else {
-                        uEffort = Calculator.effortLonge(state.product, realSpanMax, u, "OSHA", 1.0, support, false);
-                        uDefl = Calculator.deflection(state.product, realSpanMax, 1.0, support, u, "OSHA", false);
-                        uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, "OSHA", uEffort, uDefl, 1.0, support, false);
-                        uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, "OSHA", uEffort, uDefl, 1.0, support, false);
+                    doc.autoTable({
+                        startY: sec2StartY + 3,
+                        head: [table2HeaderRow],
+                        body: [rowMaxSpan, rowForceL, rowDefl, rowExt1, rowExt2],
+                        theme: 'grid',
+                        headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                        styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
+                    });
+                } else {
+                    const table2HeaderRow = [pdfTrans.table2Headers[l][0]];
+                    for (let u = 1; u <= maxSysUsers; u++) {
+                        table2HeaderRow.push(l === 1 ? (u === 1 ? "1 user" : `${u} users`) : `${u} pers.`);
                     }
 
-                    rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
-                    rowForceL.push(`${formatLocalizedNumber(uEffort, 2, l)} kN`);
-                    rowDefl.push(formatDeflection(uDefl, l));
-                    rowExt1.push(`${formatLocalizedNumber(uExt1, 2, l)} kN`);
-                    rowExt2.push(`${formatLocalizedNumber(uExt2, 2, l)} kN`);
-                }
+                    const rowMaxSpan = [pdfTrans.rowMaxSpan[l]];
+                    const rowForceL = [pdfTrans.rowForceL[l]];
+                    const rowDefl = [pdfTrans.rowDefl[l]];
+                    const rowExt1 = [pdfTrans.rowExt1[l]];
+                    const rowExt2 = [pdfTrans.rowExt2[l]];
 
-                doc.autoTable({
-                    startY: sec2StartY + 3,
-                    head: [table2HeaderRow],
-                    body: [rowMaxSpan, rowForceL, rowDefl, rowExt1, rowExt2],
-                    theme: 'grid',
-                    headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
-                    styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
-                });
+                    for (let u = 1; u <= maxSysUsers; u++) {
+                        const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+                        const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, "EN 795", enFF, support, false);
+                        const uDefl = Calculator.deflection(state.product, realSpanMax, enFF, support, u, "EN 795", false);
+                        const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
+                        const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
+
+                        rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
+                        rowForceL.push(`${formatLocalizedNumber(uEffort, 2, l)} kN`);
+                        rowDefl.push(formatDeflection(uDefl, l));
+                        rowExt1.push(`${formatLocalizedNumber(uExt1, 2, l)} kN`);
+                        rowExt2.push(`${formatLocalizedNumber(uExt2, 2, l)} kN`);
+                    }
+
+                    doc.autoTable({
+                        startY: sec2StartY + 3,
+                        head: [table2HeaderRow],
+                        body: [rowMaxSpan, rowForceL, rowDefl, rowExt1, rowExt2],
+                        theme: 'grid',
+                        headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                        styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
+                    });
+                }
             } else {
                 // OSHA Multi-Portée : résultats adaptés pour tous les ancrages réels
                 const sampleEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, fallFactorVal, support, true);
@@ -20938,35 +20964,18 @@ function generatePDFReport() {
                 const sampleFinalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sampleSix, state.spans, state.fallPosition?.segmentIndex || 0);
                 const adaptedSample = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(sampleFinalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
 
-                const table2HeaderRow = [adaptedSample.pdfColHeader];
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    table2HeaderRow.push(l === 1 ? (u === 1 ? "1 user" : `${u} users`) : `${u} pers.`);
-                }
+                const table2HeaderRow = [
+                    adaptedSample.pdfColHeader,
+                    (l === 1 ? "Calculated Value" : (l === 2 ? "Valor Calculado" : "Valeur Calculée"))
+                ];
 
-                const rowMaxSpan = [pdfTrans.rowMaxSpan[l]];
-                const rowForceL = [pdfTrans.rowForceL[l]];
-                const rowDefl = [pdfTrans.rowDefl[l]];
-                const anchorRows = adaptedSample.points.map(pt => [pt.pdfLabel]);
-
-                for (let u = 1; u <= maxSysUsers; u++) {
-                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, fallFactorVal, support, true);
-                    const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, u, state.norm, true);
-                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-                    const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-                    const uExt3 = Calculator.extremiteForce3(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-                    const uExt4 = Calculator.extremiteForce4(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-
-                    const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(uExt1, uExt2, uExt3, uExt4);
-                    const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, state.fallPosition?.segmentIndex || 0);
-                    const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
-
-                    rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
-                    rowForceL.push(`${formatLocalizedNumber(uEffort, 2, l)} kN`);
-                    rowDefl.push(formatDeflection(uDefl, l));
-                    adaptedU.points.forEach((pt, pIdx) => {
-                        anchorRows[pIdx].push(`${formatLocalizedNumber(pt.val, 2, l)} kN`);
-                    });
-                }
+                const rowMaxSpan = [pdfTrans.rowMaxSpan[l], formatDistance(realSpanMax, 2, l)];
+                const rowForceL = [pdfTrans.rowForceL[l], `${formatLocalizedNumber(sampleEffort, 2, l)} kN`];
+                const rowDefl = [pdfTrans.rowDefl[l], formatDeflection(sampleDefl, l)];
+                const anchorRows = adaptedSample.points.map(pt => [
+                    pt.pdfLabel,
+                    `${formatLocalizedNumber(pt.val, 2, l)} kN`
+                ]);
 
                 doc.autoTable({
                     startY: sec2StartY + 3,
