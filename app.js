@@ -10649,12 +10649,41 @@ const Calculator = {
         return maxSpan > 0 ? parseFloat(maxSpan.toFixed(2)) : 15.0;
     },
 
+    getEffectiveArrestLoad: function (nbUsers) {
+        const u = Math.max(1, Math.min(5, parseInt(nbUsers) || 1));
+        const m = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u])
+            ? LUMP_FACTOR_BY_USERS[u]
+            : (1.0 + (u - 1) * 0.25);
+        let baseKn = 6.0;
+        if (typeof state !== "undefined") {
+            if (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn) && state.arrestForceKn > 0) {
+                baseKn = state.arrestForceKn;
+            } else if (typeof state.arrestLoadKn === "number" && !isNaN(state.arrestLoadKn) && state.arrestLoadKn > 0) {
+                const curU = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
+                const curM = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0;
+                baseKn = state.arrestLoadKn / curM;
+            } else if (typeof state.arrestLoadValue === "number" && !isNaN(state.arrestLoadValue) && state.arrestLoadValue > 0) {
+                const curU = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
+                const curM = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0;
+                baseKn = state.arrestLoadValue / curM;
+            }
+        }
+        return {
+            u: u,
+            m: m,
+            baseKn: baseKn,
+            totalKn: m * baseKn,
+            scaleRatio: baseKn / 6.0
+        };
+    },
+
     effortLonge: function (product, span, nbUsers, norm, fallFactor = 1, support = "omega_mini", isMultiSpan = false) {
         if (norm === "OSHA") {
             // En norme OSHA, il n'y a pas de facteur de chute (k_FC = 1.0)
             const k_FC = 1.0;
-            const u = Math.max(1, Math.min(5, nbUsers));
-            const F_user = 1.37 * u + 4.65;
+            const eff = this.getEffectiveArrestLoad(nbUsers);
+            const u = eff.u;
+            const F_user = eff.totalKn;
             let res = F_user * k_FC;
             if (isPro(product)) {
                 const spanClamped = Math.max(0.1, Math.min(15.2, span));
@@ -10663,10 +10692,10 @@ const Calculator = {
                 if (support === "omega") k_support = 5.0 / 5.7;
                 else if (support === "sol_mur") k_support = 6.4 / 5.7;
                 else if (support === "overhead") k_support = 7.2 / 5.7;
-                res = F_user * (5.7 / 11.5) * k_support * k_FC * (1.0 + 0.15 * spanRatio);
+                res = F_user * (5.7 / 12.0) * k_support * k_FC * (1.0 + 0.15 * spanRatio);
             } else if (isCore(product) && span <= 3.5) {
                 const fmax_base = u === 1 ? 5.0 : (u === 2 ? 5.8 : 6.5);
-                res = fmax_base * k_FC;
+                res = fmax_base * eff.scaleRatio * k_FC;
             }
             if (span < 3.0) {
                 res = res * Math.max(0.5, Math.sqrt(span / 3.0));
@@ -10702,24 +10731,25 @@ const Calculator = {
         if (norm === "OSHA") {
             // En norme OSHA, il n'y a pas de facteur de chute (k_FC = 1.0)
             const k_FC = 1.0;
-            const u = Math.max(1, Math.min(5, nbUsers));
-            const F_user = 1.37 * u + 4.65;
+            const eff = this.getEffectiveArrestLoad(nbUsers);
+            const u = eff.u;
+            const F_user = eff.totalKn;
             let res = 500.0;
             if (isPro(product)) {
                 const spanRatio = Math.max(0.1, Math.min(15.2, span)) / 15.2;
                 let k_support = support === "omega" ? 1290 / 1410 : (support === "sol_mur" ? 1300 / 1410 : (support === "overhead" ? 1640 / 1410 : 1.0));
-                res = (isMultiSpan ? 1530.0 : 2200.0) * spanRatio * (F_user / 11.5) * k_support * k_FC;
+                res = (isMultiSpan ? 1530.0 : 2200.0) * spanRatio * (F_user / 12.0) * k_support * k_FC;
             } else if (isCore(product)) {
                 if (span <= 3.5) {
-                    res = 675.0 * (span / 3.5) * k_FC;
+                    res = 675.0 * (span / 3.5) * eff.scaleRatio * k_FC;
                 } else {
                     const spanRatio = Math.max(0.1, Math.min(12.2, span)) / 12.2;
                     let f_ref = support === "hookt" ? (isMultiSpan ? 2250.0 : 2600.0) : (isMultiSpan ? 1500.0 : 1800.0);
-                    res = f_ref * spanRatio * (F_user / 8.8) * k_FC;
+                    res = f_ref * spanRatio * (F_user / 9.0) * k_FC;
                 }
             } else if (isXtreme(product)) {
                 const spanRatio = Math.max(0.1, Math.min(54.9, span)) / 54.9;
-                res = (isMultiSpan ? 1510.0 : 2790.0) * spanRatio * (F_user / 8.8) * k_FC;
+                res = (isMultiSpan ? 1510.0 : 2790.0) * spanRatio * (F_user / 9.0) * k_FC;
             }
             return Math.round(res);
         }
@@ -10772,22 +10802,23 @@ const Calculator = {
         if (norm === "OSHA") {
             // En norme OSHA, il n'y a pas de facteur de chute (k_FC = 1.0)
             const k_FC = 1.0;
-            const u = Math.max(1, Math.min(5, nbUsers));
-            const F_user = 1.37 * u + 4.65;
+            const eff = this.getEffectiveArrestLoad(nbUsers);
+            const u = eff.u;
+            const F_user = eff.totalKn;
             let baseForce = 10.0;
             if (isPro(product)) {
-                baseForce = (isMultiSpan ? 13.05 : 12.50) * (F_user / 11.5) * k_FC;
+                baseForce = (isMultiSpan ? 13.05 : 12.50) * (F_user / 12.0) * k_FC;
             } else if (isCore(product)) {
                 if (span <= 3.5) {
                     const lc1_base = u === 1 ? 5.4 : (u === 2 ? 6.1 : 6.8);
-                    baseForce = lc1_base * k_FC;
+                    baseForce = lc1_base * eff.scaleRatio * k_FC;
                 } else {
                     const spanRatio = 1.0 + (support === "hookt" ? 0.10 : 0.12) * ((12.2 - Math.max(2.0, Math.min(12.2, span))) / (12.2 - 2.0));
                     let fext1_ref = support === "hookt" ? (isMultiSpan ? 8.30 : 9.00) : (isMultiSpan ? 13.65 : 11.60);
-                    baseForce = fext1_ref * (F_user / 8.8) * spanRatio * k_FC;
+                    baseForce = fext1_ref * (F_user / 9.0) * spanRatio * k_FC;
                 }
             } else if (isXtreme(product)) {
-                baseForce = (isMultiSpan ? 10.40 : 19.30) * (F_user / 8.8) * k_FC;
+                baseForce = (isMultiSpan ? 10.40 : 19.30) * (F_user / 9.0) * k_FC;
             }
             if (span < 3.0) {
                 baseForce = baseForce * Math.sqrt(Math.max(0.1, span / 3.0));
@@ -10836,22 +10867,23 @@ const Calculator = {
         if (norm === "OSHA") {
             // En norme OSHA, il n'y a pas de facteur de chute (k_FC = 1.0)
             const k_FC = 1.0;
-            const u = Math.max(1, Math.min(5, nbUsers));
-            const F_user = 1.37 * u + 4.65;
+            const eff = this.getEffectiveArrestLoad(nbUsers);
+            const u = eff.u;
+            const F_user = eff.totalKn;
             let baseForce = 10.0;
             if (isPro(product)) {
-                baseForce = (isMultiSpan ? 12.55 : 12.05) * (F_user / 11.5) * k_FC;
+                baseForce = (isMultiSpan ? 12.55 : 12.05) * (F_user / 12.0) * k_FC;
             } else if (isCore(product)) {
                 if (span <= 3.5) {
                     const lc2_base = u === 1 ? 5.8 : (u === 2 ? 6.5 : 7.2);
-                    baseForce = lc2_base * k_FC;
+                    baseForce = lc2_base * eff.scaleRatio * k_FC;
                 } else {
                     const spanRatio = 1.0 + (support === "hookt" ? 0.10 : 0.12) * ((12.2 - Math.max(2.0, Math.min(12.2, span))) / (12.2 - 2.0));
                     let fext2_ref = support === "hookt" ? (isMultiSpan ? 8.10 : 9.00) : (isMultiSpan ? 13.05 : 11.30);
-                    baseForce = fext2_ref * (F_user / 8.8) * spanRatio * k_FC;
+                    baseForce = fext2_ref * (F_user / 9.0) * spanRatio * k_FC;
                 }
             } else if (isXtreme(product)) {
-                baseForce = (isMultiSpan ? 10.20 : 18.95) * (F_user / 8.8) * k_FC;
+                baseForce = (isMultiSpan ? 10.20 : 18.95) * (F_user / 9.0) * k_FC;
             }
             if (span < 3.0) {
                 baseForce = baseForce * Math.sqrt(Math.max(0.1, span / 3.0));
@@ -10899,11 +10931,11 @@ const Calculator = {
     extremiteForce3: function (product, span, nbUsers, norm, effortLonge, deflection, fallFactor = 1, support = "omega_mini", isMultiSpan = false) {
         if (!isMultiSpan) return 0.0;
         if (norm === "OSHA") {
-            const u = Math.max(1, Math.min(5, nbUsers));
-            const F_user = 1.37 * u + 4.65;
-            if (isPro(product)) return 3.90 * (F_user / 11.5);
-            if (isCore(product)) return (support === "hookt" ? 3.80 : 4.50) * (F_user / 8.8);
-            if (isXtreme(product)) return 3.90 * (F_user / 8.8);
+            const eff = this.getEffectiveArrestLoad(nbUsers);
+            const F_user = eff.totalKn;
+            if (isPro(product)) return 3.90 * (F_user / 12.0);
+            if (isCore(product)) return (support === "hookt" ? 3.80 : 4.50) * (F_user / 9.0);
+            if (isXtreme(product)) return 3.90 * (F_user / 9.0);
         }
         let k_FC = fallFactor <= 0.0 ? 0.5 : (fallFactor < 1.0 ? 0.5 + fallFactor * (Math.sqrt(0.5) - 0.5) : (fallFactor < 2.0 ? Math.sqrt(0.5) + (fallFactor - 1.0) * (1.0 - Math.sqrt(0.5)) : 1.0));
         return effortLonge * 0.35 * k_FC;
@@ -10912,11 +10944,11 @@ const Calculator = {
     extremiteForce4: function (product, span, nbUsers, norm, effortLonge, deflection, fallFactor = 1, support = "omega_mini", isMultiSpan = false) {
         if (!isMultiSpan) return 0.0;
         if (norm === "OSHA") {
-            const u = Math.max(1, Math.min(5, nbUsers));
-            const F_user = 1.37 * u + 4.65;
-            if (isPro(product)) return 5.40 * (F_user / 11.5);
-            if (isCore(product)) return (support === "hookt" ? 4.20 : 5.10) * (F_user / 8.8);
-            if (isXtreme(product)) return 4.10 * (F_user / 8.8);
+            const eff = this.getEffectiveArrestLoad(nbUsers);
+            const F_user = eff.totalKn;
+            if (isPro(product)) return 5.40 * (F_user / 12.0);
+            if (isCore(product)) return (support === "hookt" ? 4.20 : 5.10) * (F_user / 9.0);
+            if (isXtreme(product)) return 4.10 * (F_user / 9.0);
         }
         let k_FC = fallFactor <= 0.0 ? 0.5 : (fallFactor < 1.0 ? 0.5 + fallFactor * (Math.sqrt(0.5) - 0.5) : (fallFactor < 2.0 ? Math.sqrt(0.5) + (fallFactor - 1.0) * (1.0 - Math.sqrt(0.5)) : 1.0));
         return effortLonge * 0.45 * k_FC;
