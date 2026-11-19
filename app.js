@@ -13345,7 +13345,7 @@ function initThreeEngine() {
     const aspect = (width > 0 && height > 0) ? (width / height) : 1.5;
     perspectiveCam = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
     const initDist = Math.max(state.L, state.l) * 1.4;
-    perspectiveCam.position.set(state.L / 2 + initDist * 0.8, initDist * 0.9, state.l / 2 + initDist * 0.8);
+    perspectiveCam.position.set(state.L / 2 + initDist * 0.20, initDist * 0.75, state.l / 2 + initDist * 1.05);
 
     const d = 20;
     orthographicCam = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 0.1, 1000);
@@ -15626,8 +15626,9 @@ function renderConfig12GridSystem3D() {
     const xSpacings = gs.xSpacings && gs.xSpacings.length === nx - 1 ? gs.xSpacings : Array(nx - 1).fill(5.0);
     const zSpacings = gs.zSpacings && gs.zSpacings.length === ny - 1 ? gs.zSpacings : Array(ny - 1).fill(5.0);
 
-    const startX = 3.0 + endMargin;
-    const startZ = 3.0 + endMargin;
+    const edgeDist = parseFloat(state.line_to_edge !== undefined ? state.line_to_edge : 2.0);
+    const startX = edgeDist + endMargin;
+    const startZ = edgeDist + endMargin;
     const xCoords = [startX];
     for (let i = 0; i < xSpacings.length; i++) {
         xCoords.push(xCoords[i] + (xSpacings[i] || 5.0));
@@ -17114,8 +17115,9 @@ function collectSceneGeometryContext(layout) {
         const xSpacings = gs.xSpacings && gs.xSpacings.length === nx - 1 ? gs.xSpacings : Array(nx - 1).fill(5.0);
         const zSpacings = gs.zSpacings && gs.zSpacings.length === ny - 1 ? gs.zSpacings : Array(ny - 1).fill(5.0);
 
-        const startX = 3.0 + endMargin;
-        const startZ = 3.0 + endMargin;
+        const edgeDist = parseFloat(state.line_to_edge !== undefined ? state.line_to_edge : 2.0);
+        const startX = edgeDist + endMargin;
+        const startZ = edgeDist + endMargin;
         const xCoords = [startX];
         for (let i = 0; i < xSpacings.length; i++) xCoords.push(xCoords[i] + (xSpacings[i] || 5.0));
         const zCoords = [startZ];
@@ -19375,7 +19377,10 @@ function setupUIEventListeners() {
             controls.enablePan = true;
             const centerX = state.L / 2;
             const centerZ = state.l / 2;
+            const H = Math.max(0.2, parseFloat(state.roof_height_above_ground || state.roofHeightAboveGround || 6.0));
+            const dist = Math.max(state.L, state.l, H) * 1.4;
             controls.target.set(centerX, 0.2, centerZ);
+            perspectiveCam.position.set(centerX + dist * 0.20, dist * 0.75, centerZ + dist * 1.05);
             controls.update();
         }
 
@@ -19417,10 +19422,10 @@ function setupUIEventListeners() {
             const obsH = Math.max(0, H - wwsM);
             const dist = Math.max(state.L, state.l, H) * 1.4;
             if (obsH > 0.01) {
-                perspectiveCam.position.set(centerX - dist * 0.65, dist * 0.65, centerZ - dist * 0.85);
+                perspectiveCam.position.set(centerX - dist * 0.20, dist * 0.75, centerZ - dist * 1.05);
                 controls.target.set(centerX, -H * 0.2, centerZ);
             } else {
-                perspectiveCam.position.set(centerX + dist * 0.8, dist * 0.9, centerZ + dist * 0.8);
+                perspectiveCam.position.set(centerX + dist * 0.20, dist * 0.75, centerZ + dist * 1.05);
                 controls.target.set(centerX, 0.2, centerZ);
             }
             controls.update();
@@ -19875,7 +19880,7 @@ function setupUIEventListeners() {
 
     const exportPdfBtn = document.getElementById("export-pdf-btn");
     if (exportPdfBtn) {
-        exportPdfBtn.removeAttribute("onclick");
+        if (typeof exportPdfBtn.removeAttribute === "function") exportPdfBtn.removeAttribute("onclick");
         exportPdfBtn.onclick = null;
         exportPdfBtn.addEventListener("click", (e) => {
             if (e) e.preventDefault();
@@ -20298,7 +20303,7 @@ function captureVue3DToitSnapshot(targetW = 182, targetH = 145) {
             snapCam3D.position.set(center.x - dist * 0.65, center.y + dist * 0.55, center.z - dist * 0.85);
             snapCam3D.lookAt(center.x, center.y - H * 0.15, center.z);
         } else {
-            snapCam3D.position.set(center.x + dist * 0.70, center.y + dist * 0.85, center.z + dist * 0.75);
+            snapCam3D.position.set(center.x + dist * 0.20, center.y + dist * 0.75, center.z + dist * 1.05);
             snapCam3D.lookAt(center.x, center.y + 0.3, center.z);
         }
         snapCam3D.updateProjectionMatrix();
