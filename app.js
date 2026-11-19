@@ -7078,10 +7078,11 @@ function renderDynamicLayoutForm() {
 
     // 1. Single Span
     if (layout === "single_span") {
-        const minSpanM = Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0));
-        const maxSpanM = Calculator.getMaxSpan(state.product);
-        const minSpanDisp = isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM;
-        const maxSpanDisp = isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM;
+        const lim = Calculator.getSpanLimitsDisplay ? Calculator.getSpanLimitsDisplay(state.product) : null;
+        const minSpanM = lim ? lim.minM : (Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0)));
+        const maxSpanM = lim ? lim.maxM : Calculator.getMaxSpan(state.product);
+        const minSpanDisp = lim ? lim.minDisp : (isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM);
+        const maxSpanDisp = lim ? lim.maxDisp : (isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM);
         const rawSpan1 = state.spans[0] ? state.spans[0].length : 12.0;
         const isExceeding = rawSpan1 > maxSpanM + 0.001;
         const isBelowMin = rawSpan1 < minSpanM - 0.001;
@@ -7786,10 +7787,11 @@ function attachDynamicFormListeners() {
     const singleLen = document.getElementById("input-span-single-len");
     if (singleLen) {
         const updateSingleSpanWarning = (e, clampInput) => {
-            const minSpanM = Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0));
-            const maxSpanM = Calculator.getMaxSpan(state.product);
-            const minSpanDisp = isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM;
-            const maxSpanDisp = isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM;
+            const lim = Calculator.getSpanLimitsDisplay ? Calculator.getSpanLimitsDisplay(state.product) : null;
+            const minSpanM = lim ? lim.minM : (Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0)));
+            const maxSpanM = lim ? lim.maxM : Calculator.getMaxSpan(state.product);
+            const minSpanDisp = lim ? lim.minDisp : (isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM);
+            const maxSpanDisp = lim ? lim.maxDisp : (isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM);
             let raw = parseFloat(e.target.value);
             const warnContainer = document.getElementById("single-span-warning");
             if (!isNaN(raw) && raw > 0) {
@@ -8857,7 +8859,7 @@ const TRANSLATIONS = {
         ],
         longRangeLengthRange: [
             "⚠️ LONGUEUR DE LIGNE NON CONFORME :\nPour le système XTREME, vous devez choisir une longueur de ligne entre 10 et 56 m.",
-            "⚠️ NON-COMPLIANT LINE LENGTH:\nFor the XTREME system, line length must be between 32.8 and 183.7 ft.",
+            "⚠️ NON-COMPLIANT LINE LENGTH:\nFor the XTREME system, line length must be between 32.8 and 180 ft.",
             "⚠️ LONGITUD DE LÍNEA NO CONFORME:\nPara el sistema XTREME, la longitud de la línea debe estar entre 10 y 56 m."
         ],
         pdfLoading: [
@@ -10154,28 +10156,57 @@ const Calculator = {
     },
 
     getMinSpan: function (product) {
-        const prod = product || state.product || "CORE";
+        const prod = product || (typeof state !== "undefined" ? state.product : "CORE") || "CORE";
+        const isUS = (typeof state !== "undefined" && (state.unitSystem === "imperial" || state.unitSystem === "us"));
         if (isXtreme(prod)) {
-            return 10.0;
+            return isUS ? (32.8 / 3.28084) : 10.0;
         }
         if (isPro(prod)) {
-            return 3.0;
+            return isUS ? (9.8 / 3.28084) : 3.0;
         }
-        return 2.0;
+        return isUS ? (6.6 / 3.28084) : 2.0;
     },
 
     getMaxSpan: function (product) {
-        if (state.roofShape === "sloped" && state.roofSlope >= 40 && state.roofSlope <= 75) {
+        if (typeof state !== "undefined" && state.roofShape === "sloped" && state.roofSlope >= 40 && state.roofSlope <= 75) {
             return 3.0;
         }
-        const prod = product || state.product || "CORE";
+        const prod = product || (typeof state !== "undefined" ? state.product : "CORE") || "CORE";
+        const isUS = (typeof state !== "undefined" && (state.unitSystem === "imperial" || state.unitSystem === "us"));
         if (isXtreme(prod)) {
-            return 56.0;
+            return isUS ? (180.0 / 3.28084) : 56.0;
         }
         if (isPro(prod)) {
-            return 15.0;
+            return isUS ? (50.0 / 3.28084) : 15.0;
         }
-        return 12.0;
+        return isUS ? (40.0 / 3.28084) : 12.0;
+    },
+
+    getSpanLimitsDisplay: function (product) {
+        const prod = product || (typeof state !== "undefined" ? state.product : "CORE") || "CORE";
+        const isUS = (typeof state !== "undefined" && (state.unitSystem === "imperial" || state.unitSystem === "us"));
+        if (isXtreme(prod)) {
+            return {
+                minM: isUS ? (32.8 / 3.28084) : 10.0,
+                maxM: isUS ? (180.0 / 3.28084) : 56.0,
+                minDisp: isUS ? 32.8 : 10.0,
+                maxDisp: isUS ? 180 : 56.0
+            };
+        }
+        if (isPro(prod)) {
+            return {
+                minM: isUS ? (9.8 / 3.28084) : 3.0,
+                maxM: isUS ? (50.0 / 3.28084) : 15.0,
+                minDisp: isUS ? 9.8 : 3.0,
+                maxDisp: isUS ? 50 : 15.0
+            };
+        }
+        return {
+            minM: isUS ? (6.6 / 3.28084) : 2.0,
+            maxM: isUS ? (40.0 / 3.28084) : 12.0,
+            minDisp: isUS ? 6.6 : 2.0,
+            maxDisp: isUS ? 40 : 12.0
+        };
     },
 
     calculateAnchorPositions: function (L, l, maxSpan) {
@@ -17342,7 +17373,7 @@ function updateCalculationsUI(layout, maxSpan) {
     }
 
     if (isLongRangeInvalid) {
-        if (warningTextElem) warningTextElem.textContent = ["Vous devez choisir une longueur de ligne entre 10 et 56 m", "You must choose a line length between 32.8 and 183.7 ft", "Debe elegir una longitud de línea entre 10 y 56 m"][l];
+        if (warningTextElem) warningTextElem.textContent = ["Vous devez choisir une longueur de ligne entre 10 et 56 m", "You must choose a line length between 32.8 and 180 ft", "Debe elegir una longitud de línea entre 10 y 56 m"][l];
         if (warningElem) warningElem.classList.remove("hidden");
 
         const lblAnchor = document.getElementById("lbl-anchor-count");
@@ -18871,10 +18902,11 @@ function setupUIEventListeners() {
             if (state.layoutType === "single_span") {
                 const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
                 const singleInp = document.getElementById("input-span-single-len");
-                const minSpanM = Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0));
-                const maxSpanM = Calculator.getMaxSpan(state.product);
-                const minSpanDisp = isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM;
-                const maxSpanDisp = isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM;
+                const lim = Calculator.getSpanLimitsDisplay ? Calculator.getSpanLimitsDisplay(state.product) : null;
+                const minSpanM = lim ? lim.minM : (Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0)));
+                const maxSpanM = lim ? lim.maxM : Calculator.getMaxSpan(state.product);
+                const minSpanDisp = lim ? lim.minDisp : (isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM);
+                const maxSpanDisp = lim ? lim.maxDisp : (isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM);
                 const rawVal = singleInp ? parseFloat(String(singleInp.value).replace(/,/g, '.')) : (state.spans[0] ? state.spans[0].length : 12.0);
                 if (!isNaN(rawVal) && rawVal > 0) {
                     const rawMeters = isUS ? (rawVal / METERS_TO_FEET) : rawVal;
@@ -19502,10 +19534,11 @@ function setupUIEventListeners() {
                 const isEn = (parseInt(state.lang) === 1);
                 let rawVal = parseFloat(e.target.value) || 1.0;
                 if (state.layoutType === "single_span" || state.layoutType === "slope_single") {
-                    const minSpanM = Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0));
-                    const maxSpanM = Calculator.getMaxSpan(state.product);
-                    const minSpanDisp = isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM;
-                    const maxSpanDisp = isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM;
+                    const lim = Calculator.getSpanLimitsDisplay ? Calculator.getSpanLimitsDisplay(state.product) : null;
+                    const minSpanM = lim ? lim.minM : (Calculator.getMinSpan ? Calculator.getMinSpan(state.product) : (isXtreme(state.product) ? 10.0 : (isPro(state.product) ? 3.0 : 2.0)));
+                    const maxSpanM = lim ? lim.maxM : Calculator.getMaxSpan(state.product);
+                    const minSpanDisp = lim ? lim.minDisp : (isUS ? parseFloat((minSpanM * METERS_TO_FEET).toFixed(2)) : minSpanM);
+                    const maxSpanDisp = lim ? lim.maxDisp : (isUS ? parseFloat((maxSpanM * METERS_TO_FEET).toFixed(2)) : maxSpanM);
                     if (rawVal > maxSpanDisp) {
                         const rawM = isUS ? (rawVal * FT_TO_M) : rawVal;
                         alert(isEn
