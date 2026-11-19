@@ -6821,6 +6821,22 @@ function syncRoofLengthWithLifelineUI() {
             const dispL = isUS ? (state.L * UnitsModule.M_TO_FT) : state.L;
             rLenInp.value = dispL.toFixed(1);
         }
+        const rWidInp = document.getElementById("input-roof-width");
+        if (rWidInp && state.l > 0) {
+            const dispW = isUS ? (state.l * UnitsModule.M_TO_FT) : state.l;
+            rWidInp.value = dispW.toFixed(1);
+        }
+        const isAutoRoof = (state.layoutType === "grid_system" || state.layoutType === "cross_spans");
+        if (rLenInp) {
+            rLenInp.readOnly = isAutoRoof;
+            if (isAutoRoof) rLenInp.setAttribute("title", (parseInt(state.lang) === 1) ? "Auto-computed from layout dimensions" : "Calculé automatiquement d'après la grille");
+            else rLenInp.removeAttribute("title");
+        }
+        if (rWidInp) {
+            rWidInp.readOnly = isAutoRoof;
+            if (isAutoRoof) rWidInp.setAttribute("title", (parseInt(state.lang) === 1) ? "Auto-computed from layout dimensions" : "Calculé automatiquement d'après la grille");
+            else rWidInp.removeAttribute("title");
+        }
     } catch (e) { }
 }
 
@@ -8323,6 +8339,13 @@ function attachDynamicFormListeners() {
         gridEndMargin.addEventListener("input", (e) => {
             const raw = parseFloat(e.target.value) || 2.0;
             state.gridSystem.end_margin = isUS ? (raw / METERS_TO_FEET) : raw;
+            syncRoofLengthWithLifelineUI();
+            if (typeof update3DScene === "function") update3DScene();
+            if (typeof updateCalculationsUI === "function") {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
         });
     }
 
@@ -8330,6 +8353,7 @@ function attachDynamicFormListeners() {
         gridCableHeight.addEventListener("input", (e) => {
             const raw = parseFloat(e.target.value) || 3.5;
             state.gridSystem.cable_height = isUS ? (raw / METERS_TO_FEET) : raw;
+            if (typeof update3DScene === "function") update3DScene();
         });
     }
 
@@ -8344,6 +8368,13 @@ function attachDynamicFormListeners() {
             while (state.gridSystem.zSpacings.length < ny - 1) state.gridSystem.zSpacings.push(5.0);
             while (state.gridSystem.zSpacings.length > ny - 1) state.gridSystem.zSpacings.pop();
             renderDynamicLayoutForm();
+            syncRoofLengthWithLifelineUI();
+            if (typeof update3DScene === "function") update3DScene();
+            if (typeof updateCalculationsUI === "function") {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
         };
         gridNx.addEventListener("change", updateGridDims);
         gridNy.addEventListener("change", updateGridDims);
@@ -8393,6 +8424,13 @@ function attachDynamicFormListeners() {
             const idx = parseInt(e.target.dataset.idx);
             const raw = parseFloat(e.target.value) || 5.0;
             state.gridSystem.xSpacings[idx] = isUS ? (raw / METERS_TO_FEET) : raw;
+            syncRoofLengthWithLifelineUI();
+            if (typeof update3DScene === "function") update3DScene();
+            if (typeof updateCalculationsUI === "function") {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
         });
     });
     document.querySelectorAll(".grid-zspacing-input").forEach(inp => {
@@ -8400,6 +8438,13 @@ function attachDynamicFormListeners() {
             const idx = parseInt(e.target.dataset.idx);
             const raw = parseFloat(e.target.value) || 5.0;
             state.gridSystem.zSpacings[idx] = isUS ? (raw / METERS_TO_FEET) : raw;
+            syncRoofLengthWithLifelineUI();
+            if (typeof update3DScene === "function") update3DScene();
+            if (typeof updateCalculationsUI === "function") {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
         });
     });
 
@@ -10519,19 +10564,31 @@ const Calculator = {
             const gs = state.gridSystem || { nx: 3, ny: 3, xSpacings: [5.0, 5.0], zSpacings: [5.0, 5.0], end_margin: 2.0 };
             const nx = Math.max(2, gs.nx || 3);
             const ny = Math.max(2, gs.ny || 3);
-            const endMargin = Math.max(0.5, gs.end_margin !== undefined ? gs.end_margin : 2.0);
-            const xSpacings = gs.xSpacings && gs.xSpacings.length === nx - 1 ? gs.xSpacings : Array(nx - 1).fill(5.0);
-            const zSpacings = gs.zSpacings && gs.zSpacings.length === ny - 1 ? gs.zSpacings : Array(ny - 1).fill(5.0);
+            const endMargin = Math.max(0.5, (typeof gs.end_margin === "number" && !isNaN(gs.end_margin)) ? gs.end_margin : (parseFloat(gs.end_margin) || 2.0));
+            const xSpacings = (gs.xSpacings && gs.xSpacings.length === nx - 1) ? gs.xSpacings : Array(nx - 1).fill(5.0);
+            const zSpacings = (gs.zSpacings && gs.zSpacings.length === ny - 1) ? gs.zSpacings : Array(ny - 1).fill(5.0);
 
-            const startX = 3.0 + endMargin;
-            const startZ = 3.0 + endMargin;
+            const sumX = xSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
+            const sumZ = zSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
+
+            // Dynamically adapt roof dimensions to grid spans + margins
+            const roofL = parseFloat((sumX + 2 * endMargin + 2 * edgeDist).toFixed(2));
+            const roofl = parseFloat((sumZ + 2 * endMargin + 2 * edgeDist).toFixed(2));
+
+            state.L = roofL;
+            state.l = roofl;
+            state.roof_length = roofL;
+            state.roof_width = roofl;
+
+            const startX = edgeDist + endMargin;
+            const startZ = edgeDist + endMargin;
             const xCoords = [startX];
             for (let i = 0; i < xSpacings.length; i++) {
-                xCoords.push(xCoords[i] + (xSpacings[i] || 5.0));
+                xCoords.push(xCoords[i] + (parseFloat(xSpacings[i]) || 5.0));
             }
             const zCoords = [startZ];
             for (let j = 0; j < zSpacings.length; j++) {
-                zCoords.push(zCoords[j] + (zSpacings[j] || 5.0));
+                zCoords.push(zCoords[j] + (parseFloat(zSpacings[j]) || 5.0));
             }
 
             for (let i = 0; i < xCoords.length; i++) {
@@ -10590,7 +10647,7 @@ const Calculator = {
             });
 
             // Shift all node coordinates so minX >= edgeDist and minZ >= edgeDist (Bypassed for centered structures like multi_bend_circle and cross_spans)
-            if (layout !== "multi_bend_circle" && layout !== "cross_spans") {
+            if (layout !== "multi_bend_circle" && layout !== "cross_spans" && layout !== "grid_system") {
                 const shiftX = margin - minX;
                 const shiftZ = margin - minZ;
 
@@ -10606,7 +10663,7 @@ const Calculator = {
                 }
             }
 
-            if (layout !== "cross_spans") {
+            if (layout !== "cross_spans" && layout !== "grid_system") {
                 const userRoofl = (typeof state.roof_width === "number" && state.roof_width > 0) ? state.roof_width : (state.l || 15.0);
                 const widthX = maxX + edgeDist;
                 const widthZ = Math.max(userRoofl, maxZ + edgeDist);
@@ -18552,6 +18609,8 @@ function setupUIEventListeners() {
                 ];
             }
             renderDynamicLayoutForm();
+            syncRoofLengthWithLifelineUI();
+            if (typeof update3DScene === "function") update3DScene();
         });
     }
 
