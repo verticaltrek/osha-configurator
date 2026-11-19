@@ -4586,13 +4586,13 @@ function updateUnitLabelsInDOM() {
 
     // Update system cards tags & descriptions in right panel
     const sysTagCore = document.getElementById("sys-tag-core") || document.getElementById("sys-tag-lightpro");
-    if (sysTagCore) sysTagCore.textContent = isUS ? "6.6 to 39.4 ft | 3 users" : (isEn ? "2 to 12 m | 3 users" : "2 à 12m | 3 pers.");
+    if (sysTagCore) sysTagCore.textContent = isUS ? "8mm Wire Rope | Max 40 ft | 3 Users" : (isEn ? "8mm Wire Rope | Max 12 m | 3 Users" : "Câble 8mm | Max 12m | 3 pers.");
 
     const sysTagPro = document.getElementById("sys-tag-pro") || document.getElementById("sys-tag-newpro");
-    if (sysTagPro) sysTagPro.textContent = isUS ? "9.8 to 49.2 ft | 5 users" : (isEn ? "3 to 15 m | 5 users" : "3 à 15m | 5 pers.");
+    if (sysTagPro) sysTagPro.textContent = isUS ? "10mm Wire Rope | Max 50 ft | 5 Users" : (isEn ? "10mm Wire Rope | Max 15 m | 5 Users" : "Câble 10mm | Max 15m | 5 pers.");
 
     const sysTagXtreme = document.getElementById("sys-tag-xtreme") || document.getElementById("sys-tag-longrange");
-    if (sysTagXtreme) sysTagXtreme.textContent = isUS ? "32.8 to 183.7 ft | 3 users" : (isEn ? "10 to 56 m | 3 users" : "10 à 56m | 3 pers.");
+    if (sysTagXtreme) sysTagXtreme.textContent = isUS ? "10mm Wire Rope | Single span 180 ft | 3 Users" : (isEn ? "10mm Wire Rope | Single span 56 m | 3 Users" : "Câble 10mm | Portée unique 56m | 3 pers.");
 
     const sysDescCore = document.getElementById("sys-desc-core") || document.getElementById("sys-desc-lightpro");
     if (sysDescCore) {
@@ -4629,18 +4629,18 @@ function updateUnitLabelsInDOM() {
         const optXtreme = selProd.querySelector("option[value='XTREME']") || selProd.querySelector("option[value='LONG RANGE']");
         if (optCore) {
             optCore.textContent = isUS
-                ? (isEn ? "CORE (Lightweight & commercial roofs | 6.6 to 39.4 ft | 3 users)" : "CORE (Toitures légères & tertiaires | 6.6 à 39.4 ft | 3 pers.)")
-                : (isEn ? "CORE (Lightweight & commercial roofs | 2 to 12 m | 3 users)" : "CORE (Toitures légères & tertiaires | 2 à 12m | 3 pers.)");
+                ? (isEn ? "CORE (8mm Wire Rope / Max Span 40ft / 3 Users Max)" : "CORE (Câble 8mm / Portée max 40ft / 3 Utilisateurs max)")
+                : (isEn ? "CORE (8mm Wire Rope / Max Span 12m / 3 Users Max)" : "CORE (Câble 8mm / Portée max 12m / 3 Utilisateurs max)");
         }
         if (optPro) {
             optPro.textContent = isUS
-                ? (isEn ? "PRO (Standard / Flat roofs & trapezoidal | 9.8 to 49.2 ft | 5 users)" : "PRO (Standard / Toitures plates & bacs | 9.8 à 49.2 ft | 5 pers.)")
-                : (isEn ? "PRO (Standard / Flat roofs & trapezoidal | 3 to 15 m | 5 users)" : "PRO (Standard / Toitures plates & bacs | 3 à 15m | 5 pers.)");
+                ? (isEn ? "PRO (10mm Wire Rope / Max Span 50 ft / 5 users max)" : "PRO (Câble 10mm / Portée max 50 ft / 5 utilisateurs max)")
+                : (isEn ? "PRO (10mm Wire Rope / Max Span 15m / 5 users max)" : "PRO (Câble 10mm / Portée max 15m / 5 utilisateurs max)");
         }
         if (optXtreme) {
             optXtreme.textContent = isUS
-                ? (isEn ? "XTREME (Overhead / Tall posts | 32.8 to 183.7 ft | 3 users)" : "XTREME (Overhead / Poteaux hauts | 32.8 à 183.7 ft | 3 pers.)")
-                : (isEn ? "XTREME (Overhead / Tall posts | 10 to 56 m | 3 users)" : "XTREME (Overhead / Poteaux hauts | 10 à 56m | 3 pers.)");
+                ? (isEn ? "XTREME (10mm Wire Rope / Single span max 180 ft / 3 users max)" : "XTREME (Câble 10mm / Portée unique max 180 ft / 3 utilisateurs max)")
+                : (isEn ? "XTREME (10mm Wire Rope / Single span max 56m / 3 users max)" : "XTREME (Câble 10mm / Portée unique max 56m / 3 utilisateurs max)");
         }
     }
 
