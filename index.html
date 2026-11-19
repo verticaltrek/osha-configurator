@@ -45,10 +45,9 @@
     <section id="home-screen" class="screen active">
         <div class="home-glass-card">
             <h1 class="logo-title">HOOKT</h1>
-            <p id="home-subtitle" class="home-subtitle">Configurateur Intelligent de Lignes de Vie pour Toitures</p>
+            <p id="home-subtitle" class="home-subtitle">Configurateur de Lignes de Vie</p>
             <p class="home-description" id="home-description">
-                Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (EN 795-C,
-                OSHA) pour les systèmes HOOKT Core, Pro et Xtreme.
+                Pour les systèmes HOOKT Core, Pro et Xtreme.
             </p>
 
             <button type="button" id="start-config-btn" class="btn btn-primary btn-hero" onclick="openConfigModal()">
@@ -171,14 +170,14 @@
                             :</label>
                         <select id="select-arrest-load-mode" class="select-custom">
                             <option value="lump_sum" selected>Masse Globale (Lump Sum : M × F)</option>
+                            <option value="custom">Saisie Forfaitaire Libre (Ingénieur)</option>
                         </select>
                     </div>
 
                     <div class="form-group" id="group-arrest-load-val">
-                        <label id="lbl-arrest-load-val" for="input-arrest-load-val">Valeur Charge d'arrêt (kN) :</label>
+                        <label id="lbl-arrest-load-val" for="input-arrest-load-val">Charge d'arrêt (1 utilisateur) (kN) :</label>
                         <div class="input-with-unit">
-                            <input type="number" id="input-arrest-load-val" min="0.1" max="10000" value="6.0" step="any"
-                                readonly style="background:#f8fafc; cursor:default;">
+                            <input type="number" id="input-arrest-load-val" min="0.1" max="10000" value="6.0" step="any">
                             <span class="unit" id="unit-arrest-load">kN</span>
                         </div>
                         <small id="hint-arrest-load"
@@ -348,7 +347,7 @@
                     <div class="form-group">
                         <label id="lbl-line-to-edge" for="input-line-to-edge">Distance Ligne / Bord de Toit :</label>
                         <div class="input-with-unit">
-                            <input type="number" id="input-line-to-edge" min="0.1" max="50.0" value="2.0" step="any">
+                            <input type="number" id="input-line-to-edge" min="0" max="50.0" value="2.0" step="any">
                             <span class="unit" id="unit-line-to-edge">m</span>
                         </div>
                     </div>
@@ -663,7 +662,7 @@
                             <div style="display:flex; gap: 8px; align-items:center;">
                                 <div class="input-with-unit" style="flex:1;">
                                     <input type="number" id="input-srl-retracted-length" class="input-text-custom"
-                                        step="any" min="0" max="100.0" value="0"
+                                        step="any" min="0" max="100.0" value="" placeholder="Saisir la longueur..."
                                         style="padding:4px 8px; height:32px; font-size:0.85rem; width:100%;">
                                     <select id="select-retracted-length-unit"
                                         style="height:32px; border:none; background:transparent; font-weight:600; font-size:0.8rem; cursor:pointer; padding-right:4px;">
@@ -704,7 +703,7 @@
                             <div style="display:flex; gap: 8px; align-items:center;">
                                 <div class="input-with-unit" style="flex:1;">
                                     <input type="number" id="input-srl-mad" class="input-text-custom" step="any" min="0"
-                                        max="100.0" value="0"
+                                        max="100.0" value="" placeholder="Saisir la MAD..."
                                         style="padding:4px 8px; height:32px; font-size:0.85rem; width:100%;">
                                     <select id="select-mad-unit"
                                         style="height:32px; border:none; background:transparent; font-weight:600; font-size:0.8rem; cursor:pointer; padding-right:4px;">
@@ -767,158 +766,6 @@
                         <div id="srl-alert-warning" class="srl-alert-box" style="display: none;">
                             <i class="fa-solid fa-triangle-exclamation"></i>
                             <div id="srl-alert-text">Avertissement SRL</div>
-                        </div>
-                    </div>
-
-                    <!-- Node & Span Inspector Card (shown when an anchor node or span is selected) -->
-                    <div id="node-inspector-card" class="control-card inspector-card hidden">
-                        <div
-                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                            <h3 class="card-title" style="margin:0;"><i class="fa-solid fa-circle-dot"
-                                    style="color:#0284c7;"></i> <span id="node-inspector-title">INSPECTEUR & ÉDITION
-                                    3D</span></h3>
-                            <button type="button" class="btn-table-icon" id="btn-close-inspector" title="Fermer"><i
-                                    class="fa-solid fa-xmark"></i></button>
-                        </div>
-                        <div class="inspector-content">
-                            <div class="readout-row">
-                                <span class="row-label" id="lbl-node-id">Élément sélectionné :</span>
-                                <span class="row-val" id="node-id-val">#1</span>
-                            </div>
-                            <div class="readout-row">
-                                <span class="row-label" id="lbl-node-coords">Coordonnées (X, Y, Z) :</span>
-                                <span class="row-val" id="node-coords-val">X: 0.0m, Y: 0.0m, Z: 0.0m</span>
-                            </div>
-
-                            <!-- Direct Geometry Editing for selected Span/Anchor -->
-                            <div id="inspector-geom-fields"
-                                style="background:#f8fafc; padding:10px; border-radius:6px; border:1px solid #e2e8f0; margin-top:8px;">
-                                <div class="form-group" id="group-insp-length">
-                                    <label for="insp-length-val" style="font-size:0.78rem; font-weight:600;"><i
-                                            class="fa-solid fa-ruler-horizontal"></i> Longueur portée (<span
-                                            id="unit-dist-insp">m</span>) :</label>
-                                    <input type="number" id="insp-length-val" class="input-text-custom" step="any"
-                                        min="0.1" style="padding:4px 8px; height:30px; font-size:0.85rem;">
-                                </div>
-                                <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap:6px; margin-top:6px;">
-                                    <div class="form-group" id="group-insp-bend">
-                                        <label for="insp-bend-val" style="font-size:0.78rem; font-weight:600;"><i
-                                                class="fa-solid fa-turn-up"></i> Coude (°) :</label>
-                                        <input type="number" id="insp-bend-val" class="input-text-custom" step="any"
-                                            min="-180" max="180"
-                                            style="padding:4px 8px; height:30px; font-size:0.85rem;">
-                                    </div>
-                                    <div class="form-group" id="group-insp-slope">
-                                        <label for="insp-slope-val" style="font-size:0.78rem; font-weight:600;"><i
-                                                class="fa-solid fa-chart-line"></i> Pente (max 75°) :</label>
-                                        <input type="number" id="insp-slope-val" class="input-text-custom" step="any"
-                                            min="-75" max="75" style="padding:4px 8px; height:30px; font-size:0.85rem;">
-                                    </div>
-                                </div>
-                                <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
-                                    <button type="button" id="btn-insp-set-fall" class="btn btn-secondary btn-sm"
-                                        style="flex:1;" title="Activer comme portée de chute pour le calcul d'effort">
-                                        <i class="fa-solid fa-crosshairs" style="color:#ef4444;"></i> <span
-                                            id="btn-insp-fall-text">Portée de chute</span>
-                                    </button>
-                                    <button type="button" id="btn-insp-split" class="btn btn-secondary btn-sm"
-                                        title="Couper cette portée en deux">
-                                        <i class="fa-solid fa-scissors"></i> Scinder
-                                    </button>
-                                    <button type="button" id="btn-insp-insert-after" class="btn btn-secondary btn-sm"
-                                        title="Insérer une portée après">
-                                        <i class="fa-solid fa-plus"></i> Insérer
-                                    </button>
-                                </div>
-                                <!-- X-Cones field for Sloped Spans (Spec V2 — 08 / Prompt 14) -->
-                                <div class="form-group" id="group-insp-xcones" style="margin-top:6px;">
-                                    <label for="insp-xcones-val" style="font-size:0.78rem; font-weight:600;"><i
-                                            class="fa-solid fa-traffic-cone" style="color:#f59e0b;"></i> X-Cones (pente
-                                        uniquement) :</label>
-                                    <div style="display:flex; gap:6px; align-items:center;">
-                                        <input type="number" id="insp-xcones-val" class="input-text-custom" min="0"
-                                            max="50" step="1" value="0"
-                                            style="padding:4px 8px; height:30px; font-size:0.85rem; width:70px;">
-                                        <button type="button" id="btn-add-xcone" class="btn btn-secondary btn-sm"
-                                            style="font-size:0.75rem; height:30px; white-space:nowrap;">
-                                            <i class="fa-solid fa-plus"></i> <span
-                                                id="btn-add-xcone-text">Ajouter</span>
-                                        </button>
-                                    </div>
-                                </div>
-                                <!-- X-Matrix button for Intermediate Anchors (Spec V2 — 08 / Prompt 14) -->
-                                <div id="group-insp-xmatrix" style="margin-top:6px;">
-                                    <button type="button" id="btn-insp-toggle-xmatrix" class="btn btn-secondary btn-sm"
-                                        style="width:100%; font-size:0.75rem; height:30px;">
-                                        <i class="fa-solid fa-plus-minus"></i> <span id="btn-insp-xmatrix-text">Ajouter
-                                            une X-Matrix</span>
-                                    </button>
-                                    <div id="insp-xmatrix-branches-panel"
-                                        style="display:none; margin-top:8px; padding:8px; background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.25); border-radius:6px;">
-                                        <div
-                                            style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                                            <span style="font-size:0.78rem; font-weight:700; color:#1e3a8a;">
-                                                <i class="fa-solid fa-diagram-project" style="color:#2563eb;"></i>
-                                                <span id="lbl-insp-xmat-branches">Multi-directions (0 à 2) :</span>
-                                            </span>
-                                            <span id="insp-xmat-branch-count" class="badge-tag-id"
-                                                style="background:#dbeafe; color:#1e40af; font-size:0.72rem; padding:1px 6px;">0/2</span>
-                                        </div>
-                                        <div id="insp-xmatrix-branches-list"
-                                            style="display:flex; flex-direction:column; gap:6px;">
-                                            <!-- Dynamically populated branch rows -->
-                                        </div>
-                                        <button type="button" id="btn-add-xmatrix-branch"
-                                            class="btn btn-secondary btn-sm"
-                                            style="width:100%; margin-top:6px; font-size:0.75rem; height:28px;">
-                                            <i class="fa-solid fa-plus"></i> <span id="btn-add-xmat-branch-text">Ajouter
-                                                une branche</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-group margin-top-sm" id="group-node-role">
-                                <label id="lbl-node-role" for="node-type-select">Rôle du Potelet :</label>
-                                <select id="node-type-select" class="select-custom">
-                                    <option value="extremite">Ancrage d'Extrémité (avec Absorbeur)</option>
-                                    <option value="intermediaire">Potelet Intermédiaire</option>
-                                    <option value="x_matrix">Platine X-MATRIX (Jonction Multi-Directionnelle)</option>
-                                    <option value="angle">Potelet d'Angle</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group margin-top-sm" id="group-node-comp">
-                                <label id="lbl-node-comp" for="node-comp-select">Modèle 3D HOOKT Assigné :</label>
-                                <select id="node-comp-select" class="select-custom">
-                                    <!-- Populated dynamically -->
-                                </select>
-                            </div>
-
-                            <div class="form-group margin-top-sm" id="group-node-rot">
-                                <label id="lbl-node-rot" for="node-rot-slider"><i class="fa-solid fa-arrows-rotate"></i>
-                                    <span id="lbl-node-rot-text">Orientation 3D :</span>
-                                    <span id="node-rot-val" class="row-val">0°</span></label>
-                                <input type="range" id="node-rot-slider" min="0" max="360" value="0" step="5"
-                                    class="select-custom">
-                                <div class="rot-quick-btns margin-top-sm">
-                                    <button type="button" id="btn-rot-align-line" class="btn btn-secondary btn-sm"
-                                        title="Aligner au câble">
-                                        <i class="fa-solid fa-compass"></i> <span id="btn-align-text">Aligner
-                                            Câble</span>
-                                    </button>
-                                    <button type="button" id="btn-rot-90" class="btn btn-secondary btn-sm"
-                                        title="Tourner +90°">
-                                        <i class="fa-solid fa-rotate-right"></i> +90°
-                                    </button>
-                                </div>
-                            </div>
-
-                            <button type="button" id="btn-delete-node"
-                                class="btn btn-secondary btn-full btn-sm margin-top-sm btn-danger-hover">
-                                <i class="fa-solid fa-trash-can"></i> <span id="btn-delete-text">Supprimer ce Potelet /
-                                    Portée</span>
-                            </button>
                         </div>
                     </div>
 
@@ -1064,38 +911,65 @@
                                 <div id="corner-forces-container" class="corner-forces-container"
                                     style="display:none !important;"></div>
 
-                                <!-- Spec V2 - 04 & 05: Total Fall Clearance Breakdown -->
+                                <!-- Spec V2 — 18: Total Fall Clearance Breakdown (Poster 18/07/25) -->
                                 <div id="clearance-breakdown-box" class="clearance-breakdown-box">
                                     <h4 class="side-title" style="margin-bottom:6px; color:#15803d;"><i
                                             class="fa-solid fa-shield-halved"></i> <span
                                             id="lbl-clearance-title">Dégagement de Chute Requis</span></h4>
-                                    <div class="readout-row" style="font-size:0.75rem;">
-                                        <span id="lbl-clr-defl">Flèche sous charge :</span>
-                                        <span id="clr-val-defl">-- m</span>
+                                    <!-- Spec V2 — 18 §5: Active Case Banner -->
+                                    <div id="row-clr-case-banner"
+                                        style="font-size:0.75rem; font-weight:700; color:#1e293b; background:#f1f5f9; padding:4px 8px; border-radius:4px; margin-bottom:6px; border-left:3px solid #2563eb;">
+                                        <span id="clr-case-name">SRL – HLL overhead – debout</span>
                                     </div>
-                                    <div class="readout-row" id="row-clr-retracted" style="font-size:0.75rem;">
-                                        <span id="lbl-clr-retracted">Longueur rétractée :</span>
-                                        <span id="clr-val-retracted">0.60 m (2.0 ft)</span>
-                                    </div>
-                                    <div class="readout-row" style="font-size:0.75rem;">
-                                        <span id="lbl-clr-mad">Arrêt SRL (FAD) :</span>
-                                        <span id="clr-val-mad">-- m</span>
-                                    </div>
-                                    <div class="readout-row" id="row-clr-edge" style="font-size:0.75rem;">
-                                        <span id="lbl-clr-edge">Distance ligne / bord :</span>
-                                        <span id="clr-val-edge">-- m</span>
-                                    </div>
-                                    <div class="readout-row" id="row-clr-body" style="font-size:0.75rem;">
-                                        <span id="lbl-clr-body">Hauteur Anneau D :</span>
-                                        <span id="clr-val-body">1.50 m (4.9 ft)</span>
-                                    </div>
-                                    <div class="readout-row" style="font-size:0.75rem;">
-                                        <span id="lbl-clr-margin">Marge de sécurité :</span>
-                                        <span id="clr-val-margin">1.00 m (3.3 ft)</span>
+                                    <!-- Dynamic Terms Container (Exact formula order for active case) -->
+                                    <div id="clr-terms-container">
+                                        <div class="readout-row" id="row-clr-defl" style="font-size:0.75rem;">
+                                            <span id="lbl-clr-defl">Flèche sous charge :</span>
+                                            <span id="clr-val-defl">-- m</span>
+                                        </div>
+                                        <div class="readout-row" id="row-clr-retracted"
+                                            style="font-size:0.75rem; display:none;">
+                                            <span id="lbl-clr-retracted">Longueur rétractée :</span>
+                                            <span id="clr-val-retracted">0.60 m</span>
+                                        </div>
+                                        <div class="readout-row" id="row-clr-mad" style="font-size:0.75rem;">
+                                            <span id="lbl-clr-mad">Arrêt SRL (MAD) :</span>
+                                            <span id="clr-val-mad">-- m</span>
+                                        </div>
+                                        <div class="readout-row" id="row-clr-stretch" style="font-size:0.75rem;">
+                                            <span id="lbl-clr-stretch">Étirement harnais / corps :</span>
+                                            <span id="clr-val-stretch">0.31 m (1.0 ft)</span>
+                                        </div>
+                                        <div class="readout-row" id="row-clr-kneel"
+                                            style="font-size:0.75rem; display:none;">
+                                            <span id="lbl-clr-kneel">Ajout position à genoux :</span>
+                                            <span id="clr-val-kneel">0.91 m (3.0 ft)</span>
+                                        </div>
+                                        <div class="readout-row" id="row-clr-body"
+                                            style="font-size:0.75rem; display:none;">
+                                            <span id="lbl-clr-body">Hauteur Anneau D :</span>
+                                            <span id="clr-val-body">1.50 m (4.9 ft)</span>
+                                        </div>
+                                        <div class="readout-row" id="row-clr-margin" style="font-size:0.75rem;">
+                                            <span id="lbl-clr-margin">Marge de sécurité :</span>
+                                            <span id="clr-val-margin">0.61 m (2.0 ft)</span>
+                                        </div>
+                                        <div class="readout-row" id="row-clr-edge"
+                                            style="font-size:0.75rem; display:none;">
+                                            <span id="lbl-clr-edge">Distance ligne – rebord :</span>
+                                            <span id="clr-val-edge" style="color:#dc2626;">-- m</span>
+                                        </div>
                                     </div>
                                     <div class="clearance-total-row">
                                         <span id="lbl-clearance-total">Dégagement Total :</span>
                                         <span id="val-total-clearance">-- m</span>
+                                    </div>
+                                    <!-- Non-blocking Suspicious Low Warning (Spec V2 — 18 §3.3) -->
+                                    <div id="clr-suspicious-warning"
+                                        style="display:none; margin-top:6px; font-size:0.72rem; color:#b45309; background:#fffbeb; padding:6px 8px; border-radius:4px; border:1px solid #fde68a; line-height:1.3;">
+                                        <i class="fa-solid fa-circle-info" style="color:#d97706; margin-right:4px;"></i>
+                                        <span id="clr-suspicious-warning-text">Valeur suspecte : Dégagement total
+                                            inférieur à étirement + marge.</span>
                                     </div>
                                     <div id="clearance-wws-warning"
                                         style="display:none; margin-top:8px; font-size:0.75rem; color:#b45309; background:#fffbeb; padding:8px 10px; border-radius:6px; border:1px solid #fde68a; line-height:1.35;">

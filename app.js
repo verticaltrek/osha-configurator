@@ -42,6 +42,439 @@ function getEffectiveDRingHeight(bodyPosition) {
 }
 if (typeof window !== "undefined") window.getEffectiveDRingHeight = getEffectiveDRingHeight;
 
+// ==========================================
+// MODULE : CALCUL DU DÉGAGEMENT TOTAL DE CHUTE HLL (Spec V2 — 18)
+// Réf. poster « Fall Clearance – Example Draft » du 18/07/25
+// Remplace le calcul de V2_05 pour la ligne de vie horizontale (HLL)
+// ==========================================
+const FALL_CLEARANCE_CONSTANTS = {
+    STRETCH_OUT_FT: 1.0,
+    STRETCH_OUT_M: 0.305,        // 1 ft (0.305 m) - Étirement : harnais, glissement anneau D, travailleur
+    CLEARANCE_MARGIN_FT: 2.0,
+    CLEARANCE_MARGIN_M: 0.610,    // 2 ft (0.610 m) - Marge de sécurité fixe poster
+    KNEELING_ADD_FT: 3.0,
+    KNEELING_ADD_M: 0.914,        // 3 ft (0.914 m) - Ajout position à genoux
+    D_RING_HEIGHT_DEFAULT_FT: 5.0,
+    D_RING_HEIGHT_DEFAULT_M: 1.50 // 60 po (1.50 m) - Hauteur initiale anneau D
+};
+const M_TO_FT_FC = 3.2808398950131235;
+const FT_TO_M_FC = 1 / 3.2808398950131235;
+if (typeof window !== "undefined") {
+    window.FALL_CLEARANCE_CONSTANTS = FALL_CLEARANCE_CONSTANTS;
+}
+
+const FallClearanceModule = {
+    CONSTANTS: FALL_CLEARANCE_CONSTANTS,
+
+    getElevationCategory(stateObj) {
+        const st = stateObj || (typeof state !== "undefined" ? state : {});
+        const preset = st.hllElevationPreset || "knee";
+        const elev = (typeof st.hllElevation === "number") ? st.hllElevation : parseFloat(st.hllElevation || 0.45);
+        if (preset === "overhead" || (preset === "custom" && elev > 1.65)) {
+            return "overhead";
+        }
+        if (preset === "d_ring" || (preset === "custom" && elev >= 1.35 && elev <= 1.65)) {
+            return "d_ring";
+        }
+        return "knee"; // sous l'anneau D
+    },
+
+    compute(stateObj, overrideDeflectionM = null) {
+        const st = stateObj || (typeof state !== "undefined" ? state : {});
+        const isImperial = (st.unitSystem === "imperial" || st.unitSystem === "us");
+        const l = (parseInt(st.lang) === 1 || parseInt(st.lang) === 2) ? parseInt(st.lang) : 0;
+        const isEn = (l === 1);
+        const isEs = (l === 2);
+
+        const isLanyard = (st.connectingDevice === "lanyard" || st.connectingDevice === "custom_lanyard");
+        const elevCat = this.getElevationCategory(st);
+        const bodyPos = st.bodyPosition || "standing";
+
+        // Constantes selon le système d'unités
+        const stretchOut = isImperial ? FALL_CLEARANCE_CONSTANTS.STRETCH_OUT_FT : FALL_CLEARANCE_CONSTANTS.STRETCH_OUT_M;
+        const margin = isImperial ? FALL_CLEARANCE_CONSTANTS.CLEARANCE_MARGIN_FT : FALL_CLEARANCE_CONSTANTS.CLEARANCE_MARGIN_M;
+        const kneel = isImperial ? FALL_CLEARANCE_CONSTANTS.KNEELING_ADD_FT : FALL_CLEARANCE_CONSTANTS.KNEELING_ADD_M;
+        const dRing = isImperial ? FALL_CLEARANCE_CONSTANTS.D_RING_HEIGHT_DEFAULT_FT : FALL_CLEARANCE_CONSTANTS.D_RING_HEIGHT_DEFAULT_M;
+
+        const toFtRatio = (typeof UnitsModule !== "undefined" && UnitsModule.M_TO_FT) ? UnitsModule.M_TO_FT : M_TO_FT_FC;
+        const toMRatio = (typeof UnitsModule !== "undefined" && UnitsModule.FT_TO_M) ? UnitsModule.FT_TO_M : FT_TO_M_FC;
+
+        // Flèche HLL (en m et unité courante)
+        let deflM = overrideDeflectionM;
+        if (deflM === null || deflM === undefined) {
+            if (typeof st.deflectionM === "number") {
+                deflM = st.deflectionM;
+            } else if (typeof st.currentDeflectionMm === "number") {
+                deflM = st.currentDeflectionMm / 1000.0;
+            } else {
+                deflM = null;
+            }
+        }
+        const deflVal = (deflM !== null && !isNaN(deflM))
+            ? (isImperial ? (deflM * toFtRatio) : deflM)
+            : null;
+
+        // Arrêt SRL / Absorbeur (MAD)
+        const rawMad = (typeof st.madM === "number" && st.madM > 0)
+            ? st.madM
+            : ((typeof st.customMad === "number" && st.customMad > 0) ? st.customMad : null);
+        const madVal = (rawMad !== null && !isNaN(rawMad))
+            ? (isImperial ? (rawMad * toFtRatio) : rawMad)
+            : null;
+
+        // Longueur rétractée ou de longe
+        const srlCat = (st.connectingDevice === "srd" && st.selectedSrlId && typeof SRL_CATALOG !== "undefined")
+            ? SRL_CATALOG[st.selectedSrlId]
+            : null;
+        let rawRetracted = null;
+        if (typeof st.retractedLengthM === "number" && st.retractedLengthM > 0) {
+            rawRetracted = st.retractedLengthM;
+        } else if (st.connectingDevice === "srd" && srlCat) {
+            rawRetracted = srlCat.retracted_length_m || srlCat.retracted_len || 0.60;
+        } else if (st.connectingDevice === "custom_srd" || st.connectingDevice === "custom_lanyard") {
+            rawRetracted = st.customDeviceLengthM || (isLanyard ? 1.80 : 0.60);
+        } else if (isLanyard) {
+            rawRetracted = 1.80;
+        } else {
+            rawRetracted = 0.60;
+        }
+        const retractedVal = (rawRetracted !== null && !isNaN(rawRetracted))
+            ? (isImperial ? (rawRetracted * toFtRatio) : rawRetracted)
+            : null;
+
+        // Distance ligne-rebord du toit (§3.3)
+        // A considérer dans la formule SEULEMENT en facteur de chute 2 / quand la ligne est au niveau des pieds ou genou
+        const fallFactor = (typeof computeFallFactorFromElevation === "function")
+            ? computeFallFactorFromElevation(st.hllElevationPreset, st.hllElevation, st.bodyPosition)
+            : (elevCat === "knee" ? 2 : (elevCat === "d_ring" ? 1 : 0));
+        const isFactor2OrKnee = (fallFactor === 2 || elevCat === "knee" || st.hllElevationPreset === "knee");
+        const rawEdge = (isFactor2OrKnee && typeof st.line_to_edge === "number" && !isNaN(st.line_to_edge) && st.line_to_edge > 0)
+            ? st.line_to_edge
+            : 0;
+        const edgeVal = isImperial ? (rawEdge * toFtRatio) : rawEdge;
+
+        // Helpers de formatage
+        const fmtLen = (val) => {
+            if (val === null || val === undefined || isNaN(val)) {
+                return isEn ? "Data to be provided" : (isEs ? "Dato a especificar" : "Donnée à renseigner");
+            }
+            return isImperial ? `${val.toFixed(2)} ft` : `${val.toFixed(2)} m`;
+        };
+        const fmtDefl = (val) => {
+            if (val === null || val === undefined || isNaN(val)) {
+                return isEn ? "Data to be provided" : (isEs ? "Dato a especificar" : "Donnée à renseigner");
+            }
+            return isImperial ? `${val.toFixed(2)} ft` : `${val.toFixed(2)} m`;
+        };
+
+        let caseKey = "";
+        let caseName = "";
+        let formulaStr = "";
+        let terms = [];
+
+        if (isLanyard) {
+            // ==========================================
+            // §3.2 Longe à absorbeur d'énergie sur HLL
+            // Position du corps : AUCUN EFFET quelle que soit l'élévation
+            // Formule : LANYARD_LENGTH + MAD_absorbeur + STRETCH_OUT + D_RING + MARGIN + HLL_DEFLECTION
+            // ==========================================
+            caseKey = "lanyard";
+            caseName = isEn
+                ? "Energy Absorbing Lanyard – HLL (all elevations)"
+                : (isEs ? "Elemento de amarre con absorbedor – HLL (todas las elevaciones)" : "Longe à absorbeur – HLL (toutes élévations)");
+            formulaStr = isEn
+                ? "Total Required Fall Clearance = Lanyard Length + Absorber Arrest (MAD) + Stretch-Out + D-Ring Height + Safety Margin + Cable Deflection" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                : (isEs
+                    ? "Espacio Libre Total Requerido = Longitud Elemento + Parada Absorbedor (MAD) + Estiramiento + Altura Anillo D + Margen Seguridad + Flecha Cable" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                    : "Dégagement Total Requis = Longueur Longe + Arrêt Absorbeur (MAD) + Étirement + Hauteur Anneau D + Marge Sécurité + Flèche Câble" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+            terms = [
+                { id: "retracted", key: "retracted", label: isEn ? "Lanyard Length" : (isEs ? "Longitud del Elemento de Amarre" : "Longueur de la Longe"), ref: isEn ? "Nominal lanyard length" : "Spécification nominale longe", value: retractedVal, display: fmtLen(retractedVal), effectSign: "+", effectStr: `+ ${fmtLen(retractedVal)}` },
+                { id: "mad", key: "mad", label: isEn ? "Absorber Arrest (MAD)" : (isEs ? "Parada Absorbedor (MAD)" : "Arrêt Absorbeur (MAD)"), ref: "ANSI Z359.13 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                { id: "body", key: "body", label: isEn ? "Harness D-Ring Height" : (isEs ? "Altura Anillo D" : "Hauteur initiale anneau D"), ref: isEn ? "Standing worker reference (5 ft)" : "Hauteur travailleur debout (1,50 m)", value: dRing, display: fmtLen(dRing), effectSign: "+", effectStr: `+ ${fmtLen(dRing)}` },
+                { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` },
+                { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` }
+            ];
+        } else {
+            // ==========================================
+            // §3.1 SRL sur HLL
+            // ==========================================
+            if (elevCat === "overhead") {
+                if (bodyPos === "kneeling") {
+                    // Overhead - À genoux : HLL_DEFLECTION + MAD + STRETCH_OUT + KNEEL + MARGIN
+                    caseKey = "srl_overhead_kneeling";
+                    caseName = isEn ? "SRL – HLL overhead – kneeling" : (isEs ? "SRL – HLL overhead – de rodillas" : "SRL – HLL overhead – à genoux");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Stretch-Out + Kneeling Add + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Flecha Cable + Parada SRL (MAD) + Estiramiento + Añadido de Rodillas + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Étirement + Ajout à Genoux + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "kneel", key: "kneel", label: isEn ? "Kneeling Position Addition" : (isEs ? "Añadido por Posición de Rodillas" : "Ajout position à genoux"), ref: isEn ? "Kneeling worker drop (3 ft)" : "Baisse centre de gravité à genoux (3 ft / 0,914 m)", value: kneel, display: fmtLen(kneel), effectSign: "+", effectStr: `+ ${fmtLen(kneel)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                } else if (bodyPos === "lying") {
+                    // Overhead - Allongé : D_RING ajouté (§3.4)
+                    caseKey = "srl_overhead_lying";
+                    caseName = isEn ? "SRL – HLL overhead – lying down" : (isEs ? "SRL – HLL overhead – tumbado" : "SRL – HLL overhead – allongé au sol");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Stretch-Out + D-Ring Height + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Flecha Cable + Parada SRL (MAD) + Estiramiento + Altura Anillo D + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Étirement + Hauteur Anneau D + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "body", key: "body", label: isEn ? "Harness D-Ring Height" : (isEs ? "Altura Anillo D" : "Hauteur initiale anneau D"), ref: isEn ? "Lying worker drop offset (5 ft)" : "Travailleur allongé au sol (1,50 m)", value: dRing, display: fmtLen(dRing), effectSign: "+", effectStr: `+ ${fmtLen(dRing)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                } else {
+                    // Overhead - Debout : HLL_DEFLECTION + MAD + STRETCH_OUT + MARGIN
+                    caseKey = "srl_overhead_standing";
+                    caseName = isEn ? "SRL – HLL overhead – standing" : (isEs ? "SRL – HLL overhead – de pie" : "SRL – HLL overhead – debout");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Stretch-Out + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Flecha Cable + Parada SRL (MAD) + Estiramiento + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Étirement + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                }
+            } else if (elevCat === "d_ring") {
+                if (bodyPos === "kneeling") {
+                    // À l'anneau D - À genoux (§3.1 & Criterion 6) : applique le calcul overhead à genoux
+                    caseKey = "srl_dring_kneeling";
+                    caseName = isEn
+                        ? "SRL – HLL at D-ring – kneeling (overhead formula)"
+                        : (isEs ? "SRL – HLL al anillo D – de rodillas (cálculo overhead)" : "SRL – HLL à l'anneau D – à genoux (calcul overhead)");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Stretch-Out + Kneeling Add + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Flecha Cable + Parada SRL (MAD) + Estiramiento + Añadido de Rodillas + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Étirement + Ajout à Genoux + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "kneel", key: "kneel", label: isEn ? "Kneeling Position Addition" : (isEs ? "Añadido por Posición de Rodillas" : "Ajout position à genoux"), ref: isEn ? "Kneeling worker drop (3 ft)" : "Baisse centre de gravité à genoux (3 ft / 0,914 m)", value: kneel, display: fmtLen(kneel), effectSign: "+", effectStr: `+ ${fmtLen(kneel)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                } else if (bodyPos === "lying") {
+                    // À l'anneau D - Allongé : RETRACTED + DEFL + MAD + STRETCH + D_RING + MARGIN
+                    caseKey = "srl_dring_lying";
+                    caseName = isEn ? "SRL – HLL at D-ring – lying down" : (isEs ? "SRL – HLL al anillo D – tumbado" : "SRL – HLL à l'anneau D – allongé au sol");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Retracted Length + Cable Deflection + SRL Arrest (MAD) + Stretch-Out + D-Ring Height + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Longitud Retraída + Flecha Cable + Parada SRL (MAD) + Estiramiento + Altura Anillo D + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Longueur Rétractée + Flèche Câble + Arrêt SRL (MAD) + Étirement + Hauteur Anneau D + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "retracted", key: "retracted", label: isEn ? "SRL Retracted Length" : (isEs ? "Longitud Retraída SRL" : "Longueur rétractée SRL"), ref: isEn ? "Nominal retracted cable length" : "Spécification fabricant câble rétracté", value: retractedVal, display: fmtLen(retractedVal), effectSign: "+", effectStr: `+ ${fmtLen(retractedVal)}` },
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "body", key: "body", label: isEn ? "Harness D-Ring Height" : (isEs ? "Altura Anillo D" : "Hauteur initiale anneau D"), ref: isEn ? "Lying worker drop offset (5 ft)" : "Travailleur allongé au sol (1,50 m)", value: dRing, display: fmtLen(dRing), effectSign: "+", effectStr: `+ ${fmtLen(dRing)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                } else {
+                    // À l'anneau D - Debout (§3.1 & Criterion 5) : RETRACTED + HLL_DEFLECTION + MAD + STRETCH_OUT + MARGIN
+                    caseKey = "srl_dring_standing";
+                    caseName = isEn ? "SRL – HLL at D-ring – standing" : (isEs ? "SRL – HLL al anillo D – de pie" : "SRL – HLL à l'anneau D – debout");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Retracted Length + Cable Deflection + SRL Arrest (MAD) + Stretch-Out + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Longitud Retraída + Flecha Cable + Parada SRL (MAD) + Estiramiento + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Longueur Rétractée + Flèche Câble + Arrêt SRL (MAD) + Étirement + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "retracted", key: "retracted", label: isEn ? "SRL Retracted Length" : (isEs ? "Longitud Retraída SRL" : "Longueur rétractée SRL"), ref: isEn ? "Nominal retracted cable length" : "Spécification fabricant câble rétracté", value: retractedVal, display: fmtLen(retractedVal), effectSign: "+", effectStr: `+ ${fmtLen(retractedVal)}` },
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                }
+            } else {
+                // Sous l'anneau D (genou / pieds) :
+                // La position du corps est prise en compte (Debout, À genoux, Allongé au sol)
+                if (bodyPos === "kneeling") {
+                    caseKey = "srl_knee_kneeling";
+                    caseName = isEn
+                        ? "SRL – HLL below D-ring – kneeling"
+                        : (isEs ? "SRL – HLL bajo el anillo D – de rodillas" : "SRL – HLL sous l'anneau D – à genoux");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Stretch-Out + D-Ring Height + Kneeling Add + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Flecha Cable + Parada SRL (MAD) + Estiramiento + Altura Anillo D + Añadido de Rodillas + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Étirement + Hauteur Anneau D + Ajout à Genoux + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "body", key: "body", label: isEn ? "Harness D-Ring Height" : (isEs ? "Altura Anillo D" : "Hauteur initiale anneau D"), ref: isEn ? "Base D-ring height (5 ft)" : "Hauteur standard anneau D (1,50 m)", value: dRing, display: fmtLen(dRing), effectSign: "+", effectStr: `+ ${fmtLen(dRing)}` },
+                        { id: "kneel", key: "kneel", label: isEn ? "Kneeling Position Addition" : (isEs ? "Añadido por Posición de Rodillas" : "Ajout position à genoux"), ref: isEn ? "Kneeling worker drop (3 ft)" : "Baisse centre de gravité à genoux (3 ft / 0,914 m)", value: kneel, display: fmtLen(kneel), effectSign: "+", effectStr: `+ ${fmtLen(kneel)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                } else if (bodyPos === "lying") {
+                    caseKey = "srl_knee_lying";
+                    caseName = isEn
+                        ? "SRL – HLL below D-ring – lying down"
+                        : (isEs ? "SRL – HLL bajo el anillo D – tumbado" : "SRL – HLL sous l'anneau D – allongé au sol");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Stretch-Out + D-Ring Height + Lying Offset + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Flecha Cable + Parada SRL (MAD) + Estiramiento + Altura Anillo D + Suplemento Tumbado + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Étirement + Hauteur Anneau D + Supplément Allongé + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "body", key: "body", label: isEn ? "Harness D-Ring Height" : (isEs ? "Altura Anillo D" : "Hauteur initiale anneau D"), ref: isEn ? "Base D-ring height (5 ft)" : "Hauteur standard anneau D (1,50 m)", value: dRing, display: fmtLen(dRing), effectSign: "+", effectStr: `+ ${fmtLen(dRing)}` },
+                        { id: "lying_add", key: "lying_add", label: isEn ? "Lying Down Addition" : (isEs ? "Añadido por Posición Tumbado" : "Supplément position allongé"), ref: isEn ? "Lying worker drop offset (5 ft)" : "Supplément travailleur allongé au sol (1,50 m)", value: dRing, display: fmtLen(dRing), effectSign: "+", effectStr: `+ ${fmtLen(dRing)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                } else {
+                    // Debout (par défaut)
+                    caseKey = "srl_knee_standing";
+                    caseName = isEn
+                        ? "SRL – HLL below D-ring – standing"
+                        : (isEs ? "SRL – HLL bajo el anillo D – de pie" : "SRL – HLL sous l'anneau D – debout");
+                    formulaStr = isEn
+                        ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Stretch-Out + D-Ring Height + Safety Margin" + (rawEdge > 0 ? " - Line-to-Edge Setback" : "")
+                        : (isEs
+                            ? "Espacio Libre Total Requerido = Flecha Cable + Parada SRL (MAD) + Estiramiento + Altura Anillo D + Margen Seguridad" + (rawEdge > 0 ? " - Retranqueo Línea/Borde" : "")
+                            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Étirement + Hauteur Anneau D + Marge Sécurité" + (rawEdge > 0 ? " - Recul Ligne/Bord" : ""));
+
+                    terms = [
+                        { id: "defl", key: "defl", label: isEn ? "Cable Dynamic Deflection (Sag)" : (isEs ? "Flecha Dinámica del Cable" : "Flèche sous charge (HLL)"), ref: isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable", value: deflVal, display: fmtDefl(deflVal), effectSign: "+", effectStr: `+ ${fmtDefl(deflVal)}` },
+                        { id: "mad", key: "mad", label: isEn ? "SRL Arrest (MAD)" : (isEs ? "Parada SRL (MAD)" : "Arrêt SRL (MAD)"), ref: "ANSI Z359.14 / OSHA 1926.502", value: madVal, display: fmtLen(madVal), effectSign: "+", effectStr: `+ ${fmtLen(madVal)}` },
+                        { id: "stretch", key: "stretch", label: isEn ? "Harness / Body Stretch-Out" : (isEs ? "Estiramiento Arnés / Cuerpo" : "Étirement harnais / corps"), ref: isEn ? "Harness & D-ring stretch (1 ft)" : "Harnais, glissement anneau D, travailleur (1 ft)", value: stretchOut, display: fmtLen(stretchOut), effectSign: "+", effectStr: `+ ${fmtLen(stretchOut)}` },
+                        { id: "body", key: "body", label: isEn ? "Harness D-Ring Height" : (isEs ? "Altura Anillo D" : "Hauteur initiale anneau D"), ref: isEn ? "Standing worker height (5 ft)" : "Travailleur debout (hauteur standard 1,50 m)", value: dRing, display: fmtLen(dRing), effectSign: "+", effectStr: `+ ${fmtLen(dRing)}` },
+                        { id: "margin", key: "margin", label: isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de sécurité"), ref: isEn ? "Regulatory buffer (2 ft)" : "Garde d'arrêt obligatoire poster (2 ft / 0,61 m)", value: margin, display: fmtLen(margin), effectSign: "+", effectStr: `+ ${fmtLen(margin)}` }
+                    ];
+                }
+            }
+        }
+
+        // Ajout du terme de recul au bord si rawEdge > 0 (§3.3 & Criterion 8)
+        if (rawEdge > 0) {
+            terms.push({
+                id: "edge",
+                key: "edge",
+                label: isEn ? "Line-to-Roof Edge Setback" : (isEs ? "Retranqueo Línea / Borde" : "Distance ligne – rebord du toit"),
+                ref: isEn ? "Edge setback deduction (fall delay)" : "Déduction géométrique (retardement basculement)",
+                value: -edgeVal,
+                display: `-${fmtLen(edgeVal)}`,
+                effectSign: "-",
+                effectStr: `- ${fmtLen(edgeVal)}`
+            });
+        }
+
+        // Vérification des données requises (donnée manquante = incomplet)
+        let isComplete = true;
+        let sum = 0;
+        for (const t of terms) {
+            if (t.value === null || t.value === undefined || isNaN(t.value)) {
+                isComplete = false;
+            } else {
+                sum += t.value;
+            }
+        }
+
+        let totalRequired = null;
+        let totalDisplay = "";
+        let isSuspiciousLow = false;
+
+        if (!isComplete) {
+            totalDisplay = isEn ? "Incomplete" : (isEs ? "Incompleto" : "Incomplet");
+        } else {
+            // Plancher à 0 (§3.3 & Criterion 8)
+            totalRequired = Math.max(0, sum);
+            totalDisplay = fmtLen(totalRequired);
+            // Alerte si total < étirement + marge (§3.3)
+            const minExpected = stretchOut + margin;
+            if (totalRequired < minExpected - 0.001) {
+                isSuspiciousLow = true;
+            }
+        }
+
+        const totalRequiredM = (totalRequired !== null)
+            ? (isImperial ? (totalRequired * toMRatio) : totalRequired)
+            : null;
+
+        return {
+            caseKey,
+            caseName,
+            formulaStr,
+            terms,
+            isComplete,
+            totalRequired,
+            totalRequiredM,
+            totalDisplay,
+            isSuspiciousLow,
+            unitSystem: isImperial ? "imperial" : "metric",
+            distUnit: isImperial ? "ft" : "m"
+        };
+    },
+
+    // Spec V2 — 18:
+    // Une distance ligne-rebord renseignée interdit la longe en cas de chute au bord.
+    // La position du corps (debout, à genoux, allongé) reste toujours sélectionnable par l'utilisateur.
+    syncEdgeRestrictions(stateObj) {
+        const st = stateObj || (typeof state !== "undefined" ? state : null);
+        if (!st) return;
+        const hasEdge = (typeof st.line_to_edge === "number" && !isNaN(st.line_to_edge) && st.line_to_edge > 0);
+
+        if (typeof document !== "undefined") {
+            const optKneel = document.querySelector("#select-body-pos option[value='kneeling']");
+            if (optKneel) {
+                optKneel.disabled = false;
+            }
+            const optLanyardMain = document.querySelector("#select-connecting-device option[value='lanyard']");
+            if (optLanyardMain) {
+                optLanyardMain.disabled = hasEdge;
+            }
+            const optLanyardSide = document.querySelector("#select-sidebar-connecting-device option[value='lanyard']");
+            if (optLanyardSide) {
+                optLanyardSide.disabled = hasEdge;
+            }
+        }
+
+        if (hasEdge) {
+            // Interdiction de la longe
+            if (st.connectingDevice === "lanyard" || st.connectingDevice === "custom_lanyard") {
+                st.connectingDevice = "srd";
+                if (typeof document !== "undefined") {
+                    const selDev = document.getElementById("select-connecting-device");
+                    if (selDev) selDev.value = "srd";
+                    const sideDev = document.getElementById("select-sidebar-connecting-device");
+                    if (sideDev) sideDev.value = "srd";
+                }
+            }
+        }
+    }
+};
+if (typeof window !== "undefined") {
+    window.FallClearanceModule = FallClearanceModule;
+}
+
+
 function computeFallFactorFromElevation(preset, elevationVal, bodyPosition) {
     // 1. Direct preset lookup via ELEVATION_TO_FALL_FACTOR (Acceptance Criteria 1 & 7)
     if (preset && typeof ELEVATION_TO_FALL_FACTOR !== "undefined" && (preset in ELEVATION_TO_FALL_FACTOR)) {
@@ -84,25 +517,30 @@ const ANCHOR_EFFORT_CONFIG = {
 
 // Spec V2 — 05: Resolved Corner Forces (Vector Math: R = T1*u1 + T2*u2)
 function calculateCornerEffort(bendNode, tensionInKn = 10.0, tensionOutKn = 10.0) {
-    const u1 = { x: bendNode.u1x !== undefined ? bendNode.u1x : -1, z: bendNode.u1z !== undefined ? bendNode.u1z : 0 };
-    const u2 = { x: bendNode.u2x !== undefined ? bendNode.u2x : 0, z: bendNode.u2z !== undefined ? bendNode.u2z : 1 };
-
-    const Rx = tensionInKn * u1.x + tensionOutKn * u2.x;
-    const Rz = tensionInKn * u1.z + tensionOutKn * u2.z;
-    const R_magnitude = Math.sqrt(Rx * Rx + Rz * Rz);
-
-    const bx = u1.x + u2.x;
-    const bz = u1.z + u2.z;
-    const b_len = Math.sqrt(bx * bx + bz * bz);
-
-    let angleDeg = 0;
-    if (b_len > 0.0001 && R_magnitude > 0.0001) {
-        const dot = (Rx * (bx / b_len) + Rz * (bz / b_len)) / R_magnitude;
-        angleDeg = Math.acos(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
-    }
-
     const angleTurnDeg = Math.abs(bendNode.bendAngleDeg !== undefined ? bendNode.bendAngleDeg : 90);
     const isOver40 = angleTurnDeg > 40;
+
+    let R_magnitude = 0;
+    let angleDeg = 0;
+
+    if (bendNode.u1x !== undefined && bendNode.u2x !== undefined) {
+        const u1 = { x: bendNode.u1x, z: bendNode.u1z !== undefined ? bendNode.u1z : 0 };
+        const u2 = { x: bendNode.u2x, z: bendNode.u2z !== undefined ? bendNode.u2z : 0 };
+        const Rx = tensionInKn * u1.x + tensionOutKn * u2.x;
+        const Rz = tensionInKn * u1.z + tensionOutKn * u2.z;
+        R_magnitude = Math.sqrt(Rx * Rx + Rz * Rz);
+        const bx = u1.x + u2.x;
+        const bz = u1.z + u2.z;
+        const b_len = Math.sqrt(bx * bx + bz * bz);
+        if (b_len > 0.0001 && R_magnitude > 0.0001) {
+            const dot = (Rx * (bx / b_len) + Rz * (bz / b_len)) / R_magnitude;
+            angleDeg = Math.acos(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
+        }
+    } else {
+        const rad = (angleTurnDeg * Math.PI) / 180;
+        const tAvg = (tensionInKn + tensionOutKn) / 2;
+        R_magnitude = 2 * tAvg * Math.sin(rad / 2);
+    }
 
     return {
         t1Kn: tensionInKn,
@@ -161,8 +599,8 @@ function generateAllAnchorsTable(spans, fallSpanIdx = 0, tensionMidKn = 12.0, pr
     const txtRoleFall = isEn ? "Fall span anchor" : (isEs ? "Anclaje del vano de caída" : "Ancrage de la portée de chute");
     const txtRemDirectMax = isEn ? "Under direct maximum tension" : (isEs ? "Bajo tensión máxima directa" : "Sous tension maximale directe");
     const txtRoleDirectAdj = isEn ? "Direct adjacent post" : (isEs ? "Poste adyacente directo" : "Potelet adjacent direct");
-    const txtRemRule1 = isEn ? "Rule 1 attenuation (K=0.495)" : (isEs ? "Atenuación Regla 1 (K=0.495)" : "Atténuation Règle 1 (K=0.495)");
-    const txtRoleAdjRule1 = isEn ? "Adjacent post (Rule 1)" : (isEs ? "Poste adyacente (Regla 1)" : "Potelet adjacent (Règle 1)");
+    const txtRemRule1 = "-";
+    const txtRoleAdjRule1 = isEn ? "Adjacent post" : (isEs ? "Poste adyacente" : "Potelet adjacent");
     const txtRoleOutsideWin = isEn ? "Intermediate post (outside window)" : (isEs ? "Poste intermedio (fuera de ventana)" : "Potelet intermédiaire hors fenêtre");
     const txtRemP0 = isEn ? "Cable tension P0" : (isEs ? "Tensión cable P0" : "Tension câble P0");
     const txtRemIntermWave = isEn ? "Intermediate wave" : (isEs ? "Onda intermedia" : "Onde intermédiaire");
@@ -187,11 +625,30 @@ function generateAllAnchorsTable(spans, fallSpanIdx = 0, tensionMidKn = 12.0, pr
     // Calcul des efforts physiques par portée (chaque pièce doublée prend l'effort de sa portée)
     const spanTensions = [];
     for (let s = 0; s < totalSpans; s++) {
+        const sp = spans ? spans[s] : null;
+        const spSlopeDeg = (sp && (sp.slopeDeg !== undefined || sp.slope_deg !== undefined))
+            ? (Math.abs(parseFloat(sp.slopeDeg !== undefined ? sp.slopeDeg : sp.slope_deg)) || 0)
+            : 0;
+        const isThisSloped = (spSlopeDeg >= 14.5) || Boolean(sp && sp.isSloped);
+
         if (s === fallSpanIdx) {
+            let leftV = parseFloat(tensionMidKn.toFixed(2));
+            let rightV = parseFloat(tensionMidKn.toFixed(2));
+            if (isThisSloped && typeof SlopedSystemConesModule !== "undefined") {
+                const targetSlope = spSlopeDeg >= 14.5 ? spSlopeDeg : 15;
+                const slRep = SlopedSystemConesModule.getFullScenarioReport(targetSlope, parseFloat(sp?.length) || 5, 20);
+                if (slRep && slRep.retainedMax) {
+                    const isDown = Boolean(sp && sp.direction === "down");
+                    const topVal = parseFloat(slRep.retainedMax.loadCellTopKn.toFixed(2));
+                    const bottomVal = parseFloat(slRep.retainedMax.loadCellBottomKn.toFixed(2));
+                    leftV = isDown ? topVal : bottomVal;
+                    rightV = isDown ? bottomVal : topVal;
+                }
+            }
             spanTensions.push({
                 isFall: true,
-                leftVal: parseFloat(tensionMidKn.toFixed(2)),
-                rightVal: parseFloat(tensionMidKn.toFixed(2)),
+                leftVal: leftV,
+                rightVal: rightV,
                 role: txtRoleFall,
                 type: "chute",
                 remark: txtRemDirectMax
@@ -505,7 +962,144 @@ const AnchorEffortDistributionModule = {
                 };
             }
 
-            // Repérer les coudes > 40°
+            const isClosedLoopLine = Boolean(appState && appState.closedLoop && (!spansArg || spansArg === appState.spans) && nbSpans >= 3);
+
+            if (isClosedLoopLine) {
+                // Boucle fermée (ex: Stade / Polygone fermé Config 5 & 6) : N portées et N sommets (A1 à AN) avec propagation cyclique des 6 points [A0, A1, A2, A3, A4, A5]
+                const isBendOver40Loop = [];
+                for (let i = 0; i < nbSpans; i++) {
+                    const prevIdx = (i - 1 + nbSpans) % nbSpans;
+                    const spPrev = effectiveSpans[prevIdx];
+                    const bDeg = spPrev ? Math.abs(parseFloat(spPrev.bendDeg || spPrev.bend_after_deg || (spPrev.bend90 ? 90 : 0)) || 0) : 0;
+                    isBendOver40Loop.push(bDeg > this.config.BEND_THRESHOLD_DEG);
+                }
+
+                // Pour chaque sommet i (0..nbSpans-1), calculer l'effort côté entrant (inVal) et côté sortant (outVal)
+                // La portée de chute fIdx relie le sommet vL = fIdx (côté sortant) au sommet vR = (fIdx + 1) % nbSpans (côté entrant)
+                const vL = fIdx;
+                const vR = (fIdx + 1) % nbSpans;
+
+                const points = [];
+                for (let i = 0; i < nbSpans; i++) {
+                    const ancNum = i + 1;
+                    const isDouble = isBendOver40Loop[i];
+
+                    // Distance en nombre de sommets à gauche de vL et à droite de vR
+                    const stepsLeftFromVL = (vL - i + nbSpans) % nbSpans;
+                    const stepsRightFromVR = (i - vR + nbSpans) % nbSpans;
+
+                    let inVal = p0;
+                    let outVal = p0;
+                    let isFallIn = false;
+                    let isFallOut = false;
+                    let isAttIn = false;
+                    let isAttOut = false;
+
+                    if (i === vL) {
+                        // Sommet gauche de la portée de chute S_{fIdx+1}
+                        outVal = res[1];
+                        isFallOut = true;
+                        inVal = isDouble ? (isBendOver40Loop[vL] ? Math.max(p0, parseFloat((res[1] * 0.5).toFixed(2))) : res[1]) : res[1];
+                    } else if (i === vR) {
+                        // Sommet droit de la portée de chute S_{fIdx+1}
+                        inVal = res[2];
+                        isFallIn = true;
+                        outVal = isDouble ? (isBendOver40Loop[vR] ? Math.max(p0, parseFloat((res[2] * 0.5).toFixed(2))) : res[2]) : res[2];
+                    } else if (stepsLeftFromVL === 1) {
+                        // 1er sommet à gauche de vL -> A0 (res[0])
+                        const bendsBefore = isBendOver40Loop[vL] ? 1 : 0;
+                        const vBefore = Math.max(p0, parseFloat((res[0] * Math.pow(0.5, bendsBefore)).toFixed(2)));
+                        outVal = vBefore;
+                        inVal = isDouble ? Math.max(p0, parseFloat((vBefore * 0.5).toFixed(2))) : vBefore;
+                        isAttIn = true;
+                        isAttOut = true;
+                    } else if (stepsRightFromVR >= 1 && stepsRightFromVR <= 3) {
+                        // 1er, 2ème ou 3ème sommet à droite de vR -> A3 (res[3]), A4 (res[4]), A5 (res[5])
+                        const baseR = (stepsRightFromVR === 1) ? res[3] : (stepsRightFromVR === 2 ? res[4] : res[5]);
+                        let bendsBefore = 0;
+                        for (let st = 0; st < stepsRightFromVR; st++) {
+                            const checkV = (vR + st) % nbSpans;
+                            if (isBendOver40Loop[checkV]) bendsBefore++;
+                        }
+                        const vBefore = Math.max(p0, parseFloat((baseR * Math.pow(0.5, bendsBefore)).toFixed(2)));
+                        inVal = vBefore;
+                        outVal = isDouble ? Math.max(p0, parseFloat((vBefore * 0.5).toFixed(2))) : vBefore;
+                        if (stepsRightFromVR === 3) {
+                            isAttIn = true;
+                            isAttOut = true;
+                        }
+                    }
+
+                    if (isDouble) {
+                        const remA = isFallIn
+                            ? ["Ancrage double (chute)", "Double fall anchor", "Anclaje doble (caída)"][l]
+                            : ["Ancrage double", "Double anchor", "Anclaje doble"][l];
+
+                        points.push({
+                            id: `A${ancNum}a`,
+                            label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}a`,
+                            pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}a`,
+                            val: inVal,
+                            isAttenuated: isAttIn,
+                            isExtremity: false,
+                            isP0: (inVal === p0 && !isFallIn),
+                            isFallAnchor: isFallIn,
+                            isDoubleAnchor: true,
+                            remarque: remA,
+                            sixIndex: i
+                        });
+
+                        const remB = isFallOut
+                            ? ["Ancrage double (chute)", "Double fall anchor", "Anclaje doble (caída)"][l]
+                            : ["Ancrage double", "Double anchor", "Anclaje doble"][l];
+
+                        points.push({
+                            id: `A${ancNum}b`,
+                            label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}b`,
+                            pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}b`,
+                            val: outVal,
+                            isAttenuated: isAttOut,
+                            isExtremity: false,
+                            isP0: (outVal === p0 && !isFallOut),
+                            isFallAnchor: isFallOut,
+                            isDoubleAnchor: true,
+                            remarque: remB,
+                            sixIndex: i
+                        });
+                    } else {
+                        const valSimple = Math.max(inVal, outVal);
+                        const isFallSimple = (isFallIn || isFallOut);
+                        const remSimple = isFallSimple
+                            ? ["Ancrage de chute", "Fall anchor", "Anclaje de caída"][l]
+                            : (valSimple > p0 ? ["Intermédiaire (Multi-portée)", "Intermediate (Multi-span)", "Intermedio (Multi-luz)"][l] : ["Prétension P0", "Pretension P0", "Pretensión P0"][l]);
+
+                        points.push({
+                            id: `A${ancNum}`,
+                            label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}`,
+                            pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A${ancNum}`,
+                            val: valSimple,
+                            isAttenuated: (isAttIn || isAttOut),
+                            isExtremity: false,
+                            isP0: (valSimple === p0 && !isFallSimple),
+                            isFallAnchor: isFallSimple,
+                            isDoubleAnchor: false,
+                            remarque: remSimple,
+                            sixIndex: i
+                        });
+                    }
+                }
+
+                return {
+                    count: points.length,
+                    totalAnchors: points.length,
+                    points: points,
+                    uiSubtitle: ["Répartition des efforts aux ancrages :", "Anchor Load Distribution:", "Distribución de Cargas a los Anclajes:"][l],
+                    pdfSubtitle: ["Répartition Multi-Portée OSHA", "OSHA Multi-Span Load Distribution", "Distribución Multi-Luz OSHA"][l],
+                    pdfColHeader: ["Indicateur / Ancrage OSHA", "OSHA Indicator / Anchor", "Indicador / Anclaje OSHA"][l]
+                };
+            }
+
+            // Repérer les coudes > 40° (ligne ouverte)
             const isBendOver40 = [];
             for (let i = 0; i < nbLogical; i++) {
                 if (i >= 1 && i < nbLogical - 1 && effectiveSpans[i - 1]) {
@@ -655,9 +1249,7 @@ const AnchorEffortDistributionModule = {
                     const isFallSimple = (spLeft.isFall || spRight.isFall);
                     const remSimple = isFallSimple
                         ? ["Ancrage de chute", "Fall anchor", "Anclaje de caída"][l]
-                        : (spLeft.isAttenuated || spRight.isAttenuated)
-                            ? ["Atténuation Règle 1", "Rule 1 Attenuation", "Atenuación Regla 1"][l]
-                            : "-";
+                        : "-";
 
                     points.push({
                         id: `A${ancNum}`,
@@ -899,7 +1491,7 @@ const AnchorEffortDistributionModule = {
                     isExtremity: true,
                     isP0: false,
                     isFallAnchor: false,
-                    remarque: ["Atténué - Règle 1", "Attenuated - Rule 1", "Atenuado - Regla 1"][l],
+                    remarque: "-",
                     sixIndex: 5
                 }
             ];
@@ -914,7 +1506,7 @@ const AnchorEffortDistributionModule = {
                     isExtremity: true,
                     isP0: false,
                     isFallAnchor: false,
-                    remarque: ["Atténué - Règle 1", "Attenuated - Rule 1", "Atenuado - Regla 1"][l],
+                    remarque: "-",
                     sixIndex: 0
                 },
                 {
@@ -974,7 +1566,7 @@ const AnchorEffortDistributionModule = {
                     isExtremity: true,
                     isP0: false,
                     isFallAnchor: false,
-                    remarque: ["Atténué - Règle 1", "Attenuated - Rule 1", "Atenuado - Regla 1"][l],
+                    remarque: "-",
                     sixIndex: 5
                 }
             ];
@@ -1021,7 +1613,7 @@ const AnchorEffortDistributionModule = {
                 if (isFall) {
                     rem = ["Ancrage de chute S" + (fIdx + 1), "Fall Anchor S" + (fIdx + 1), "Anclaje de caída S" + (fIdx + 1)][l];
                 } else if (isAttenuated) {
-                    rem = ["Atténué - Règle 1", "Attenuated - Rule 1", "Atenuado - Regla 1"][l];
+                    rem = "-";
                 } else if (sixIdx < 0) {
                     rem = ["Prétension P0", "Pretension P0", "Tensión P0"][l];
                 } else if (isExtLeft || isExtRight) {
@@ -1072,7 +1664,7 @@ const AnchorEffortDistributionModule = {
                 if (isFall) {
                     rem = ["Ancrage de chute S" + (fIdx + 1), "Fall Anchor S" + (fIdx + 1), "Anclaje de caída S" + (fIdx + 1)][l];
                 } else if (isAttenuated) {
-                    rem = ["Atténué - Règle 1", "Attenuated - Rule 1", "Atenuado - Regla 1"][l];
+                    rem = "-";
                 } else if (!isInWindow) {
                     rem = ["Prétension P0", "Pretension P0", "Tensión P0"][l];
                 } else if (isExtLeft || isExtRight) {
@@ -2763,8 +3355,8 @@ const state = {
     madUnit: "m",                    // "m" | "in"
     isMadModified: false,
     customMad: 0,                    // Compatible alias for clearance logic
-    arrestForceKn: 4.5,              // Stored in kN (mandatory free entry > 0 and <= 5000 lbf)
-    arrestForceLbf: 1012,            // in lbf
+    arrestForceKn: 6.0,              // Stored in kN (mandatory free entry > 0 and <= 5000 lbf)
+    arrestForceLbf: 1350,            // in lbf
     arrestForceUnit: "lbf",          // "lbf" | "kN"
     isArrestForceModified: false,
     selectedSrlId: null,             // "turbo_light_9ft" | "falcon_leading_edge"
@@ -2823,13 +3415,22 @@ const state = {
     closedLoop: false,
     bendOrientation: "inside", // "inside" | "outside"
 
-    // Configuration 6 Reservoir / Closed Loop Circle Settings
-    config6Mode: "reservoir",        // "reservoir" (regular polygon) | "manual" (table)
+    // Configuration 6 Reservoir / Closed Loop Circle Settings (Mode Stade masqué)
+    config6Mode: "reservoir",        // "reservoir" (regular polygon) | "manual" (table) /* "stadium" masqué */
     config6Diameter: 30.0,           // Diameter of water tank in meters (default 30m)
     config6NbPosts: 16,              // Number of posts N (default 16)
     config6Setback: 0.5,             // Edge setback in meters (default 0.5m)
     config6Height: 8.0,              // Water tank height in meters (default 8m)
-    config6StructureType: "reservoir",// "reservoir" | "water_tower" | "lighthouse" | "clarifier"
+    config6StructureType: "reservoir",// "reservoir" | "water_tower" | "lighthouse" | "silo" /* "stadium" masqué */
+    /* --- MODE STADE (CONFIGURATION EN MODE CACHÉ) ---
+    config6StadiumLength: 60.0,      // Total stadium length L_tot (major axis) in meters (default 60m)
+    config6StadiumWidth: 30.0,       // Stadium width W (minor axis) in meters (default 30m)
+    config6StadiumN: 5,              // Number of spans per semicircle n (default 5, min 2)
+    config6StadiumM: 2,              // Number of spans per straight side m (default 2, min 1)
+    config6StadiumAutoN: true,       // Automatic deduction of n
+    config6StadiumAutoM: true,       // Automatic deduction of m
+    config6Validation: null,         // Last stadium validation state
+    ------------------------------------------------- */
 
     // Cross-spans configuration (Config 11)
     crossSpans: { north: 10.0, east: 10.0, south: 10.0, west: 10.0 },
@@ -2859,8 +3460,8 @@ const state = {
     madM: 0,
     madUnit: "m",
     customMad: 0,
-    arrestForceKn: 4.5,
-    arrestForceLbf: 1012,
+    arrestForceKn: 6.0,
+    arrestForceLbf: 1350,
     arrestForceUnit: "lbf",
     connectingDevice: "custom_srd",
     customDeviceName: "",
@@ -3165,7 +3766,8 @@ const LayoutEditorModule = (function () {
 
     function deleteSpan(index) {
         if (state.spans.length <= 1) {
-            alert("Impossible de supprimer la dernière portée de la ligne.");
+            const isEn = (parseInt(state.lang) === 1);
+            alert(isEn ? "Cannot delete the last span of the lifeline." : "Impossible de supprimer la dernière portée de la ligne.");
             return;
         }
         recordState("delete_span");
@@ -3218,7 +3820,10 @@ const LayoutEditorModule = (function () {
             return false;
         }
         if (Math.abs(val) > SLOPE_MAX_DEG) {
-            alert(`⚠️ Pente maximale autorisée : ${SLOPE_MAX_DEG}° !\nLa valeur saisie (${val}°) dépasse la limite stricte de sécurité autorisée.`);
+            const isEn = (parseInt(state.lang) === 1);
+            alert(isEn
+                ? `⚠️ Maximum allowed slope: ${SLOPE_MAX_DEG}°!\nThe entered value (${val}°) exceeds the safety limit.`
+                : `⚠️ Pente maximale autorisée : ${SLOPE_MAX_DEG}° !\nLa valeur saisie (${val}°) dépasse la limite stricte de sécurité autorisée.`);
             refreshUI();
             return false;
         }
@@ -4178,6 +4783,13 @@ function setNorm(nextNorm, skipRender = false) {
     } else {
         const hint = document.getElementById("hint-roof-norm-en");
         if (hint) hint.style.display = "none";
+        const isMultiSpanAllowed = (isPro(state.product) || isCore(state.product));
+        const hasMultipleSpans = (state.layoutType !== "single_span" && state.layoutType !== "slope_single" && Array.isArray(state.spans) && state.spans.length > 1);
+        if (isMultiSpanAllowed && hasMultipleSpans) {
+            state.oshaSpanMode = "multi";
+            if (subtabMulti) subtabMulti.classList.add("active");
+            if (subtabUnique) subtabUnique.classList.remove("active");
+        }
     }
 
     if (!skipRender) {
@@ -4207,6 +4819,7 @@ if (typeof window !== "undefined") {
 
 function getSrlBaseArrestForceKn() {
     if (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn) && state.arrestForceKn > 0) {
+        if (Math.abs(state.arrestForceKn - 6.0) < 0.02) return 6.0;
         return state.arrestForceKn;
     }
     if (state.selectedSrlId && typeof SRL_CATALOG !== "undefined" && SRL_CATALOG[state.selectedSrlId]) {
@@ -4250,15 +4863,12 @@ function updateLumpSumHint() {
     const calcLbf = Math.round(calcKn * knToLbf);
     const provStr = (u === 5) ? (isEn ? " (provisional value)" : " (valeur provisoire)") : "";
 
-    if (state.arrestLoadMode === "custom") {
-        hintEl.innerHTML = isEn
-            ? `<i class="fa-solid fa-pen-to-square"></i> Custom input override. Standard Lump Sum formula: <strong>${m.toFixed(2)}${provStr} × ${isUS ? baseFLbf + " lbf" : baseFKn + " kN"} = ${isUS ? calcLbf + " lbf" : calcKn + " kN"}</strong>`
-            : `<i class="fa-solid fa-pen-to-square"></i> Saisie manuelle ingénieur. Formule Lump Sum standard : <strong>${m.toFixed(2)}${provStr} × ${isUS ? baseFLbf + " lbf" : baseFKn + " kN"} = ${isUS ? calcLbf + " lbf" : calcKn + " kN"}</strong>`;
-    } else {
-        hintEl.innerHTML = isEn
-            ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Sum: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} user${u > 1 ? "s" : ""}) × ${isUS ? baseFLbf + " lbf" : baseFKn + " kN"} = <strong>${isUS ? calcLbf + " lbf" : calcKn + " kN"}</strong>`
-            : `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Sum : <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} utilisateur${u > 1 ? "s" : ""}) × ${isUS ? baseFLbf + " lbf" : baseFKn + " kN"} = <strong>${isUS ? calcLbf + " lbf" : calcKn + " kN"}</strong>`;
-    }
+    const userBaseStr = isUS ? `${baseFLbf} lbf` : `${baseFKn.toFixed(2)} kN`;
+    const totalStr = isUS ? `${calcLbf} lbf` : `${calcKn.toFixed(2)} kN`;
+
+    hintEl.innerHTML = isEn
+        ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Sum: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} user${u > 1 ? "s" : ""}) × ${userBaseStr} = <strong>${totalStr}</strong>`
+        : `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Masse Globale : <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} utilisateur${u > 1 ? "s" : ""}) × ${userBaseStr} = <strong>${totalStr}</strong>`;
 }
 if (typeof window !== "undefined") {
     window.updateLumpSumHint = updateLumpSumHint;
@@ -4267,8 +4877,10 @@ if (typeof window !== "undefined") {
 function recalculateLumpSumArrestLoad() {
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
     const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
-    const baseFKn = getSrlBaseArrestForceKn();
-    const totalKn = parseFloat((m * baseFKn).toFixed(3));
+    let baseFKn = getSrlBaseArrestForceKn();
+    if (Math.abs(baseFKn - 6.0) < 0.02) baseFKn = 6.0;
+    let totalKn = parseFloat((m * baseFKn).toFixed(3));
+    if (Math.abs(totalKn - (m * 6.0)) < 0.02) totalKn = parseFloat((m * 6.0).toFixed(2));
     state.arrestLoadValue = totalKn;
     state.arrestLoadKn = totalKn;
 
@@ -4277,8 +4889,8 @@ function recalculateLumpSumArrestLoad() {
     const knToLbf = (typeof UnitsModule !== "undefined") ? UnitsModule.KN_TO_LBF : 224.8089;
     if (arrestValInp) {
         arrestValInp.value = isUS
-            ? Math.round(totalKn * knToLbf)
-            : totalKn.toFixed(2);
+            ? Math.round(baseFKn * knToLbf)
+            : baseFKn.toFixed(2);
     }
 
     const totalLbf = totalKn * knToLbf;
@@ -4338,9 +4950,15 @@ const SRL_CATALOG = {
         classe: 2,
         retracted_length_m: 0.60, // 24 in (0.60m)
         retracted_len: 0.60,      // alias for backward compat
-        working_len: 2.74,
-        default_arrest_force_kn: 4.5,
-        default_arrest_force_lbf: 1012,
+        working_len: 2.74,        // 9 ft (range: 6 ft to 11 ft)
+        min_len_ft: 6,
+        max_len_ft: 11,
+        min_len_m: 1.83,
+        max_len_m: 3.35,
+        default_mad_m: 1.0668,    // 42 in (1.07 m)
+        default_mad_in: 42.0,
+        default_arrest_force_kn: 6.0,
+        default_arrest_force_lbf: 1349,
         cad_model: "box_placeholder_turbolite.glb"
     },
     "falcon_leading_edge": {
@@ -4350,7 +4968,11 @@ const SRL_CATALOG = {
         classe: 2,
         retracted_length_m: 0.80, // 31 in (0.80m)
         retracted_len: 0.80,      // alias for backward compat
-        working_len: 6.0,
+        working_len: 15.24,       // 50 ft max
+        max_len_ft: 50,
+        max_len_m: 15.24,
+        default_mad_m: 4.191,     // 165 in (4.19 m)
+        default_mad_in: 165.0,
         default_arrest_force_kn: 6.0,
         default_arrest_force_lbf: 1349,
         cad_model: "box_placeholder_falcon.glb"
@@ -4439,15 +5061,47 @@ function updateRetractedLengthEquivalentUI() {
     state.customDeviceLengthM = valM;
 
     if (warnBox) {
-        const isWarn = (valM > (typeof RETRACTED_WARN_M !== "undefined" ? RETRACTED_WARN_M : 3.0));
-        warnBox.style.display = isWarn ? "block" : "none";
-        if (warnTxt && isWarn) {
-            const isLanyard = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
-            if (isEn) {
-                warnTxt.textContent = `Warning: ${isLanyard ? "Lanyard" : "Retracted"} length exceeds 3.0 m (9.8 ft).`;
-            } else {
-                warnTxt.textContent = `Avertissement : Longueur ${isLanyard ? "de la longe" : "rétractée"} supérieure à 3,0 m (9.8 ft).`;
+        const isLanyard = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
+        const l = parseInt(state.lang) || 0;
+        let isWarn = false;
+        let warnMsg = "";
+
+        if (state.selectedSrlId === "falcon_leading_edge") {
+            // Falcon+ max rated length is 50 ft (15.24 m)
+            if (valM > 15.25) {
+                isWarn = true;
+                warnMsg = isEn
+                    ? "Warning: Length exceeds the maximum of 50 ft (15.24 m) for Falcon+."
+                    : (l === 2 ? "Advertencia: La longitud supera el máximo de 50 ft (15,24 m) para Falcon+." : "Avertissement : La longueur dépasse la valeur maximale de 50 ft (15,24 m) pour le Falcon+.");
             }
+        } else if (state.selectedSrlId === "turbo_light_9ft") {
+            // TurboLite+ rated length is 6 ft to 11 ft (max 11 ft / 3.35 m)
+            if (valM > 3.355) { // strictly exceeds 11 ft (3.35 m)
+                isWarn = true;
+                warnMsg = isEn
+                    ? "Warning: Length exceeds the maximum of 11 ft (3.35 m) for TurboLite+."
+                    : (l === 2 ? "Advertencia: La longitud supera el máximo de 11 ft (3,35 m) para TurboLite+." : "Avertissement : La longueur dépasse la valeur maximale de 11 ft (3,35 m) pour le TurboLite+.");
+            }
+        } else if (isLanyard) {
+            if (valM > 2.05) { // standard lanyard max 2.0 m (6.6 ft)
+                isWarn = true;
+                warnMsg = isEn
+                    ? "Warning: Lanyard length exceeds the maximum of 2.0 m (6.6 ft)."
+                    : (l === 2 ? "Advertencia: La longitud de eslinga supera el máximo de 2,0 m (6,6 ft)." : "Avertissement : La longueur de la longe dépasse le maximum de 2,0 m (6,6 ft).");
+            }
+        } else {
+            // Generic / Fallback SRL
+            if (valM > (typeof RETRACTED_WARN_M !== "undefined" ? RETRACTED_WARN_M : 3.0)) {
+                isWarn = true;
+                warnMsg = isEn
+                    ? `Warning: Retracted length exceeds 3.0 m (9.8 ft).`
+                    : (l === 2 ? "Advertencia: Longitud retraída superior a 3,0 m (9.8 ft)." : "Avertissement : Longueur rétractée supérieure à 3,0 m (9.8 ft).");
+            }
+        }
+
+        warnBox.style.display = isWarn ? "block" : "none";
+        if (warnTxt && warnMsg) {
+            warnTxt.textContent = warnMsg;
         }
     }
 
@@ -4579,11 +5233,53 @@ function updateMadEquivalentUI() {
     state.madM = valM;
     state.customMad = valM;
 
-    // Check if user changed MAD from default suggestion 1.07m
-    state.isMadModified = (Math.abs(valM - 1.07) > 0.03);
+    // Check if user changed MAD from active catalog model default
+    const srlData = (state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) ? SRL_CATALOG[state.selectedSrlId] : null;
+    const defaultMadM = (srlData && srlData.default_mad_m) ? srlData.default_mad_m : 1.0668;
+    state.isMadModified = (Math.abs(valM - defaultMadM) > 0.03);
+
+    const badgeMadMod = document.getElementById("badge-mad-modified");
+    const btnReset = document.getElementById("btn-reset-mad");
+    if (badgeMadMod) badgeMadMod.style.display = state.isMadModified ? "inline-block" : "none";
+    if (btnReset) btnReset.style.display = state.isMadModified ? "inline-block" : "none";
 
     if (warnBox) {
-        warnBox.style.display = (valM > MAD_WARN_M) ? "block" : "none";
+        const warnTxt = document.getElementById("mad-warning-text");
+        const isEn = (parseInt(state.lang) === 1);
+        const l = parseInt(state.lang) || 0;
+        let isWarn = false;
+        let warnMsg = "";
+
+        if (state.selectedSrlId === "falcon_leading_edge") {
+            // Falcon+ max certified MAD is 165 in (4.19 m)
+            if (valM > 4.20) { // strictly exceeds 165 in (4.191 m)
+                isWarn = true;
+                warnMsg = isEn
+                    ? "Warning: MAD exceeds the maximum of 165 in (4.19 m) for Falcon+."
+                    : (l === 2 ? "Advertencia: La distancia de parada (MAD) supera el máximo de 165 in (4,19 m) para Falcon+." : "Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de 165 in (4,19 m) pour le Falcon+.");
+            }
+        } else if (state.selectedSrlId === "turbo_light_9ft") {
+            // TurboLite+ max certified MAD is 42 in (1.07 m)
+            if (valM > 1.075) { // strictly exceeds 42 in (1.067 m)
+                isWarn = true;
+                warnMsg = isEn
+                    ? "Warning: MAD exceeds the maximum of 42 in (1.07 m) for TurboLite+."
+                    : (l === 2 ? "Advertencia: La distancia de parada (MAD) supera el máximo de 42 in (1,07 m) para TurboLite+." : "Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de 42 in (1,07 m) pour le TurboLite+.");
+            }
+        } else {
+            // Generic / Fallback SRL
+            if (valM > (typeof MAD_WARN_M !== "undefined" ? MAD_WARN_M : 2.0)) {
+                isWarn = true;
+                warnMsg = isEn
+                    ? "Warning: MAD exceeds the maximum of 2.00 m (6.6 ft)."
+                    : (l === 2 ? "Advertencia: La distancia de parada (MAD) supera el máximo de 2,00 m (6,6 ft)." : "Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de 2,00 m (6,6 ft).");
+            }
+        }
+
+        warnBox.style.display = isWarn ? "block" : "none";
+        if (warnTxt && warnMsg) {
+            warnTxt.textContent = warnMsg;
+        }
     }
 }
 
@@ -4644,8 +5340,8 @@ function updateArrestForceEquivalentUI() {
     // Global arrest load M * F
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
     const m = (typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u]) ? LUMP_FACTOR_BY_USERS[u] : 1.00;
-    const globalLbf = m * lbfVal;
-    const globalKn = globalLbf * 0.0044482216;
+    const globalKn = parseFloat((m * knVal).toFixed(3));
+    const globalLbf = (typeof UnitsModule !== "undefined") ? (globalKn * UnitsModule.KN_TO_LBF) : (m * lbfVal);
 
     state.globalArrestLoadLbf = globalLbf;
     state.globalArrestLoadKn = globalKn;
@@ -4984,7 +5680,6 @@ function selectSrlModel(srlId) {
     state.connectingDevice = "custom_srd";
     state.customDeviceName = srl.name;
     state.customDeviceClass = srl.classe || 2;
-    state.customDeviceLengthM = srl.retracted_length_m || 0.60;
 
     // Synchronize both dropdowns to "custom_srd"
     const leftDevSel = document.getElementById("select-connecting-device");
@@ -4993,44 +5688,56 @@ function selectSrlModel(srlId) {
     if (sideDevSel) sideDevSel.value = "custom_srd";
     updateConnectingDeviceUI();
 
-    // Spec V2 — 10 / Prompt 16: Pre-fill Retracted Length
+    // Do NOT automatically fill length or MAD: the user enters the values ("c'est le user qui renseigne")
+    // Update placeholders to guide the user on maximum specifications
+    const isEn = (parseInt(state.lang) === 1);
     const lenInp = document.getElementById("input-srl-retracted-length");
-    const unitSel = document.getElementById("select-retracted-length-unit");
+    const madInp = document.getElementById("input-srl-mad");
+
     if (lenInp) {
-        const unit = unitSel ? unitSel.value : (state.retractedLengthUnit || "m");
-        if (srl.retracted_length_m !== null && srl.retracted_length_m !== undefined) {
-            if (unit === "m") {
-                lenInp.value = srl.retracted_length_m.toFixed(2);
-            } else if (unit === "ft") {
-                const ft = srl.retracted_length_m / 0.3048;
-                const rFt = Math.round(ft * 10) / 10;
-                lenInp.value = (Math.abs(ft - rFt) < 0.015 ? rFt : ft).toFixed(1);
-            } else if (unit === "in") {
-                const inch = srl.retracted_length_m / 0.0254;
-                const rIn = Math.round(inch * 10) / 10;
-                lenInp.value = (Math.abs(inch - rIn) < 0.02 ? rIn : inch).toFixed(1);
-            }
-            state.retractedLengthM = srl.retracted_length_m;
-        } else {
-            lenInp.value = "";
-            state.retractedLengthM = null;
+        if (srlId === "turbo_light_9ft") {
+            lenInp.placeholder = isEn ? "Max: 11 ft (3.35 m)" : "Max : 11 ft (3,35 m)";
+        } else if (srlId === "falcon_leading_edge") {
+            lenInp.placeholder = isEn ? "Max: 50 ft (15.24 m)" : "Max : 50 ft (15,24 m)";
         }
-        state.isRetractedLengthModified = false;
         updateRetractedLengthEquivalentUI();
     }
 
-    // Spec V2 — 09 / Prompt 15: Pre-fill Arrest Force preset (never overwrite MAD)
+    if (madInp) {
+        if (srlId === "turbo_light_9ft") {
+            madInp.placeholder = isEn ? "Max: 42 in (1.07 m)" : "Max : 42 in (1,07 m)";
+        } else if (srlId === "falcon_leading_edge") {
+            madInp.placeholder = isEn ? "Max: 165 in (4.19 m)" : "Max : 165 in (4,19 m)";
+        }
+        updateMadEquivalentUI();
+    }
+
+    // Arrest Force preset (6.0 kN / 1349 lbf)
     const afInp = document.getElementById("input-arrest-force");
     const afUnitSel = document.getElementById("select-arrest-force-unit");
     if (afInp) {
         const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || "lbf");
         if (unit === "lbf") {
-            afInp.value = srl.default_arrest_force_lbf || (srlId === "turbo_light_9ft" ? 1012 : 1349);
+            afInp.value = srl.default_arrest_force_lbf || 1349;
         } else {
-            afInp.value = (srl.default_arrest_force_kn || (srlId === "turbo_light_9ft" ? 4.5 : 6.0)).toFixed(1);
+            afInp.value = (srl.default_arrest_force_kn || 6.0).toFixed(1);
         }
         state.isArrestForceModified = false;
         updateArrestForceEquivalentUI();
+    }
+
+    // Update Reset MAD button text & title to match selected model
+    const btnResetMadTxt = document.getElementById("btn-reset-mad-text");
+    const btnResetMad = document.getElementById("btn-reset-mad");
+    const madUnitSel = document.getElementById("select-mad-unit");
+    const defMadIn = srl.default_mad_in || 42.0;
+    const defMadM = srl.default_mad_m || 1.0668;
+    if (btnResetMadTxt) {
+        const curMadUnit = madUnitSel ? madUnitSel.value : (state.madUnit || "m");
+        btnResetMadTxt.textContent = curMadUnit === "in" ? `${Math.round(defMadIn)} in` : `${defMadM.toFixed(2)} m`;
+    }
+    if (btnResetMad) {
+        btnResetMad.title = `Rétablir la spécification ${srl.name} (${Math.round(defMadIn)} in / ${defMadM.toFixed(2)} m)`;
     }
 
     // Update active classes on cards
@@ -5134,6 +5841,14 @@ function initSrlMadControls() {
                     madInp.value = (currentVal * 0.0254).toFixed(2);
                 }
             }
+            // Update Reset MAD button text with current unit
+            const btnResetMadTxt = document.getElementById("btn-reset-mad-text");
+            if (btnResetMadTxt) {
+                const srl = (state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) ? SRL_CATALOG[state.selectedSrlId] : null;
+                const defIn = (srl && srl.default_mad_in) ? srl.default_mad_in : 42.0;
+                const defM = (srl && srl.default_mad_m) ? srl.default_mad_m : 1.0668;
+                btnResetMadTxt.textContent = nextUnit === "in" ? `${Math.round(defIn)} in` : `${defM.toFixed(2)} m`;
+            }
             onMadChange();
         });
     }
@@ -5142,10 +5857,13 @@ function initSrlMadControls() {
         resetBtn.dataset.hasListener = "true";
         resetBtn.addEventListener("click", () => {
             const unit = madUnitSel ? madUnitSel.value : (state.madUnit || "m");
+            const srl = (state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) ? SRL_CATALOG[state.selectedSrlId] : null;
+            const defIn = (srl && srl.default_mad_in) ? srl.default_mad_in : 42.0;
+            const defM = (srl && srl.default_mad_m) ? srl.default_mad_m : 1.0668;
             if (unit === "in") {
-                madInp.value = "42.0";
+                madInp.value = defIn.toFixed(1);
             } else {
-                madInp.value = "1.07";
+                madInp.value = defM.toFixed(2);
             }
             onMadChange();
         });
@@ -5395,14 +6113,251 @@ function setFallCalculationMode(mode) {
 window.setFallCalculationMode = setFallCalculationMode;
 
 // ==========================================
-// CONFIGURATION 6 (RÉSERVOIR / BOUCLE FERMÉE) ENGINE
+/* ==========================================================================
+   MODE STADE (CONFIGURATION EN MODE CACHÉ)
+   Le moteur complet du mode stade est commenté ci-dessous.
+   ==========================================================================
+// CONFIGURATION 6 (RÉSERVOIR / STADE / BOUCLE FERMÉE) ENGINE
 // ==========================================
+const Config6StadiumModule = {
+    compute: function (params = {}) {
+        const isEn = (parseInt(state.lang) === 1);
+        const L_tot = (params.L_tot !== undefined) ? parseFloat(params.L_tot) : parseFloat(state.config6StadiumLength || 60.0);
+        const W = (params.W !== undefined) ? parseFloat(params.W) : parseFloat(state.config6StadiumWidth || 30.0);
+        const setback = (params.setback !== undefined) ? Math.max(0, parseFloat(params.setback)) : Math.max(0, parseFloat(state.config6Setback !== undefined ? state.config6Setback : 0.5));
+        const L_max = (params.L_max !== undefined) ? parseFloat(params.L_max) : (typeof Calculator !== "undefined" && Calculator.getMaxSpan ? Calculator.getMaxSpan(state.product) : 15.0);
+        const autoN = (params.autoN !== undefined) ? Boolean(params.autoN) : Boolean(state.config6StadiumAutoN);
+        const autoM = (params.autoM !== undefined) ? Boolean(params.autoM) : Boolean(state.config6StadiumAutoM);
+
+        const S = L_tot - W;
+        const R = W / 2;
+
+        // Criterion 4: Reject if S <= 0 (L_tot <= W) or W <= 0
+        if (isNaN(L_tot) || isNaN(W) || W <= 0) {
+            return {
+                isValid: false,
+                isBlocked: true,
+                isCircleError: false,
+                L_tot, W, setback, R: Math.max(0, R), S, L_max,
+                errorMessage: isEn
+                    ? "Invalid dimensions: width (W) and total length (L_tot) must be strictly positive."
+                    : "Dimensions invalides : la largeur (W) et la longueur totale (L_tot) doivent être strictement positives.",
+                spans: [],
+                vertices: []
+            };
+        }
+
+        if (S <= 0) {
+            return {
+                isValid: false,
+                isBlocked: true,
+                isCircleError: true,
+                L_tot, W, setback, R, S, L_max,
+                errorMessage: isEn
+                    ? `Total length L_tot (${L_tot.toFixed(2)} m) must be strictly greater than width W (${W.toFixed(2)} m) so that straight sides exist (S = L_tot − W > 0). For a circular structure (L_tot = W), please use the "Tank (Polygon)" mode.`
+                    : `La longueur totale L_tot (${L_tot.toFixed(2)} m) doit être strictement supérieure à la largeur W (${W.toFixed(2)} m) pour avoir des côtés droits (S = L_tot − W > 0). Pour une forme circulaire (L_tot = W), veuillez utiliser le mode « Réservoir (Polygone) ».`,
+                spans: [],
+                vertices: []
+            };
+        }
+
+        // Automatic deduction of m and n
+        const m_auto = Math.max(1, Math.ceil((S - 1e-9) / L_max));
+        let n_auto = 5;
+        while (n_auto < 500 && (2 * R * Math.sin(Math.PI / (2 * n_auto))) > L_max + 1e-9) {
+            n_auto++;
+        }
+        let n_min_admissible = 2;
+        while (n_min_admissible < 500 && (2 * R * Math.sin(Math.PI / (2 * n_min_admissible))) > L_max + 1e-9) {
+            n_min_admissible++;
+        }
+
+        const m = autoM ? m_auto : Math.max(1, parseInt(params.m !== undefined ? params.m : state.config6StadiumM) || m_auto);
+        const n = autoN ? n_auto : Math.max(2, parseInt(params.n !== undefined ? params.n : state.config6StadiumN) || n_auto);
+
+        const straightSpanLen = S / m;
+        const arcChordLen = 2 * R * Math.sin(Math.PI / (2 * n));
+        const maxGeneratedSpan = Math.max(straightSpanLen, arcChordLen);
+
+        const deltaArc = 180 / n;
+        const deltaJunction = 90 / n;
+        const deltaStraight = 0;
+
+        const hasDoubleArc = deltaArc > 40.0001;
+        const hasDoubleJunction = deltaJunction > 40.0001;
+        const doubleAnchorWarning = (n < 5) && (hasDoubleArc || hasDoubleJunction);
+        const doubleAnchorVerticesCount = (hasDoubleArc ? 2 * (n - 1) : 0) + (hasDoubleJunction ? 4 : 0);
+
+        const warningMessage = doubleAnchorWarning
+            ? (isEn
+                ? `Warning: n = ${n} < 5 produces bends > 40° (arc: ${deltaArc.toFixed(1)}°, junction: ${deltaJunction.toFixed(1)}°). Double anchors (A#a / A#b) are automatically added at bends > 40°.`
+                : `Attention : n = ${n} < 5 génère des coudes > 40° (arc : ${deltaArc.toFixed(1)}°, jonction : ${deltaJunction.toFixed(1)}°). Des ancrages doubles (A#a / A#b) sont ajoutés aux coudes de plus de 40°.`)
+            : null;
+
+        // Criterion 5: Check if any span exceeds L_max
+        const exceedsStraight = straightSpanLen > L_max + 1e-6;
+        const exceedsArc = arcChordLen > L_max + 1e-6;
+        const exceedsMax = exceedsStraight || exceedsArc;
+
+        let errorMessage = null;
+        if (exceedsMax) {
+            const suggestionsFr = [];
+            const suggestionsEn = [];
+            if (exceedsStraight) {
+                suggestionsFr.push(`augmenter m à au moins ${m_auto} (côté droit : ${straightSpanLen.toFixed(2)} m > ${L_max.toFixed(2)} m)`);
+                suggestionsEn.push(`increase m to at least ${m_auto} (straight span: ${straightSpanLen.toFixed(2)} m > ${L_max.toFixed(2)} m)`);
+            }
+            if (exceedsArc) {
+                suggestionsFr.push(`augmenter n à au moins ${n_min_admissible} (corde demi-cercle : ${arcChordLen.toFixed(2)} m > ${L_max.toFixed(2)} m)`);
+                suggestionsEn.push(`increase n to at least ${n_min_admissible} (semicircle chord: ${arcChordLen.toFixed(2)} m > ${L_max.toFixed(2)} m)`);
+            }
+            errorMessage = isEn
+                ? `Span length (${maxGeneratedSpan.toFixed(2)} m) exceeds maximum allowed for ${state.product} (${L_max.toFixed(2)} m). Please ${suggestionsEn.join(" and ")}.`
+                : `Une portée générée (${maxGeneratedSpan.toFixed(2)} m) dépasse la portée maximale admissible du système ${state.product} (${L_max.toFixed(2)} m). Veuillez ${suggestionsFr.join(" et ")}.`;
+        }
+
+        // Build the 2m + 2n spans in traversal order:
+        // Side 1 (m spans) -> Semicircle 1 (n spans) -> Side 2 (m spans) -> Semicircle 2 (n spans)
+        const spans = [];
+        const pushSpan = (len, bendAfter, sectionType) => {
+            const idx = spans.length;
+            spans.push({
+                id: `cfg6_s_${idx + 1}`,
+                length: parseFloat(len.toFixed(4)),
+                bendDeg: parseFloat(bendAfter.toFixed(4)),
+                bend_after_deg: parseFloat(bendAfter.toFixed(4)),
+                interiorAngleDeg: parseFloat((180 - bendAfter).toFixed(4)),
+                sectionType,
+                slopeDeg: 0,
+                slope_deg: 0,
+                isSloped: false,
+                bend90: Math.abs(bendAfter - 90) < 0.01
+            });
+        };
+
+        for (let half = 0; half < 2; half++) {
+            // Straight side (m spans)
+            for (let k = 0; k < m; k++) {
+                const isEndOfStraight = (k === m - 1);
+                const bendAfter = isEndOfStraight ? deltaJunction : deltaStraight;
+                pushSpan(straightSpanLen, bendAfter, isEndOfStraight ? "junction" : "straight");
+            }
+            // Semicircle (n spans)
+            for (let k = 0; k < n; k++) {
+                const isEndOfArc = (k === n - 1);
+                const bendAfter = isEndOfArc ? deltaJunction : deltaArc;
+                pushSpan(arcChordLen, bendAfter, isEndOfArc ? "junction" : "arc");
+            }
+        }
+
+        // Compute 2D/3D vertices centered at (centerX = 15, centerZ = 15)
+        // Straight side 1 goes from (-S/2, -R) to (+S/2, -R) along +X (heading = 0)
+        const centerX = 15.0;
+        const centerZ = 15.0;
+        let vx = centerX - S / 2;
+        let vz = centerZ - R;
+        let heading = 0;
+        const vertices = [];
+        const N_total = spans.length;
+
+        for (let i = 0; i < N_total; i++) {
+            const prevSpan = spans[(i - 1 + N_total) % N_total];
+            const vertexDeviation = prevSpan.bendDeg;
+            const vertexType = prevSpan.sectionType; // "junction" | "straight" | "arc"
+            const isDoubled = Math.abs(vertexDeviation) > 40.0001;
+
+            vertices.push({
+                index: i,
+                id: `A${i + 1}`,
+                x: parseFloat(vx.toFixed(4)),
+                y: 0.0,
+                z: parseFloat(vz.toFixed(4)),
+                bendDeg: vertexDeviation,
+                interiorAngleDeg: parseFloat((180 - vertexDeviation).toFixed(4)),
+                vertexType,
+                isDoubled,
+                rotY: heading
+            });
+
+            const sp = spans[i];
+            vx += sp.length * Math.cos(heading);
+            vz += sp.length * Math.sin(heading);
+            heading += (sp.bendDeg * Math.PI) / 180;
+        }
+
+        const startV = vertices[0];
+        const closureDistError = startV ? Math.hypot(vx - startV.x, vz - startV.z) : 0;
+        const totalDeviationDeg = spans.reduce((acc, s) => acc + s.bendDeg, 0);
+        const closureAngleError = Math.abs(totalDeviationDeg - 360);
+        const isClosed = closureDistError <= 0.01 && closureAngleError <= 0.5;
+
+        const perimeter = 2 * S + 2 * n * arcChordLen;
+
+        return {
+            isValid: !exceedsMax && isClosed,
+            isBlocked: exceedsMax || !isClosed,
+            isCircleError: false,
+            exceedsMax,
+            exceedsStraight,
+            exceedsArc,
+            doubleAnchorWarning,
+            doubleAnchorVerticesCount,
+            warningMessage,
+            errorMessage,
+            L_tot,
+            W,
+            setback,
+            R,
+            S,
+            L_max,
+            n,
+            m,
+            n_auto,
+            m_auto,
+            n_min_admissible,
+            straightSpanLen,
+            arcChordLen,
+            maxGeneratedSpan,
+            deltaArc,
+            deltaJunction,
+            deltaStraight,
+            totalSpans: N_total,
+            totalPosts: N_total,
+            perimeter,
+            totalDeviationDeg,
+            closureDistError,
+            closureAngleError,
+            isClosed,
+            spans,
+            vertices
+        };
+    }
+};
+window.Config6StadiumModule = Config6StadiumModule;
+========================================================================== */
+const Config6StadiumModule = {
+    compute: function () {
+        return { isValid: true, isBlocked: false, spans: [], vertices: [] };
+    }
+};
+window.Config6StadiumModule = Config6StadiumModule;
+
 function recalculateConfig6Spans() {
     if (state.layoutType !== "multi_bend_circle") return;
-    state.closedLoop = false;
-    state.config6StructureType = "reservoir";
+
+    // Bascule automatique sur réservoir si mode stade (mode caché)
+    if (state.config6Mode === "stadium" || state.config6Mode === "stade") {
+        state.config6Mode = "reservoir";
+        state.config6StructureType = "reservoir";
+    }
 
     if (state.config6Mode === "reservoir") {
+        state.closedLoop = false;
+        if (!state.config6StructureType || state.config6StructureType === "stadium") {
+            state.config6StructureType = "reservoir";
+        }
+        state.config6Validation = { isValid: true, isBlocked: false };
+
         const N = Math.max(3, state.config6NbPosts || 16);
         state.config6NbPosts = N;
         const D = Math.max(1.0, state.config6Diameter || 30.0);
@@ -5453,11 +6408,63 @@ function recalculateConfig6Spans() {
             if (!state.fallPosition) state.fallPosition = {};
             state.fallPosition.segmentIndex = 0;
         }
+    /* --- MODE STADE (CONFIGURATION EN MODE CACHÉ) ---
+    } else if (state.config6Mode === "stadium" || state.config6Mode === "stade") {
+        state.config6Mode = "stadium";
+        state.closedLoop = false; // Boucle ouverte pour le stade (A1 et AN sont les ancrages d'extrémité)
+        if (!state.config6StructureType || state.config6StructureType === "reservoir") {
+            state.config6StructureType = "stadium";
+        }
+
+        const res = Config6StadiumModule.compute({
+            L_tot: state.config6StadiumLength,
+            W: state.config6StadiumWidth,
+            setback: state.config6Setback,
+            n: state.config6StadiumN,
+            m: state.config6StadiumM,
+            autoN: state.config6StadiumAutoN,
+            autoM: state.config6StadiumAutoM
+        });
+        state.config6Validation = res;
+
+        if (!res.isCircleError && res.spans.length > 0) {
+            if (state.config6StadiumAutoN) state.config6StadiumN = res.n;
+            if (state.config6StadiumAutoM) state.config6StadiumM = res.m;
+
+            const currentSpans = Array.isArray(state.spans) ? state.spans : [];
+            let prevFallIdx = -1;
+            if (state.selectedFallSpanId) {
+                prevFallIdx = currentSpans.findIndex(s => s.id === state.selectedFallSpanId);
+            }
+            if (prevFallIdx < 0 && state.fallPosition && typeof state.fallPosition.segmentIndex === "number") {
+                prevFallIdx = state.fallPosition.segmentIndex;
+            }
+
+            const openSpans = res.spans.length > 1 ? res.spans.slice(0, res.spans.length - 1) : res.spans;
+            state.spans = openSpans;
+
+            if (prevFallIdx >= 0 && state.spans.length > 0) {
+                const clampedIdx = Math.min(prevFallIdx, state.spans.length - 1);
+                state.selectedFallSpanId = state.spans[clampedIdx].id;
+                if (!state.fallPosition) state.fallPosition = {};
+                state.fallPosition.segmentIndex = clampedIdx;
+            } else if (state.spans.length > 0) {
+                state.selectedFallSpanId = state.spans[0].id;
+                if (!state.fallPosition) state.fallPosition = {};
+                state.fallPosition.segmentIndex = 0;
+            }
+        }
+    ------------------------------------------------- */
     } else {
-        // Manual mode: ensure every span has an ID and fall span is tracked
+        // Manual mode: preserve closedLoop true for manual closed-loop editing (Criterion 6)
+        state.closedLoop = true;
+        state.config6Validation = null;
         if (Array.isArray(state.spans)) {
             state.spans.forEach((sp, idx) => {
                 if (!sp.id) sp.id = `cfg6_s_${idx + 1}`;
+                if (sp.bend_after_deg === undefined && sp.bendDeg !== undefined) {
+                    sp.bend_after_deg = sp.bendDeg;
+                }
             });
             if (!state.selectedFallSpanId && state.spans.length > 0) {
                 state.selectedFallSpanId = state.spans[0].id;
@@ -5489,7 +6496,8 @@ function getConfig6ClosureError() {
 
     const distError = Math.sqrt(x * x + z * z);
     const angleError = Math.abs(extAngleSum - 360);
-    const isClosed = distError <= 0.05 && angleError <= 1.5;
+    // Spec V2 — 19 §4 & Criterion 2: tolerance 1 cm (0.01 m) on closure distance and 0.5° on total deviation
+    const isClosed = distError <= 0.01 && angleError <= 0.5;
     return { isClosed, distError, angleError, finalX: x, finalZ: z, extAngleSum };
 }
 
@@ -5607,19 +6615,20 @@ function populateConfigModalInputs() {
     const appSel = document.getElementById("select-app-mode");
     if (appSel) appSel.value = state.appMode || "fall_arrest";
 
-    // Arrest load mode & value
+    // Arrest load mode & value (1 user base force)
     const arrestModeSel = document.getElementById("select-arrest-load-mode");
     const arrestValInp = document.getElementById("input-arrest-load-val");
     if (arrestModeSel) arrestModeSel.value = state.arrestLoadMode || "lump_sum";
     if (arrestValInp) {
+        const baseFKn = getSrlBaseArrestForceKn();
         arrestValInp.min = isUS ? "1" : "0.1";
-        arrestValInp.max = isUS ? "10000" : "100";
+        arrestValInp.max = isUS ? "5000" : "25";
         arrestValInp.step = isUS ? "1" : "0.1";
         arrestValInp.value = isUS
-            ? Math.round((state.arrestLoadValue || 6.0) * UnitsModule.KN_TO_LBF)
-            : (state.arrestLoadValue || 6.0).toFixed(2);
+            ? Math.round(baseFKn * UnitsModule.KN_TO_LBF)
+            : baseFKn.toFixed(2);
     }
-    if (typeof updateLumpSumHint === "function") updateLumpSumHint();
+    recalculateLumpSumArrestLoad();
 
     // HOOKT Product Family dropdown
     const prodSel = document.getElementById("select-product");
@@ -5643,7 +6652,8 @@ function populateConfigModalInputs() {
     if (usersElem) {
         const maxU = (isCore(state.product) || isXtreme(state.product)) ? 3 : 5;
         usersElem.max = maxU;
-        usersElem.value = Math.min(state.nbUsers, maxU);
+        const curU = Math.max(1, parseInt(state.nbUsers) || 1);
+        usersElem.value = Math.min(curU, maxU);
     }
 
     // HLL Elevation preset & value
@@ -5701,14 +6711,25 @@ function populateConfigModalInputs() {
     if (rLenInp) rLenInp.value = toCurrentLen(state.roof_length || 25.0).toFixed(1);
     if (rWidInp) rWidInp.value = toCurrentLen(state.roof_width || 15.0).toFixed(1);
     if (rEdgeInp) {
-        rEdgeInp.value = toCurrentLen(state.line_to_edge || 2.0).toFixed(1);
+        rEdgeInp.value = toCurrentLen(state.line_to_edge !== undefined ? state.line_to_edge : 2.0).toFixed(1);
         if (!rEdgeInp.dataset.hasListener) {
             rEdgeInp.dataset.hasListener = "true";
             rEdgeInp.addEventListener("input", () => {
-                const rawEdge = parseFloat(rEdgeInp.value);
-                if (!isNaN(rawEdge) && rawEdge > 0) {
-                    state.line_to_edge = UnitsModule.parseLengthToMeters(rawEdge);
-                    syncRoofLengthWithLifelineUI();
+                const valTrim = String(rEdgeInp.value || "").trim().replace(/,/g, ".");
+                if (valTrim === "" || parseFloat(valTrim) === 0) {
+                    state.line_to_edge = 0;
+                } else {
+                    const rawEdge = parseFloat(valTrim);
+                    if (!isNaN(rawEdge) && rawEdge > 0) {
+                        state.line_to_edge = UnitsModule.parseLengthToMeters(rawEdge);
+                    }
+                }
+                FallClearanceModule.syncEdgeRestrictions(state);
+                syncRoofLengthWithLifelineUI();
+                if (typeof updateCalculationsUI === "function") {
+                    const maxSpan = Calculator.getMaxSpan(state.product);
+                    const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                    updateCalculationsUI(layout, maxSpan);
                 }
             });
         }
@@ -5750,7 +6771,16 @@ function populateConfigModalInputs() {
     }
     if (rHGroundInp && !rHGroundInp.dataset.hasWwsListener) {
         rHGroundInp.dataset.hasWwsListener = "true";
-        rHGroundInp.addEventListener("input", validateWwsAgainstRoofHeight);
+        rHGroundInp.addEventListener("input", () => {
+            validateWwsAgainstRoofHeight();
+            const valTrim = String(rHGroundInp.value || "").trim().replace(/,/g, ".");
+            const rawVal = parseFloat(valTrim);
+            if (!isNaN(rawVal) && rawVal > 0) {
+                state.roof_height_above_ground = UnitsModule.parseLengthToMeters(rawVal);
+                state.roofHeightAboveGround = state.roof_height_above_ground;
+                state.config6Height = state.roof_height_above_ground;
+            }
+        });
     }
     validateWwsAgainstRoofHeight();
 
@@ -5970,15 +7000,6 @@ function renderUnifiedSpansTableHTML(layout, distUnit, isEn) {
             <button type="button" class="btn-table-action" id="btn-table-undo" title="${isEn ? "Undo last action (Ctrl+Z)" : "Annuler dernière action (Ctrl+Z)"}"><i class="fa-solid fa-rotate-left"></i> ${isEn ? "Undo" : "Annuler"}</button>
             <button type="button" class="btn-table-action" id="btn-table-redo" title="${isEn ? "Redo action (Ctrl+Y)" : "Rétablir action (Ctrl+Y)"}"><i class="fa-solid fa-rotate-right"></i> ${isEn ? "Redo" : "Rétablir"}</button>
         </div>
-        <div class="form-group full-width margin-top-sm" style="background: rgba(59, 130, 246, 0.05); padding: 10px; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.2);">
-            <label for="select-bend-orientation" style="font-weight: 600; color: #1e293b;">
-                <i class="fa-solid fa-arrows-spin" style="color: #3b82f6;"></i> ${isEn ? "Orientation of all components / posts:" : "Orientation de toutes les pièces / potelets :"}
-            </label>
-            <select id="select-bend-orientation" class="select-custom" style="margin-top: 4px;">
-                <option value="inside" ${state.bendOrientation !== 'outside' ? 'selected' : ''}>${isEn ? "Inside the line (Inside)" : "À l'intérieur de la ligne (Inside)"}</option>
-                <option value="outside" ${state.bendOrientation === 'outside' ? 'selected' : ''}>${isEn ? "Outside the line (Outside)" : "À l'extérieur de la ligne (Outside)"}</option>
-            </select>
-        </div>
     `;
 }
 
@@ -6114,35 +7135,63 @@ function renderDynamicLayoutForm() {
             ${renderUnifiedSpansTableHTML(layout, distUnit, isEn)}
         `;
     }
-    // 6. Multi-span - Variable-degree bends (circle / reservoir polygon)
+    // 6. Multi-span - Variable-degree bends (circle / reservoir polygon / stadium)
     else if (layout === "multi_bend_circle") {
         recalculateConfig6Spans();
 
         const mode = state.config6Mode || "reservoir";
-        const structType = state.config6StructureType || "reservoir";
+        const structType = state.config6StructureType || (mode === "stadium" ? "stadium" : "reservoir");
         const isReservoirMode = (mode === "reservoir");
+        const isStadiumMode = (mode === "stadium" || mode === "stade");
+        const isManualMode = (mode === "manual");
 
-        const maxAdmissibleSpan = isCore(state.product) ? 3.5 : (isXtreme(state.product) ? 30.0 : 15.2);
+        const maxAdmissibleSpan = Calculator.getMaxSpan ? Calculator.getMaxSpan(state.product) : (isCore(state.product) ? 3.5 : (isXtreme(state.product) ? 30.0 : 15.0));
         const currentSpanLen = state.spans[0] ? state.spans[0].length : 5.0;
         const isExceedingMax = currentSpanLen > maxAdmissibleSpan;
 
         const closure = getConfig6ClosureError();
 
+        const headerTitle = isEn
+            ? "Lifeline on Water Tank / Circular Structure"
+            : "Ligne de Vie sur Réservoir d'Eau / Ouvrage Circulaire";
+        const headerDesc = isEn
+            ? "3D visualization of a lifeline arranged on the top surface of the structure."
+            : "Visualisation 3D d'une ligne de vie disposée sur la surface supérieure de l'ouvrage.";
+
         html = `
             <div class="config6-header-wrapper" style="background: linear-gradient(135deg, rgba(30,58,138,0.06), rgba(59,130,246,0.08)); padding: 12px; border-radius: 8px; border: 1px solid rgba(59,130,246,0.2); margin-bottom: 15px;">
                 <div style="display: flex; gap: 15px; align-items: center; justify-content: space-between; flex-wrap: wrap;">
                     <div>
-                        <strong style="color: #1e3a8a; font-size: 1rem;"><i class="fa-solid fa-droplet"></i> ${isEn ? "Lifeline on Water Tank" : "Ligne de Vie sur Réservoir d'Eau"}</strong>
-                        <p style="font-size: 0.85rem; color: #475569; margin: 4px 0 0 0;">${isEn ? "3D visualization of an open lifeline arranged on the top surface of the tank." : "Visualisation 3D d'une ligne de vie ouverte disposée sur la surface plate du réservoir d'eau."}</p>
+                        <strong style="color: #1e3a8a; font-size: 1rem;"><i class="fa-solid fa-droplet"></i> ${headerTitle}</strong>
+                        <p style="font-size: 0.85rem; color: #475569; margin: 4px 0 0 0;">${headerDesc}</p>
                     </div>
-                    <div style="display: flex; gap: 8px;">
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                         <button type="button" class="btn-config6-mode ${isReservoirMode ? 'active' : ''}" data-mode="reservoir" style="padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; border: 1px solid #3b82f6; ${isReservoirMode ? 'background:#2563eb; color:white;' : 'background:white; color:#1e293b;'}">
                             <i class="fa-solid fa-compass-drafting"></i> ${isEn ? "Tank Mode (Polygon)" : "Mode Réservoir (Polygone)"}
                         </button>
-                        <button type="button" class="btn-config6-mode ${!isReservoirMode ? 'active' : ''}" data-mode="manual" style="padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; border: 1px solid #3b82f6; ${!isReservoirMode ? 'background:#2563eb; color:white;' : 'background:white; color:#1e293b;'}">
+                        <!-- MODE STADE (CONFIGURATION EN MODE CACHÉ)
+                        <button type="button" class="btn-config6-mode ${isStadiumMode ? 'active' : ''}" data-mode="stadium" style="display:none; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; border: 1px solid #3b82f6; ${isStadiumMode ? 'background:#2563eb; color:white;' : 'background:white; color:#1e293b;'}">
+                            <i class="fa-solid fa-futbol"></i> ${isEn ? "Stadium Mode (Oval)" : "Mode Stade (Ovale)"}
+                        </button>
+                        -->
+                        <button type="button" class="btn-config6-mode ${isManualMode ? 'active' : ''}" data-mode="manual" style="padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer; border: 1px solid #3b82f6; ${isManualMode ? 'background:#2563eb; color:white;' : 'background:white; color:#1e293b;'}">
                             <i class="fa-solid fa-table"></i> ${isEn ? "Manual Mode (Table)" : "Mode Manuel (Tableau)"}
                         </button>
                     </div>
+                </div>
+                <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(59,130,246,0.25); display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <label for="select-config6-struct" style="font-size: 0.85rem; font-weight: 600; color: #1e3a8a; margin: 0;">
+                        <i class="fa-solid fa-building"></i> ${isEn ? "3D Structure Type :" : "Type de structure 3D :"}
+                    </label>
+                    <select id="select-config6-struct" class="select-custom" style="max-width: 240px; padding: 4px 8px; font-size: 0.85rem;">
+                        <option value="reservoir" ${structType === 'reservoir' ? 'selected' : ''}>${isEn ? "Water Tank (Reservoir)" : "Réservoir d'eau"}</option>
+                        <!-- MODE STADE (CONFIGURATION EN MODE CACHÉ) :
+                        <option value="stadium" ${structType === 'stadium' ? 'selected' : ''}>${isEn ? "Stadium (Oval Tribune)" : "Stade (Tribune Ovale)"}</option>
+                        -->
+                        <option value="water_tower" ${structType === 'water_tower' ? 'selected' : ''}>${isEn ? "Water Tower" : "Château d'eau"}</option>
+                        <option value="lighthouse" ${structType === 'lighthouse' ? 'selected' : ''}>${isEn ? "Lighthouse" : "Phare"}</option>
+                        <option value="silo" ${structType === 'silo' ? 'selected' : ''}>${isEn ? "Silo" : "Silo"}</option>
+                    </select>
                 </div>
             </div>
         `;
@@ -6150,7 +7199,6 @@ function renderDynamicLayoutForm() {
         if (isReservoirMode) {
             const diamVal = isUS ? (state.config6Diameter * METERS_TO_FEET).toFixed(2) : state.config6Diameter;
             const setbackVal = isUS ? (state.config6Setback * METERS_TO_FEET).toFixed(2) : state.config6Setback;
-            const heightVal = isUS ? (state.config6Height * METERS_TO_FEET).toFixed(2) : state.config6Height;
 
             html += `
                 <div class="form-grid">
@@ -6172,13 +7220,6 @@ function renderDynamicLayoutForm() {
                         <label><i class="fa-solid fa-arrows-left-right-to-line"></i> ${isEn ? "Setback from Roof Edge" : "Retrait du Bord du Toit"} (${distUnit}) :</label>
                         <div class="input-with-unit">
                             <input type="number" id="input-config6-setback" value="${setbackVal}" min="0" max="10" step="any">
-                            <span class="unit">${distUnit}</span>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label><i class="fa-solid fa-arrows-up-down"></i> ${isEn ? "Structure Height" : "Hauteur Structure"} (${distUnit}) :</label>
-                        <div class="input-with-unit">
-                            <input type="number" id="input-config6-height" value="${heightVal}" min="1" max="100" step="any">
                             <span class="unit">${distUnit}</span>
                         </div>
                     </div>
@@ -6223,6 +7264,130 @@ function renderDynamicLayoutForm() {
                     </div>
                 </div>
             `;
+        /* --- MODE STADE (CONFIGURATION EN MODE CACHÉ) - FORMULAIRE HTML ---
+        } else if (isStadiumMode) {
+            const stadVal = state.config6Validation || Config6StadiumModule.compute();
+            const lenVal = isUS ? parseFloat((state.config6StadiumLength * METERS_TO_FEET).toFixed(2)) : state.config6StadiumLength;
+            const widthVal = isUS ? parseFloat((state.config6StadiumWidth * METERS_TO_FEET).toFixed(2)) : state.config6StadiumWidth;
+            const setbackVal = isUS ? parseFloat((state.config6Setback * METERS_TO_FEET).toFixed(2)) : state.config6Setback;
+
+            html += `
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label><i class="fa-solid fa-arrows-left-right"></i> ${isEn ? "Total Length (L_tot — Major Axis)" : "Longueur totale du stade (L_tot — Grand axe)"} (${distUnit}) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-config6-stadium-length" value="${lenVal}" min="2.0" max="500.0" step="any">
+                            <span class="unit">${distUnit}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fa-solid fa-arrows-up-down"></i> ${isEn ? "Stadium Width (W — Minor Axis)" : "Largeur du stade (W — Petit axe)"} (${distUnit}) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-config6-stadium-width" value="${widthVal}" min="1.0" max="400.0" step="any">
+                            <span class="unit">${distUnit}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fa-solid fa-arrows-left-right-to-line"></i> ${isEn ? "Setback from Roof Edge" : "Retrait du bord"} (${distUnit}) :</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-config6-setback" value="${setbackVal}" min="0" max="10" step="any">
+                            <span class="unit">${distUnit}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                            <span><i class="fa-solid fa-circle-nodes"></i> ${isEn ? "Spans per Semicircle (n ≥ 2) :" : "Portées par demi-cercle (n ≥ 2) :"}</span>
+                            <label style="font-size:0.78rem; font-weight:500; color:#2563eb; cursor:pointer; display:inline-flex; align-items:center; gap:4px; margin:0;">
+                                <input type="checkbox" id="chk-config6-stadium-auto-n" ${state.config6StadiumAutoN ? 'checked' : ''}> Auto
+                            </label>
+                        </label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-config6-stadium-n" value="${stadVal.n || state.config6StadiumN}" min="2" max="100" step="1">
+                            <span class="unit">${isEn ? "spans" : "portées"}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                            <span><i class="fa-solid fa-grip-lines"></i> ${isEn ? "Spans per Straight Side (m ≥ 1) :" : "Portées par côté droit (m ≥ 1) :"}</span>
+                            <label style="font-size:0.78rem; font-weight:500; color:#2563eb; cursor:pointer; display:inline-flex; align-items:center; gap:4px; margin:0;">
+                                <input type="checkbox" id="chk-config6-stadium-auto-m" ${state.config6StadiumAutoM ? 'checked' : ''}> Auto
+                            </label>
+                        </label>
+                        <div class="input-with-unit">
+                            <input type="number" id="input-config6-stadium-m" value="${stadVal.m || state.config6StadiumM}" min="1" max="100" step="1">
+                            <span class="unit">${isEn ? "spans" : "portées"}</span>
+                        </div>
+                    </div>
+                </div>
+
+                ${stadVal.isCircleError ? `
+                    <div class="warning-alert-box margin-top-sm" id="config6-stadium-circle-error" style="background: #fef2f2; border: 1px solid #ef4444; color: #991b1b; padding: 12px; border-radius: 6px; font-size: 0.85rem; display: flex; gap: 10px; align-items: center;">
+                        <i class="fa-solid fa-circle-xmark" style="font-size: 1.3rem; color: #dc2626;"></i>
+                        <div>
+                            <strong>${isEn ? "Invalid Stadium Geometry (S ≤ 0) :" : "Géométrie Stade invalide (S ≤ 0) :"}</strong>
+                            ${stadVal.errorMessage}
+                        </div>
+                    </div>
+                ` : `
+                    <!-- Deduced Stadium Geometry Readout -->
+                    <div class="info-readout-box margin-top-sm" style="background: rgba(241,245,249,0.95); border-left: 4px solid #2563eb; padding: 10px 12px;">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr)); gap: 8px; width: 100%; font-size: 0.84rem;">
+                            <span><i class="fa-solid fa-ruler-horizontal" style="color:#2563eb;"></i> ${isEn ? "Straight Side (S = L_tot − W)" : "Côté droit (S = L_tot − W)"} : <strong>${formatDistance(stadVal.S, 2)}</strong></span>
+                            <span><i class="fa-solid fa-circle-half-stroke" style="color:#2563eb;"></i> ${isEn ? "Semicircle Radius (R = W / 2)" : "Rayon demi-cercle (R = W / 2)"} : <strong>${formatDistance(stadVal.R, 2)}</strong></span>
+                            <span><i class="fa-solid fa-minus" style="color:#2563eb;"></i> ${isEn ? "Straight Span (S / m)" : "Portée côté droit (S / m)"} : <strong>${formatDistance(stadVal.straightSpanLen, 2)}</strong> (${stadVal.m}×2)</span>
+                            <span><i class="fa-solid fa-bezier-curve" style="color:#2563eb;"></i> ${isEn ? "Arc Chord (c)" : "Corde demi-cercle (c)"} : <strong>${formatDistance(stadVal.arcChordLen, 2)}</strong> (${stadVal.n}×2)</span>
+                            <span><i class="fa-solid fa-compass" style="color:#2563eb;"></i> ${isEn ? "Arc / Junction Bends" : "Déviations Arc / Jonction"} : <strong>${stadVal.deltaArc.toFixed(1)}° / ${stadVal.deltaJunction.toFixed(1)}°</strong></span>
+                            <span><i class="fa-solid fa-rotate" style="color:#16a34a;"></i> ${isEn ? "Closed Loop" : "Boucle fermée"} : <strong>${stadVal.totalSpans} ${isEn ? "spans" : "portées"} / ${stadVal.totalPosts} ${isEn ? "posts" : "poteaux"} (${formatDistance(stadVal.perimeter, 1)}, Σδ = ${stadVal.totalDeviationDeg.toFixed(0)}°)</strong></span>
+                        </div>
+                    </div>
+
+                    ${stadVal.doubleAnchorWarning ? `
+                        <div class="warning-alert-box margin-top-sm" id="config6-stadium-double-anchor-warning" style="background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 10px 12px; border-radius: 6px; font-size: 0.85rem; display: flex; gap: 10px; align-items: center;">
+                            <i class="fa-solid fa-triangle-exclamation" style="font-size: 1.2rem; color: #d97706;"></i>
+                            <div>
+                                <strong>${isEn ? "Double Anchors Required (> 40°):" : "Ancrages doubles requis (> 40°) :"}</strong>
+                                ${stadVal.warningMessage}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    ${stadVal.exceedsMax ? `
+                        <div class="warning-alert-box margin-top-sm" id="config6-stadium-maxspan-error" style="background: #fef2f2; border: 1px solid #ef4444; color: #991b1b; padding: 10px 12px; border-radius: 6px; font-size: 0.85rem; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap;">
+                            <div style="display: flex; gap: 10px; align-items: center; flex: 1;">
+                                <i class="fa-solid fa-ban" style="font-size: 1.2rem; color: #dc2626;"></i>
+                                <div>
+                                    <strong>${isEn ? "Blocked — Maximum Span Exceeded:" : "Génération bloquée — Portée maximale dépassée :"}</strong>
+                                    ${stadVal.errorMessage}
+                                </div>
+                            </div>
+                            <button type="button" id="btn-config6-stadium-auto-fix" style="background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; cursor: pointer;">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> ${isEn ? `Apply n=${stadVal.n_auto}, m=${stadVal.m_auto}` : `Appliquer n=${stadVal.n_auto}, m=${stadVal.m_auto}`}
+                            </button>
+                        </div>
+                    ` : ''}
+
+                    <!-- Active fall span selector for Stadium mode -->
+                    <div class="form-group full-width margin-top-sm" style="background: rgba(239, 68, 68, 0.05); padding: 12px; border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.25);">
+                        <label for="select-config6-fall-span" style="font-weight: 600; color: #991b1b; display: flex; align-items: center; gap: 8px;">
+                            <i class="fa-solid fa-person-falling" style="color: #ef4444;"></i> ${isEn ? "Fall Span for Calculation :" : "Portée de chute pour le calcul :"}
+                        </label>
+                        <div style="display: flex; gap: 12px; align-items: center; margin-top: 6px; flex-wrap: wrap;">
+                            <select id="select-config6-fall-span" class="select-custom" style="max-width: 320px; font-weight: 600; border-color: #fca5a5;">
+                                ${state.spans.map((sp, idx) => {
+                                    const isFall = (sp.id === state.selectedFallSpanId) || (!state.selectedFallSpanId && idx === 0);
+                                    const fromA = `A${idx + 1}`;
+                                    const toA = (idx === state.spans.length - 1) ? `A1` : `A${idx + 2}`;
+                                    return `<option value="${sp.id}" data-idx="${idx}" ${isFall ? 'selected' : ''}>S${idx + 1} (${fromA} → ${toA}) - ${formatDistance(sp.length, 2)} (δ=${parseFloat((sp.bendDeg || 0).toFixed(1))}°)</option>`;
+                                }).join('')}
+                            </select>
+                            <span style="font-size: 0.82rem; color: #64748b;">
+                                ${isEn ? "Select which span undergoes the fall" : "Sélectionnez la portée subissant la chute"}
+                            </span>
+                        </div>
+                    </div>
+
+        ------------------------------------------------------------------ */                `}
+            `;
         } else {
             // Mode Manuel (Tableau)
             const isClosedOK = closure.isClosed;
@@ -6254,7 +7419,7 @@ function renderDynamicLayoutForm() {
                                     <tr style="${isFallSpan ? 'background: rgba(239, 68, 68, 0.08); font-weight: 600;' : ''}">
                                         <td><strong>${isEn ? "Span" : "Portée"} ${idx + 1}</strong></td>
                                         <td><input type="number" class="span-length-input" data-idx="${idx}" value="${val}" step="any" min="0.1"></td>
-                                        <td><input type="number" class="span-benddeg-input" data-idx="${idx}" value="${sp.bendDeg !== undefined ? sp.bendDeg : parseFloat((360 / (state.spans.length || 16)).toFixed(2))}" step="any"> °</td>
+                                        <td><input type="number" class="span-benddeg-input" data-idx="${idx}" value="${sp.bendDeg !== undefined ? parseFloat(Number(sp.bendDeg).toFixed(2)) : parseFloat((360 / (state.spans.length || 16)).toFixed(2))}" step="any"> °</td>
                                         <td style="text-align: center;">
                                             <input type="radio" name="radio-fall-span" class="span-fall-radio" data-span-id="${sp.id}" ${isFallSpan ? 'checked' : ''} title="${isEn ? "Active fall span" : "Portée de chute active"}">
                                         </td>
@@ -6272,18 +7437,6 @@ function renderDynamicLayoutForm() {
                 </div>
             `;
         }
-
-        html += `
-            <div class="form-group full-width margin-top-sm" style="background: rgba(59, 130, 246, 0.05); padding: 10px; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.2);">
-                <label for="select-bend-orientation" style="font-weight: 600; color: #1e293b;">
-                    <i class="fa-solid fa-arrows-spin" style="color: #3b82f6;"></i> Orientation de toutes les pièces / potelets :
-                </label>
-                <select id="select-bend-orientation" class="select-custom" style="margin-top: 4px;">
-                    <option value="inside" ${state.bendOrientation !== 'outside' ? 'selected' : ''}>À l'intérieur de la ligne (Inside)</option>
-                    <option value="outside" ${state.bendOrientation === 'outside' ? 'selected' : ''}>À l'extérieur de la ligne (Outside)</option>
-                </select>
-            </div>
-        `;
     }
     // 8. Single-span - Slope System
     else if (layout === "slope_single") {
@@ -6749,7 +7902,8 @@ function attachDynamicFormListeners() {
                 LayoutEditorModule.setSpanSlope(idx, raw);
             } else if (state.spans[idx]) {
                 if (Math.abs(raw) > 75) {
-                    alert("⚠️ Pente maximale autorisée : 75° !");
+                    const isEn = (parseInt(state.lang) === 1);
+                    alert(isEn ? "⚠️ Maximum allowed slope: 75°!" : "⚠️ Pente maximale autorisée : 75° !");
                     inp.value = 75;
                     return;
                 }
@@ -7099,7 +8253,10 @@ function attachDynamicFormListeners() {
         slopeDeg.addEventListener("change", (e) => {
             const raw = parseFloat(e.target.value) || 15.0;
             if (Math.abs(raw) > 75) {
-                alert(`⚠️ Pente maximale autorisée : 75° !\nLa valeur saisie (${raw}°) dépasse la limite de sécurité.`);
+                const isEn = (parseInt(state.lang) === 1);
+                alert(isEn
+                    ? `⚠️ Maximum allowed slope: 75°!\nThe entered value (${raw}°) exceeds the safety limit.`
+                    : `⚠️ Pente maximale autorisée : 75° !\nLa valeur saisie (${raw}°) dépasse la limite de sécurité.`);
                 e.target.value = 75;
                 if (state.spans[0]) state.spans[0].slopeDeg = 75;
                 state.roofSlope = 75;
@@ -7278,58 +8435,143 @@ function attachDynamicFormListeners() {
         });
     }
 
-    // Config 6 Mode Toggle Buttons (Reservoir vs Manual)
+    // Config 6 Mode Toggle Buttons (Reservoir vs Stadium vs Manual)
     document.querySelectorAll(".btn-config6-mode").forEach(btn => {
         btn.addEventListener("click", (e) => {
             const mode = e.currentTarget.dataset.mode;
             state.config6Mode = mode;
+            if (mode === "stadium") {
+                state.config6StructureType = "stadium";
+            } else if (mode === "reservoir") {
+                state.config6StructureType = "reservoir";
+            }
+            recalculateConfig6Spans();
             renderDynamicLayoutForm();
             if (typeof update3DScene === "function") update3DScene();
         });
     });
 
-    // Config 6 Inputs
+    // Helper to re-render Config 6 form while preserving active input focus
+    const rerenderConfig6PreservingFocus = (focusedId) => {
+        recalculateConfig6Spans();
+        renderDynamicLayoutForm();
+        if (focusedId) {
+            const el = document.getElementById(focusedId);
+            if (el) {
+                el.focus();
+                try {
+                    const len = String(el.value || "").length;
+                    el.setSelectionRange(len, len);
+                } catch (_) { }
+            }
+        }
+        if (typeof update3DScene === "function") update3DScene();
+    };
+
+    // Config 6 Inputs (Reservoir)
     const cfg6Diam = document.getElementById("input-config6-diam");
     if (cfg6Diam) {
-        cfg6Diam.addEventListener("input", (e) => {
+        cfg6Diam.addEventListener("change", (e) => {
             const raw = parseFloat(e.target.value) || 30.0;
             state.config6Diameter = isUS ? (raw / METERS_TO_FEET) : raw;
-            recalculateConfig6Spans();
-            renderDynamicLayoutForm();
-            if (typeof update3DScene === "function") update3DScene();
+            rerenderConfig6PreservingFocus("input-config6-diam");
         });
     }
 
     const cfg6N = document.getElementById("input-config6-n");
     if (cfg6N) {
-        cfg6N.addEventListener("input", (e) => {
+        cfg6N.addEventListener("change", (e) => {
             const raw = parseInt(e.target.value) || 16;
             state.config6NbPosts = Math.max(3, Math.min(100, raw));
-            recalculateConfig6Spans();
-            renderDynamicLayoutForm();
-            if (typeof update3DScene === "function") update3DScene();
+            rerenderConfig6PreservingFocus("input-config6-n");
         });
     }
 
     const cfg6Setback = document.getElementById("input-config6-setback");
     if (cfg6Setback) {
-        cfg6Setback.addEventListener("input", (e) => {
-            const raw = parseFloat(e.target.value) || 0.5;
-            state.config6Setback = isUS ? (raw / METERS_TO_FEET) : raw;
-            recalculateConfig6Spans();
-            renderDynamicLayoutForm();
-            if (typeof update3DScene === "function") update3DScene();
+        cfg6Setback.addEventListener("change", (e) => {
+            const raw = parseFloat(e.target.value);
+            const val = isNaN(raw) ? 0.5 : Math.max(0, raw);
+            state.config6Setback = isUS ? (val / METERS_TO_FEET) : val;
+            rerenderConfig6PreservingFocus("input-config6-setback");
         });
     }
 
-    const cfg6Height = document.getElementById("input-config6-height");
-    if (cfg6Height) {
-        cfg6Height.addEventListener("input", (e) => {
-            const raw = parseFloat(e.target.value) || 8.0;
-            state.config6Height = isUS ? (raw / METERS_TO_FEET) : raw;
-            if (typeof update3DScene === "function") update3DScene();
+    /* --- MODE STADE (CONFIGURATION EN MODE CACHÉ) - ÉCOUTEURS D'ÉVÉNEMENTS ---
+    // Config 6 Inputs (Stadium)
+    const cfg6StadLen = document.getElementById("input-config6-stadium-length");
+    if (cfg6StadLen) {
+        cfg6StadLen.addEventListener("change", (e) => {
+            const raw = parseFloat(e.target.value);
+            if (!isNaN(raw)) {
+                state.config6StadiumLength = isUS ? (raw / METERS_TO_FEET) : raw;
+                rerenderConfig6PreservingFocus("input-config6-stadium-length");
+            }
         });
     }
+
+    const cfg6StadWidth = document.getElementById("input-config6-stadium-width");
+    if (cfg6StadWidth) {
+        cfg6StadWidth.addEventListener("change", (e) => {
+            const raw = parseFloat(e.target.value);
+            if (!isNaN(raw)) {
+                state.config6StadiumWidth = isUS ? (raw / METERS_TO_FEET) : raw;
+                rerenderConfig6PreservingFocus("input-config6-stadium-width");
+            }
+        });
+    }
+
+    const cfg6StadN = document.getElementById("input-config6-stadium-n");
+    if (cfg6StadN) {
+        cfg6StadN.addEventListener("change", (e) => {
+            const raw = parseInt(e.target.value);
+            if (!isNaN(raw)) {
+                state.config6StadiumAutoN = false;
+                state.config6StadiumN = Math.max(2, Math.min(100, raw));
+                rerenderConfig6PreservingFocus("input-config6-stadium-n");
+            }
+        });
+    }
+
+    const cfg6StadM = document.getElementById("input-config6-stadium-m");
+    if (cfg6StadM) {
+        cfg6StadM.addEventListener("change", (e) => {
+            const raw = parseInt(e.target.value);
+            if (!isNaN(raw)) {
+                state.config6StadiumAutoM = false;
+                state.config6StadiumM = Math.max(1, Math.min(100, raw));
+                rerenderConfig6PreservingFocus("input-config6-stadium-m");
+            }
+        });
+    }
+
+    const chkAutoN = document.getElementById("chk-config6-stadium-auto-n");
+    if (chkAutoN) {
+        chkAutoN.addEventListener("change", (e) => {
+            state.config6StadiumAutoN = e.target.checked;
+            rerenderConfig6PreservingFocus(null);
+        });
+    }
+
+    const chkAutoM = document.getElementById("chk-config6-stadium-auto-m");
+    if (chkAutoM) {
+        chkAutoM.addEventListener("change", (e) => {
+            state.config6StadiumAutoM = e.target.checked;
+            rerenderConfig6PreservingFocus(null);
+        });
+    }
+
+    const btnStadAutoFix = document.getElementById("btn-config6-stadium-auto-fix");
+    if (btnStadAutoFix) {
+        btnStadAutoFix.addEventListener("click", () => {
+            state.config6StadiumAutoN = true;
+            state.config6StadiumAutoM = true;
+            rerenderConfig6PreservingFocus(null);
+        });
+    }
+
+
+    ------------------------------------------------------------------------- */
 
     const cfg6Struct = document.getElementById("select-config6-struct");
     if (cfg6Struct) {
@@ -7370,14 +8612,14 @@ function attachDynamicFormListeners() {
 const TRANSLATIONS = {
     brandBadge: ["SÉCURITÉ EN HAUTEUR", "HEIGHT SAFETY", "SEGURIDAD EN ALTURA"],
     homeSubtitle: [
-        "Configurateur Intelligent de Lignes de Vie pour Toitures",
-        "Smart Roof Lifeline Configurator",
-        "Configurador Inteligente de Líneas de Vida para Cubiertas"
+        "Configurateur de Lignes de Vie",
+        "Lifeline Configurator",
+        "Configurador de Líneas de Vida"
     ],
     homeDescription: [
-        "Dimensionnez, visualisez en 3D/2D et éditez la note de conformité réglementaire (EN 795-C, OSHA) pour les systèmes HOOKT Core, Pro et Xtreme.",
-        "Size, visualize in 3D/2D and generate the regulatory compliance note (EN 795-C, OSHA) for HOOKT Core, Pro and Xtreme systems.",
-        "Dimensione, visualice en 3D/2D y genere la nota de conformidad normativa (EN 795-C, OSHA) para los sistemas HOOKT Core, Pro y Xtreme."
+        "Pour les systèmes HOOKT Core, Pro et Xtreme.",
+        "For HOOKT Core, Pro and Xtreme systems.",
+        "Para los sistemas HOOKT Core, Pro y Xtreme."
     ],
     startBtnText: ["Démarrer une Configuration", "Start Configuration", "Iniciar Configuración"],
 
@@ -7930,7 +9172,9 @@ function applyLanguage(langIndex) {
     const lblArrestMode = document.getElementById("lbl-arrest-load-mode");
     if (lblArrestMode) lblArrestMode.textContent = isEn ? "Arrest Load:" : "Arrest Load (Charge d'arrêt) :";
     const lblArrestVal = document.getElementById("lbl-arrest-load-val");
-    if (lblArrestVal) lblArrestVal.textContent = isEn ? `Arrest Load Value (${isUS ? 'lbf' : 'kN'}) :` : `Valeur Charge d'arrêt (${isUS ? 'lbf' : 'kN'}) :`;
+    if (lblArrestVal) lblArrestVal.textContent = isEn
+        ? `Arrest Load (1 user) (${isUS ? 'lbf' : 'kN'}) :`
+        : (l === 2 ? `Carga de parada (1 usuario) (${isUS ? 'lbf' : 'kN'}) :` : `Charge d'arrêt (1 utilisateur) (${isUS ? 'lbf' : 'kN'}) :`);
 
     // Elevation preset
     const lblElevPreset = document.getElementById("lbl-hll-elevation-preset");
@@ -8105,24 +9349,24 @@ function applyLanguage(langIndex) {
     if (btnResetRetractedTxt) btnResetRetractedTxt.textContent = ["Rétablir", "Reset", "Restablecer"][l];
     const badgeRetractedMod = document.getElementById("badge-retracted-modified");
     if (badgeRetractedMod) badgeRetractedMod.textContent = ["modifiée", "modified", "modificada"][l];
-    const retractedWarnTxt = document.getElementById("retracted-warning-text");
-    if (retractedWarnTxt) {
-        retractedWarnTxt.textContent = isLanyardDev
-            ? ["Avertissement : Longueur de la longe supérieure à 3,0 m (9.8 ft).", "Warning: Lanyard length exceeds 3.0 m (9.8 ft).", "Advertencia: Longitud de eslinga superior a 3,0 m (9.8 ft)."][l]
-            : ["Avertissement : Longueur rétractée supérieure à 3,0 m (9.8 ft).", "Warning: Retracted length exceeds 3.0 m (9.8 ft).", "Advertencia: Longitud retraída superior a 3,0 m (9.8 ft)."][l];
-    }
-
     // Update SRL cards display
     if (typeof updateSrlCardsDisplay === "function") updateSrlCardsDisplay();
 
     const lblSrlMadTitle = document.getElementById("lbl-srl-mad-title");
     if (lblSrlMadTitle) lblSrlMadTitle.textContent = ["Distance d'arrêt maximale (MAD) :", "Maximum Arrest Distance (MAD):", "Distancia máxima de parada (MAD):"][l];
     const btnResetMadTxt = document.getElementById("btn-reset-mad-text");
-    if (btnResetMadTxt) btnResetMadTxt.textContent = ["Rétablir", "Reset", "Restablecer"][l];
+    if (btnResetMadTxt) {
+        const srl = (state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) ? SRL_CATALOG[state.selectedSrlId] : null;
+        const curUnit = state.madUnit || "m";
+        const defIn = (srl && srl.default_mad_in) ? srl.default_mad_in : 42.0;
+        const defM = (srl && srl.default_mad_m) ? srl.default_mad_m : 1.0668;
+        btnResetMadTxt.textContent = curUnit === "in" ? `${Math.round(defIn)} in` : `${defM.toFixed(2)} m`;
+    }
     const badgeMadMod = document.getElementById("badge-mad-modified");
     if (badgeMadMod) badgeMadMod.textContent = ["modifiée", "modified", "modificada"][l];
-    const madWarnTxt = document.getElementById("mad-warning-text");
-    if (madWarnTxt) madWarnTxt.textContent = ["Avertissement : MAD supérieure à 2,00 m (6.6 ft).", "Warning: MAD exceeds 2.00 m (6.6 ft).", "Advertencia: MAD superior a 2,00 m (6.6 ft)."][l];
+
+    if (typeof updateRetractedLengthEquivalentUI === "function") updateRetractedLengthEquivalentUI();
+    if (typeof updateMadEquivalentUI === "function") updateMadEquivalentUI();
     const lblBtnStairs = document.getElementById("lbl-btn-stairs");
     if (lblBtnStairs) lblBtnStairs.textContent = ["Escaliers", "Stairs", "Escaleras"][l];
 
@@ -8285,12 +9529,17 @@ function applyLanguage(langIndex) {
     const legLabels = document.getElementById("legend-labels");
     if (legLabels) legLabels.textContent = isEn ? "Labels & Lengths" : "Étiquettes & Longueurs";
 
-    const srlSecTitle = document.getElementById("lbl-srl-section-title");
-    if (srlSecTitle) srlSecTitle.textContent = isEn ? "FALL ARREST DEVICE (SRL / LANYARD)" : "DISPOSITIF ANTICHUTE (SRL / LONGE)";
+    const srlSecTitle = document.getElementById("srl-section-title") || document.getElementById("lbl-srl-section-title");
+    if (srlSecTitle) srlSecTitle.textContent = isEn
+        ? "SRL EQUIPMENT (MANDATORY)"
+        : (l === 2 ? "EQUIPO SRL (OBLIGATORIO)" : "ÉQUIPEMENT SRL (OBLIGATOIRE)");
     const srlSecSub = document.getElementById("srl-section-sub");
     if (srlSecSub) srlSecSub.textContent = isEn
         ? "Select self-retracting lifeline device (SRL). Required to validate calculations and export report."
-        : "Sélectionnez le dispositif antichute à rappel automatique (SRL). Requis pour valider le calcul et éditer le rapport.";
+        : (l === 2
+            ? "Seleccione el dispositivo anticaídas retráctil (SRL). Requerido para validar cálculos y exportar informe."
+            : "Sélectionnez le dispositif antichute à rappel automatique (SRL). Requis pour valider le calcul et éditer le rapport.");
+    if (typeof validateSrlSelection === "function") validateSrlSelection();
 
     // Inspector Card
     const nodeInspTitle = document.getElementById("node-inspector-title");
@@ -8873,18 +10122,19 @@ function getActiveSupportType() {
     return state.mountingType || "omega_mini";
 }
 
+function hasActivePostInConfig() {
+    if (typeof state === 'undefined') return false;
+    const list = (typeof COMPONENTS_DB !== 'undefined' ? (COMPONENTS_DB[normalizeProduct(state.product)] || COMPONENTS_DB[state.product]) : []) || [];
+    return list.some(c => (c.id === "PB_HOOKt" || c.id === "P_Galva" || c.id === "P_Inox") && c.checked);
+}
+
 function getActivePostName() {
-    if (typeof state === 'undefined') return "MINI OMEGA";
+    if (typeof state === 'undefined') return "Sans poteau (Fixation directe)";
     const l = state.lang || 0;
-    if (isXtreme(state.product)) {
-        return ["ANCRAGE A-FIX", "A-FIX ANCHOR", "ANCLAJE A-FIX"][l];
-    }
     const list = (typeof COMPONENTS_DB !== 'undefined' ? (COMPONENTS_DB[normalizeProduct(state.product)] || COMPONENTS_DB[state.product]) : []) || [];
     const postComp = list.find(c => c.id !== "Contre_Plaque" && c.id !== "X-Cone" && c.id !== "Pack_Matrix" && c.id !== "X-Matrix" && c.id !== "New_Pro" && c.id !== "LightPro" && c.id !== "LongRange" && c.checked);
     if (postComp) return getComponentName(postComp);
-    if (isPro(state.product)) return getComponentName({ id: "Mini_Omega", name: "MINI OMEGA" });
-    if (isCore(state.product)) return ["Potelet Basculant", "Tilting Post", "Poste Basculante"][l];
-    return ["Potelet / Ancrage", "Post / Anchor", "Poste / Anclaje"][l];
+    return ["Sans poteau (Fixation directe)", "No post (Direct mounting)", "Sin poste (Fijación directa)"][l];
 }
 
 const Calculator = {
@@ -9060,27 +10310,60 @@ const Calculator = {
                     });
                 }
             } else {
-                line1Nodes.push({ x: parseFloat(currX.toFixed(2)), y: 0.0, z: parseFloat(currZ.toFixed(2)), type: "angle", line: 1 });
-                for (let i = 0; i < spans.length; i++) {
-                    const sp = spans[i];
-                    const len = sp.length || 5.0;
-                    currX += len * Math.cos(headingRad);
-                    currZ += len * Math.sin(headingRad);
+                // Closed loop mode ("stadium" or "manual")
+                state.closedLoop = true;
+                const N = spans.length;
+                const rawVertices = [];
+                let vx = 0, vz = 0, hRad = 0;
 
-                    const rawBend = sp.bendDeg !== undefined ? sp.bendDeg : (360 / spans.length);
-                    const turnDeg = (rawBend > 120) ? (180 - rawBend) : rawBend;
+                for (let i = 0; i < N; i++) {
+                    const prevSp = spans[(i - 1 + N) % N] || {};
+                    const prevRawBend = prevSp.bendDeg !== undefined ? prevSp.bendDeg : (360 / Math.max(1, N));
+                    const prevTurnDeg = (prevRawBend > 120) ? (180 - prevRawBend) : prevRawBend;
+                    const isCorner = Math.abs(prevTurnDeg) > 0.01;
 
-                    line1Nodes.push({
-                        x: parseFloat(currX.toFixed(2)),
+                    rawVertices.push({
+                        x: vx,
                         y: 0.0,
-                        z: parseFloat(currZ.toFixed(2)),
-                        type: "angle",
-                        rotY: headingRad,
-                        bendDeg: turnDeg,
-                        isDoubled: (Math.abs(turnDeg) > 40),
+                        z: vz,
+                        type: isCorner ? "angle" : "intermediaire",
+                        rotY: hRad,
+                        bendDeg: prevTurnDeg,
+                        isDoubled: (Math.abs(prevTurnDeg) > 40.0001),
                         line: 1
                     });
-                    headingRad += (turnDeg * Math.PI) / 180;
+
+                    const sp = spans[i];
+                    const len = sp.length || 5.0;
+                    vx += len * Math.cos(hRad);
+                    vz += len * Math.sin(hRad);
+
+                    const rawBend = sp.bendDeg !== undefined ? sp.bendDeg : (360 / Math.max(1, N));
+                    const turnDeg = (rawBend > 120) ? (180 - rawBend) : rawBend;
+                    hRad += (turnDeg * Math.PI) / 180;
+                }
+
+                // Center the loop around (15.0, 15.0)
+                if (rawVertices.length > 0) {
+                    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+                    rawVertices.forEach(v => {
+                        if (v.x < minX) minX = v.x;
+                        if (v.x > maxX) maxX = v.x;
+                        if (v.z < minZ) minZ = v.z;
+                        if (v.z > maxZ) maxZ = v.z;
+                    });
+                    const cx = (minX + maxX) / 2;
+                    const cz = (minZ + maxZ) / 2;
+                    const targetCenterX = 15.0;
+                    const targetCenterZ = 15.0;
+
+                    line1Nodes = rawVertices.map(v => ({
+                        ...v,
+                        x: parseFloat((v.x - cx + targetCenterX).toFixed(4)),
+                        z: parseFloat((v.z - cz + targetCenterZ).toFixed(4))
+                    }));
+                } else {
+                    line1Nodes = [];
                 }
             }
         } else if (layout === "slope_single") {
@@ -9354,6 +10637,12 @@ const Calculator = {
         for (let i = 0; i < pos.length - 1; i++) {
             const p1 = pos[i];
             const p2 = pos[i + 1];
+            const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow((p2.y || 0) - (p1.y || 0), 2) + Math.pow(p2.z - p1.z, 2));
+            if (dist > maxSpan) maxSpan = dist;
+        }
+        if (state.closedLoop && pos.length > 2) {
+            const p1 = pos[pos.length - 1];
+            const p2 = pos[0];
             const dist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow((p2.y || 0) - (p1.y || 0), 2) + Math.pow(p2.z - p1.z, 2));
             if (dist > maxSpan) maxSpan = dist;
         }
@@ -10113,42 +11402,254 @@ const SystemLabelingModule = {
                 ];
 
             const N = rawSpans.length;
-            for (let i = 0; i < N; i++) {
-                const aId = `A${i + 1}`;
-                const prevSpan = (i === 0) ? `S${N}` : `S${i}`;
-                const nextSpan = `S${i + 1}`;
-                const isFall = (state.fallPosition?.segmentIndex === i);
-                const effortVal = isFall ? (ext1L || 0.0) : 0.0;
-                const pos = geomContext?.anchorPositions ? geomContext.anchorPositions[i] : null;
+            const support = getActiveSupportType();
+            const isOSHA = (state.norm === "OSHA");
+            const isMulti = isOSHA && (state.oshaSpanMode === "multi");
+            const enFF = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
+            const ff = isOSHA ? (state.fallFactor || state.engineerCoefficient || 1.0) : enFF;
+            const p0Kn = effortContext?.p0Kn || (isXtreme(state.product) ? 5.886 : 0.981);
 
-                anchors.push({
-                    id: aId,
-                    type: isEn ? "Loop Vertex" : "Sommet de boucle",
-                    adjacentSpans: [prevSpan, nextSpan],
-                    isFallAnchor: isFall,
-                    isXMatrix: false,
-                    effortKn: effortVal,
-                    effortStr: UnitsModule.formatForce(effortVal),
-                    remarque: isFall ? (isEn ? "Fall Anchor" : "Ancrage de chute") : "-",
-                    position: pos
+            let loopSpanCalcs = effortContext?.spanCalculations || null;
+            if (!loopSpanCalcs || loopSpanCalcs.length !== N) {
+                loopSpanCalcs = rawSpans.map((sp, idx) => {
+                    const spanLen = Math.max(0.1, parseFloat(sp.length) || 5.0);
+                    let sEffort = 0, sDefl = 0, sExt1 = 0, sExt2 = 0;
+                    if (!isOSHA) {
+                        sEffort = Calculator.effortLonge(state.product, spanLen, state.nbUsers, "EN 795", enFF, support, false);
+                        sDefl = Calculator.deflection(state.product, spanLen, enFF, support, state.nbUsers, "EN 795", false);
+                        sExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, "EN 795", sEffort, sDefl, enFF, support, false);
+                        sExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, "EN 795", sEffort, sDefl, enFF, support, false);
+                    } else {
+                        const baseEff = Calculator.effortLonge(state.product, spanLen, state.nbUsers, "OSHA", 1.0, support, isMulti);
+                        sDefl = Calculator.deflection(state.product, spanLen, 1.0, support, state.nbUsers, "OSHA", isMulti);
+                        const baseExt1 = Calculator.extremiteForce1(state.product, spanLen, state.nbUsers, "OSHA", baseEff, sDefl, 1.0, support, isMulti);
+                        const baseExt2 = Calculator.extremiteForce2(state.product, spanLen, state.nbUsers, "OSHA", baseEff, sDefl, 1.0, support, isMulti);
+                        sEffort = baseEff * ff;
+                        sExt1 = baseExt1 * ff;
+                        sExt2 = baseExt2 * ff;
+                    }
+                    return {
+                        idx,
+                        id: `S${idx + 1}`,
+                        internalSpanId: sp.id || `cfg6_s_${idx + 1}`,
+                        length: spanLen,
+                        effortKn: sEffort,
+                        deflMm: sDefl,
+                        ext1Kn: sExt1,
+                        ext2Kn: sExt2,
+                        maxTensionKn: Math.max(sExt1, sExt2)
+                    };
                 });
+            }
+
+            const fallMode = effortContext?.fallMode || state.fallCalculationMode || "critical_case";
+            let chosenSpanIdx = (effortContext?.chosenSpanIdx !== undefined && effortContext.chosenSpanIdx >= 0)
+                ? effortContext.chosenSpanIdx
+                : rawSpans.findIndex(s => s.id === state.selectedFallSpanId);
+            if (chosenSpanIdx < 0) chosenSpanIdx = Math.max(0, Math.min(N - 1, state.fallPosition?.segmentIndex || 0));
+
+            let critSpanIdx = 0;
+            let maxCrit = -1;
+            loopSpanCalcs.forEach((sc, ci) => {
+                if (sc.maxTensionKn > maxCrit || (sc.maxTensionKn === maxCrit && sc.length > loopSpanCalcs[critSpanIdx].length)) {
+                    maxCrit = sc.maxTensionKn;
+                    critSpanIdx = ci;
+                }
+            });
+
+            const activeFallSpanIdx = (fallMode === "selected_span") ? chosenSpanIdx : critSpanIdx;
+
+            let loopAdaptedPoints = effortContext?.adaptedPoints || null;
+            if (isMulti && !loopAdaptedPoints && loopSpanCalcs) {
+                try {
+                    const l = (parseInt(state.lang) === 1 || parseInt(state.lang) === 2) ? parseInt(state.lang) : 0;
+                    const multiSpanResultsPerSpan = rawSpans.map((sp, sIdx) => {
+                        const sc = loopSpanCalcs[sIdx];
+                        const sEffort = sc.effortKn;
+                        const sDefl = sc.deflMm;
+                        const sExt1 = sc.ext1Kn;
+                        const sExt2 = sc.ext2Kn;
+                        const sExt3 = Calculator.extremiteForce3(state.product, sc.length, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, true);
+                        const sExt4 = Calculator.extremiteForce4(state.product, sc.length, state.nbUsers, state.norm, sEffort, sDefl, state.fallFactor, support, true);
+                        const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(sExt1, sExt2, sExt3, sExt4);
+                        const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, rawSpans, sIdx);
+                        const adapted = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, N, l, sIdx, p0Kn, rawSpans);
+                        return { sIdx, sc, adapted };
+                    });
+
+                    if (fallMode === "selected_span") {
+                        const targetIdx = Math.max(0, Math.min(rawSpans.length - 1, chosenSpanIdx));
+                        loopAdaptedPoints = multiSpanResultsPerSpan[targetIdx].adapted.points;
+                    } else {
+                        const primaryAdapted = multiSpanResultsPerSpan[critSpanIdx]?.adapted || multiSpanResultsPerSpan[0]?.adapted;
+                        const envelopePoints = [];
+                        const numPts = primaryAdapted?.points ? primaryAdapted.points.length : N;
+                        for (let aIdx = 0; aIdx < numPts; aIdx++) {
+                            let maxVal = -1;
+                            for (let sIdx = 0; sIdx < rawSpans.length; sIdx++) {
+                                const ptVal = multiSpanResultsPerSpan[sIdx].adapted.points[aIdx]?.val || 0;
+                                if (ptVal > maxVal) maxVal = ptVal;
+                            }
+                            const basePt = primaryAdapted.points[aIdx] || {};
+                            envelopePoints.push({
+                                ...basePt,
+                                val: maxVal
+                            });
+                        }
+                        loopAdaptedPoints = envelopePoints;
+                    }
+                } catch (e) {
+                    loopAdaptedPoints = null;
+                }
+            }
+
+            const vertexAnchors = [];
+            let anchorPosIdx = 0;
+
+            for (let i = 0; i < N; i++) {
+                const prevIdx = (i - 1 + N) % N;
+                const prevSpanId = `S${prevIdx + 1}`;
+                const nextSpanId = `S${i + 1}`;
+
+                const prevSp = rawSpans[prevIdx] || {};
+                const rawBend = prevSp.bendDeg !== undefined ? parseFloat(prevSp.bendDeg) : 0;
+                const turnDeg = (rawBend > 120) ? (180 - rawBend) : rawBend;
+                const isBigBend = Math.abs(turnDeg) > 40.0001;
+
+                if (isBigBend) {
+                    const idA = `A${i + 1}a`;
+                    const idB = `A${i + 1}b`;
+
+                    let isFallA = (activeFallSpanIdx === prevIdx);
+                    let isFallB = (activeFallSpanIdx === i);
+
+                    let effA = (fallMode === "selected_span")
+                        ? (isFallA ? loopSpanCalcs[prevIdx].ext2Kn : p0Kn)
+                        : loopSpanCalcs[prevIdx].ext2Kn;
+                    let effB = (fallMode === "selected_span")
+                        ? (isFallB ? loopSpanCalcs[i].ext1Kn : p0Kn)
+                        : loopSpanCalcs[i].ext1Kn;
+                    let remA = isFallA ? (isEn ? "Double fall anchor" : "Ancrage double (chute)") : (isEn ? `Double anchor (${turnDeg.toFixed(1)}°)` : `Ancrage double (${turnDeg.toFixed(1)}°)`);
+                    let remB = isFallB ? (isEn ? "Double fall anchor" : "Ancrage double (chute)") : (isEn ? `Double anchor (${turnDeg.toFixed(1)}°)` : `Ancrage double (${turnDeg.toFixed(1)}°)`);
+
+                    if (isMulti && loopAdaptedPoints) {
+                        if (loopAdaptedPoints[anchorPosIdx]) {
+                            effA = loopAdaptedPoints[anchorPosIdx].val;
+                            isFallA = Boolean(loopAdaptedPoints[anchorPosIdx].isFallAnchor);
+                            remA = loopAdaptedPoints[anchorPosIdx].remarque || remA;
+                        }
+                        if (loopAdaptedPoints[anchorPosIdx + 1]) {
+                            effB = loopAdaptedPoints[anchorPosIdx + 1].val;
+                            isFallB = Boolean(loopAdaptedPoints[anchorPosIdx + 1].isFallAnchor);
+                            remB = loopAdaptedPoints[anchorPosIdx + 1].remarque || remB;
+                        }
+                    }
+
+                    const idxA = anchorPosIdx++;
+                    const idxB = anchorPosIdx++;
+                    const posA = geomContext?.anchorPositions ? geomContext.anchorPositions[idxA] : null;
+                    const posB = geomContext?.anchorPositions ? geomContext.anchorPositions[idxB] : null;
+
+                    anchors.push({
+                        id: idA,
+                        type: isEn ? "Double Anchor" : "Ancrage double",
+                        adjacentSpans: [prevSpanId],
+                        isFallAnchor: isFallA,
+                        isDoubleAnchor: true,
+                        bendDeg: turnDeg,
+                        isXMatrix: false,
+                        effortKn: effA,
+                        effortStr: UnitsModule.formatForce(effA),
+                        remarque: remA,
+                        position: posA
+                    });
+
+                    anchors.push({
+                        id: idB,
+                        type: isEn ? "Double Anchor" : "Ancrage double",
+                        adjacentSpans: [nextSpanId],
+                        isFallAnchor: isFallB,
+                        isDoubleAnchor: true,
+                        bendDeg: turnDeg,
+                        isXMatrix: false,
+                        effortKn: effB,
+                        effortStr: UnitsModule.formatForce(effB),
+                        remarque: remB,
+                        position: posB
+                    });
+
+                    vertexAnchors.push([idA, idB]);
+                } else {
+                    const aId = `A${i + 1}`;
+                    let isFall = (activeFallSpanIdx === prevIdx || activeFallSpanIdx === i);
+                    let effortVal = p0Kn;
+                    if (fallMode === "selected_span") {
+                        if (activeFallSpanIdx === prevIdx) effortVal = loopSpanCalcs[prevIdx].ext2Kn;
+                        else if (activeFallSpanIdx === i) effortVal = loopSpanCalcs[i].ext1Kn;
+                    } else {
+                        effortVal = Math.max(loopSpanCalcs[prevIdx].ext2Kn, loopSpanCalcs[i].ext1Kn);
+                    }
+                    let rem = isFall ? (isEn ? "Fall Anchor" : "Ancrage de chute") : "-";
+
+                    const idxSingle = anchorPosIdx++;
+                    if (isMulti && loopAdaptedPoints && loopAdaptedPoints[idxSingle]) {
+                        effortVal = loopAdaptedPoints[idxSingle].val;
+                        isFall = Boolean(loopAdaptedPoints[idxSingle].isFallAnchor);
+                        rem = loopAdaptedPoints[idxSingle].remarque || rem;
+                    }
+
+                    const pos = geomContext?.anchorPositions ? geomContext.anchorPositions[idxSingle] : null;
+                    const isStraightInter = Math.abs(turnDeg) < 0.01;
+
+                    anchors.push({
+                        id: aId,
+                        type: isStraightInter
+                            ? (isEn ? "Intermediate" : "Intermédiaire")
+                            : (isEn ? `Corner (${turnDeg.toFixed(1)}°)` : `Angle (${turnDeg.toFixed(1)}°)`),
+                        adjacentSpans: [prevSpanId, nextSpanId],
+                        isFallAnchor: isFall,
+                        isDoubleAnchor: false,
+                        bendDeg: turnDeg,
+                        isXMatrix: false,
+                        effortKn: effortVal,
+                        effortStr: UnitsModule.formatForce(effortVal),
+                        remarque: rem,
+                        position: pos
+                    });
+
+                    vertexAnchors.push([aId]);
+                }
             }
 
             for (let i = 0; i < N; i++) {
                 const sId = `S${i + 1}`;
-                const fromA = `A${i + 1}`;
-                const toA = (i === N - 1) ? `A1` : `A${i + 2}`;
-                const len = parseFloat(rawSpans[i].length) || 10.0;
+                const vStart = vertexAnchors[i];
+                const vEnd = vertexAnchors[(i + 1) % N];
+                const fromA = vStart[vStart.length - 1];
+                const toA = vEnd[0];
+                const sc = loopSpanCalcs[i];
+                const len = sc.length;
                 const mid = geomContext?.spanMids ? geomContext.spanMids[i] : null;
+                const isFallSpan = (i === chosenSpanIdx);
+                const isCritSpan = (i === critSpanIdx);
+                const rawBend = rawSpans[i].bendDeg !== undefined ? parseFloat(rawSpans[i].bendDeg) : 0;
 
                 spans.push({
                     id: sId,
-                    internalSpanId: rawSpans[i].id,
+                    internalSpanId: rawSpans[i].id || `cfg6_s_${i + 1}`,
                     spanIndex: i,
                     fromAnchorId: fromA,
                     toAnchorId: toA,
                     length: len,
+                    bendDeg: rawBend,
                     slopeDeg: 0,
+                    deflMm: sc.deflMm,
+                    effortKn: sc.effortKn,
+                    ext1Kn: sc.ext1Kn,
+                    ext2Kn: sc.ext2Kn,
+                    anchorLoadKn: sc.maxTensionKn,
+                    isFallSpan,
+                    isCriticalSpan: isCritSpan,
                     text: `${sId} : ${formatLen(len)}`,
                     midPoint: mid
                 });
@@ -10192,7 +11693,7 @@ const SystemLabelingModule = {
 
                     let sEffort = 0, sDefl = 0, sExt1 = 0, sExt2 = 0;
                     let slopedRep = null;
-                    if (rawSpans.length === 1 && effortContext && effortContext.ext1L !== undefined && effortContext.ext1L > 0) {
+                    if (rawSpans.length === 1 && !isThisSloped && effortContext && effortContext.ext1L !== undefined && effortContext.ext1L > 0) {
                         sExt1 = effortContext.ext1L;
                         sExt2 = effortContext.ext2L || effortContext.ext1L;
                         sEffort = effortContext.effortL || 0;
@@ -10200,8 +11701,11 @@ const SystemLabelingModule = {
                     } else if (isThisSloped) {
                         const targetSlope = spSlopeDeg >= 14.5 ? spSlopeDeg : (state.roofSlope || 15);
                         slopedRep = SlopedSystemConesModule.getFullScenarioReport(targetSlope, spanLen, state.lineLength);
-                        sExt1 = slopedRep.retainedMax.loadCellTopKn;
-                        sExt2 = slopedRep.retainedMax.loadCellBottomKn;
+                        const isDown = Boolean(sp && sp.direction === "down");
+                        const topVal = slopedRep.retainedMax.loadCellTopKn;
+                        const bottomVal = slopedRep.retainedMax.loadCellBottomKn;
+                        sExt1 = isDown ? topVal : bottomVal;
+                        sExt2 = isDown ? bottomVal : topVal;
                         sEffort = Calculator.effortLonge(state.product, spanLen, 1, state.norm, isOSHA ? 1.0 : enFF, support, false);
                         sDefl = Calculator.deflection(state.product, spanLen, isOSHA ? 1.0 : enFF, support, 1, state.norm, false);
                     } else if (!isOSHA) {
@@ -11347,14 +12851,15 @@ const SystemLabelingModule = {
                 const baseEffortKn = s.anchorLoadKn || 0;
                 const effTxt = (typeof UnitsModule !== "undefined" && UnitsModule.formatForce) ? UnitsModule.formatForce(baseEffortKn) : `${baseEffortKn.toFixed(2)} kN`;
                 const adjEffTxt = (typeof UnitsModule !== "undefined" && UnitsModule.formatForce) ? UnitsModule.formatForce(baseEffortKn * engCoef) : `${(baseEffortKn * engCoef).toFixed(2)} kN`;
-                const isFallSpan = Boolean(state.selectedFallSpanId && (s.internalSpanId === state.selectedFallSpanId || s.id === state.selectedFallSpanId || (state.spans && state.spans[sIdx] && state.spans[sIdx].id === state.selectedFallSpanId)));
+                const isFallSpan = Boolean(s.isFallSpan || (state.selectedFallSpanId && (s.internalSpanId === state.selectedFallSpanId || s.id === state.selectedFallSpanId)));
                 const isCrit = s.isCriticalSpan;
                 let rowCls = isFallSpan ? "active-fall-row" : (isCrit && isCritMode ? "critical-span-row" : "");
                 let badgeCls = isFallSpan ? "fall-badge" : (isCrit && isCritMode ? "critical-badge" : "span-badge");
+                const mainSpanIdx = (s.spanIndex !== undefined && s.spanIndex !== null) ? s.spanIndex : -1;
 
                 if (isAdjusted) {
                     sHtml += `
-                        <tr class="${rowCls} clickable-row" style="cursor:pointer;" onclick="selectSpanFromTable(${sIdx}, '${s.internalSpanId || ''}');" title="${isEn ? "Select and calculate span " + s.id : "Sélectionner et calculer l'entraxe " + s.id}">
+                        <tr class="${rowCls} clickable-row" style="cursor:pointer;" onclick="selectSpanFromTable(${mainSpanIdx}, '${s.internalSpanId || s.id}');" title="${isEn ? "Select and calculate span " + s.id : "Sélectionner et calculer l'entraxe " + s.id}">
                             <td><span class="badge-tag-id ${badgeCls}">${s.id}</span></td>
                             <td><strong>${s.fromAnchorId} → ${s.toAnchorId}</strong></td>
                             <td><strong>${lenTxt}${slopeBadge}</strong></td>
@@ -11365,7 +12870,7 @@ const SystemLabelingModule = {
                     `;
                 } else {
                     sHtml += `
-                        <tr class="${rowCls} clickable-row" style="cursor:pointer;" onclick="selectSpanFromTable(${sIdx}, '${s.internalSpanId || ''}');" title="${isEn ? "Select and calculate span " + s.id : "Sélectionner et calculer l'entraxe " + s.id}">
+                        <tr class="${rowCls} clickable-row" style="cursor:pointer;" onclick="selectSpanFromTable(${mainSpanIdx}, '${s.internalSpanId || s.id}');" title="${isEn ? "Select and calculate span " + s.id : "Sélectionner et calculer l'entraxe " + s.id}">
                             <td><span class="badge-tag-id ${badgeCls}">${s.id}</span></td>
                             <td><strong>${s.fromAnchorId} → ${s.toAnchorId}</strong></td>
                             <td><strong>${lenTxt}${slopeBadge}</strong></td>
@@ -11383,16 +12888,15 @@ if (typeof window !== "undefined") {
     window.SystemLabelingModule = SystemLabelingModule;
 }
 
-function selectSpanFromTable(sIdx, spanId) {
-    const targetId = spanId || (state.spans && state.spans[sIdx] ? state.spans[sIdx].id : null);
+function selectSpanFromTable(mainSpanIdx, spanId) {
+    const targetId = spanId || (state.spans && mainSpanIdx >= 0 && state.spans[mainSpanIdx] ? state.spans[mainSpanIdx].id : null);
     if (targetId && typeof LayoutEditorModule !== "undefined" && LayoutEditorModule.selectFallSpan) {
         LayoutEditorModule.selectFallSpan(targetId);
-    } else if (state.spans && state.spans[sIdx]) {
-        state.selectedFallSpanId = state.spans[sIdx].id;
-        if (state.fallPosition) state.fallPosition.segmentIndex = sIdx;
+    } else if (state.spans && mainSpanIdx >= 0 && state.spans[mainSpanIdx]) {
+        state.selectedFallSpanId = state.spans[mainSpanIdx].id;
+        if (state.fallPosition) state.fallPosition.segmentIndex = mainSpanIdx;
     }
     state.fallCalculationMode = "selected_span";
-    if (state.fallPosition) state.fallPosition.segmentIndex = sIdx;
     const tabCrit = document.getElementById("tab-mode-critical");
     const tabSel = document.getElementById("tab-mode-selected");
     if (tabCrit) tabCrit.classList.remove("active");
@@ -11400,8 +12904,8 @@ function selectSpanFromTable(sIdx, spanId) {
     const selModal = document.getElementById("select-fall-mode");
     if (selModal) selModal.value = "selected_span";
 
-    if (typeof highlightSelectedNode === "function") {
-        highlightSelectedNode(sIdx, sIdx);
+    if (mainSpanIdx >= 0 && typeof highlightSelectedNode === "function") {
+        highlightSelectedNode(mainSpanIdx, mainSpanIdx);
     }
     if (typeof updateCalculationsUI === "function") {
         const maxSpan = Calculator.getMaxSpan(state.product);
@@ -11443,9 +12947,24 @@ const Dimensions3DModule = {
     },
 
     createDimensionSprite(text) {
+        const font = "bold 22px 'Inter', system-ui, sans-serif";
+        let textW = 160;
+        try {
+            const tempCanvas = document.createElement("canvas");
+            const tempCtx = tempCanvas.getContext("2d");
+            if (tempCtx && tempCtx.measureText) {
+                tempCtx.font = font;
+                textW = tempCtx.measureText(text).width;
+            }
+        } catch (e) {
+            textW = (text || "").length * 13;
+        }
+
+        const canvasW = Math.max(256, Math.ceil(textW + 40));
+        const canvasH = 64;
         const canvas = document.createElement("canvas");
-        canvas.width = 256;
-        canvas.height = 64;
+        canvas.width = canvasW;
+        canvas.height = canvasH;
         const ctx = canvas.getContext("2d");
 
         // Rounded pill background
@@ -11468,7 +12987,7 @@ const Dimensions3DModule = {
         ctx.stroke();
 
         ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 24px 'Inter', system-ui, sans-serif";
+        ctx.font = font;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(text, canvas.width / 2, canvas.height / 2);
@@ -11477,7 +12996,8 @@ const Dimensions3DModule = {
         texture.minFilter = THREE.LinearFilter;
         const spriteMat = new THREE.SpriteMaterial({ map: texture, depthTest: false });
         const sprite = new THREE.Sprite(spriteMat);
-        sprite.scale.set(2.0, 0.5, 1.0);
+        const worldScaleW = (canvasW / 256) * 2.0;
+        sprite.scale.set(worldScaleW, 0.5, 1.0);
         return sprite;
     },
 
@@ -11556,7 +13076,7 @@ const Dimensions3DModule = {
         const obsH = Math.max(0, H_ground - wwsM);
         if (obsH > 0.01) {
             const obsDepth = 2.5;
-            const wwsLabel = `Available Fall Clearance: ${UnitsModule.formatLength(wwsM)}`;
+            const wwsLabel = `Fall Clearance: ${UnitsModule.formatLength(wwsM)}`;
             const pWws1 = new THREE.Vector3(0, -wwsM, -obsDepth);
             const pWws2 = new THREE.Vector3(0, 0, -obsDepth);
             grp.add(this.createDimensionLine(pWws1, pWws2, new THREE.Vector3(-1.2, 0, 0), wwsLabel, 0x10b981));
@@ -11565,6 +13085,11 @@ const Dimensions3DModule = {
             const pObs1 = new THREE.Vector3(0, -H_ground, -obsDepth);
             const pObs2 = new THREE.Vector3(0, -wwsM, -obsDepth);
             grp.add(this.createDimensionLine(pObs1, pObs2, new THREE.Vector3(-1.2, 0, 0), obsLabel, 0xd97706));
+        } else {
+            const wwsLabel = `Fall Clearance: ${UnitsModule.formatLength(wwsM)}`;
+            const pWws1 = new THREE.Vector3(0, -wwsM, -0.6);
+            const pWws2 = new THREE.Vector3(0, 0, -0.6);
+            grp.add(this.createDimensionLine(pWws1, pWws2, new THREE.Vector3(-1.2, 0, 0), wwsLabel, 0x10b981));
         }
 
         // 4. Line to edge (connecting roof edge at Z=0 to lifeline at Z=lineToEdge)
@@ -11585,6 +13110,36 @@ const Dimensions3DModule = {
         const pP1 = new THREE.Vector3(lineToEdge, 0, lineToEdge);
         const pP2 = new THREE.Vector3(lineToEdge, visualPostH, lineToEdge);
         grp.add(this.createDimensionLine(pP1, pP2, new THREE.Vector3(-0.9, 0, 0), elevText, 0x10b981));
+
+        // 6. Roof Surface (WWS - Walking-Working Surface) Label
+        const wwsZ = (l > lineToEdge + 1.5) ? (lineToEdge + (l - lineToEdge) * 0.5) : (l * 0.5);
+        const wwsX = L * 0.5;
+        const wwsY = (typeof getRoofHeightAt === "function") ? getRoofHeightAt(wwsX, wwsZ) : 0.0;
+
+        // Pin leader line from surface to badge
+        const pinGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(wwsX, wwsY, wwsZ),
+            new THREE.Vector3(wwsX, wwsY + 0.35, wwsZ)
+        ]);
+        const pinMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, depthTest: false, linewidth: 2 });
+        grp.add(new THREE.Line(pinGeo, pinMat));
+
+        // Small surface anchor dot
+        const dotGeo = new THREE.CircleGeometry(0.12, 16);
+        dotGeo.rotateX(-Math.PI / 2);
+        const dotMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, depthTest: false, side: THREE.DoubleSide });
+        const dotMesh = new THREE.Mesh(dotGeo, dotMat);
+        dotMesh.position.set(wwsX, wwsY + 0.01, wwsZ);
+        grp.add(dotMesh);
+
+        const isLangEn = (parseInt(state.lang) === 1);
+        const isLangEs = (parseInt(state.lang) === 2);
+        const wwsSurfaceLabel = (isLangEn || state.norm === "OSHA")
+            ? "WWS (Walking-Working Surface)"
+            : (isLangEs ? "WWS (Superficie de trabajo)" : "WWS (Surface de travail)");
+        const wwsSpr = this.createDimensionSprite(wwsSurfaceLabel);
+        wwsSpr.position.set(wwsX, wwsY + 0.55, wwsZ);
+        grp.add(wwsSpr);
 
         // 5. Slopes
         if (roofType === "sloped") {
@@ -12374,7 +13929,7 @@ function prepareOBJModel(rawObj, rotY, modelFile = null) {
 
     // Save actual model height for precise cable attachment
     if (isLongRangeModel) {
-        wrapper.userData.height = 0.251; // Cable passage offset aligned with the upper clamp groove (la gorge de passage du câble)
+        wrapper.userData.height = 0.068; // Cable passage offset aligned with the upper clamp groove (la gorge de passage du câble Y = 0.0678m)
     } else {
         wrapper.userData.height = (size.y > 0.05 && size.y < 10.0) ? size.y : 0.45;
     }
@@ -12642,21 +14197,21 @@ function createAnchorMesh(colorHex, nodeType = "intermediaire", compId = null, r
         renderedCount++;
 
         if (isRangeFamily && nodeType === "intermediaire") {
-            // Intermediate pass-through cable guide (anneau de passage) flush on top plate at Y = visualPostH
+            // Intermediate pass-through cable guide (anneau de passage) aligned with LongRange clamp groove (Y = visualPostH + 0.068)
             const ringGeo = new THREE.TorusGeometry(0.022, 0.006, 12, 24);
             const ringMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.85, roughness: 0.25 });
             const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-            ringMesh.position.set(0, currentBaseY + 0.251, 0);
+            ringMesh.position.set(0, currentBaseY + 0.068, 0);
             ringMesh.rotation.y = -rotY + Math.PI / 2;
             mainGroup.add(ringMesh);
 
             // Small vertical mounting lug under the ring
-            const lugGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.23, 12);
+            const lugGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.046, 12);
             const lugMesh = new THREE.Mesh(lugGeo, ringMat);
-            lugMesh.position.set(0, currentBaseY + 0.115, 0);
+            lugMesh.position.set(0, currentBaseY + 0.023, 0);
             mainGroup.add(lugMesh);
 
-            totalHeight += 0.251;
+            totalHeight += 0.068;
         }
     }
 
@@ -12707,6 +14262,9 @@ function createAnchorMesh(colorHex, nodeType = "intermediaire", compId = null, r
             mainGroup.add(modelObj);
             renderedCount++;
         } else if (file) {
+            if (file.includes("LongRange") || file.includes("long_range") || file.includes("Long_Range")) {
+                totalHeight += 0.068;
+            }
             loadOBJModel(file).then(() => {
                 if (typeof update3DScene === "function") update3DScene();
             });
@@ -12767,7 +14325,7 @@ function create3DRoofShape(L, l, roofMat) {
     const edgeMat = new THREE.LineBasicMaterial({ color: 0x0f172a });
 
     if (state.layoutType === "multi_bend_circle") {
-        const H = state.config6Height || 8.0;
+        const H = parseFloat(state.roof_height_above_ground || state.roofHeightAboveGround || state.config6Height || 8.0);
         const groundGeo = new THREE.BoxGeometry(L + 12, 0.2, l + 12);
         const groundMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.8 });
         const groundMesh = new THREE.Mesh(groundGeo, groundMat);
@@ -13296,11 +14854,11 @@ function createConfig6Structures3D() {
     if (state.layoutType !== "multi_bend_circle") return;
 
     const D = state.config6Diameter || 30.0;
-    const H = state.config6Height || 8.0;
+    const H = parseFloat(state.roof_height_above_ground || state.roofHeightAboveGround || state.config6Height || 8.0);
     const R = D / 2;
     const centerX = 15.0;
     const centerZ = 15.0;
-    const structType = state.config6StructureType || "reservoir";
+    const structType = state.config6StructureType || (state.config6Mode === "stadium" ? "stadium" : "reservoir");
 
     const tankMat = new THREE.MeshStandardMaterial({
         color: 0x64748b,
@@ -13324,7 +14882,190 @@ function createConfig6Structures3D() {
         metalness: 0.6
     });
 
-    const actualH = H;
+    const actualH = Math.max(1.0, H);
+
+    /* --- MODE STADE (CONFIGURATION EN MODE CACHÉ) - STRUCTURE 3D ---
+    if (structType === "stadium") {
+        const L_tot = Math.max(4.0, parseFloat(state.config6StadiumLength) || 60.0);
+        const W = Math.max(2.0, parseFloat(state.config6StadiumWidth) || 30.0);
+        const setback = Math.max(0.2, parseFloat(state.config6Setback !== undefined ? state.config6Setback : 0.5));
+        const S = Math.max(0.5, L_tot - W);
+        const halfS = S / 2;
+        const R_line = W / 2;
+        const R_outer = R_line + setback;
+        const canopyWidth = Math.max(2.5, Math.min(R_line * 0.45, Math.max(4.0, setback * 2 + 3.0)));
+        const R_inner = Math.max(1.0, R_outer - canopyWidth);
+
+        const makeStadiumPath = (hS, rad, isHole = false) => {
+            const p = isHole ? new THREE.Path() : new THREE.Shape();
+            p.moveTo(-hS, -rad);
+            p.lineTo(hS, -rad);
+            p.absarc(hS, 0, rad, -Math.PI / 2, Math.PI / 2, false);
+            p.lineTo(-hS, rad);
+            p.absarc(-hS, 0, rad, Math.PI / 2, (3 * Math.PI) / 2, false);
+            p.closePath();
+            return p;
+        };
+
+        // 1. Stadium Tribune Roof Ring + Outer Wall Bowl (from Y = 0 down to Y = -actualH)
+        const stadiumRoofShape = makeStadiumPath(halfS, R_outer, false);
+        const stadiumHole = makeStadiumPath(halfS, R_inner, true);
+        stadiumRoofShape.holes.push(stadiumHole);
+
+        const extrudeGeo = new THREE.ExtrudeGeometry(stadiumRoofShape, {
+            depth: actualH,
+            bevelEnabled: false,
+            curveSegments: 48
+        });
+        extrudeGeo.rotateX(Math.PI / 2);
+
+        const roofMat = new THREE.MeshStandardMaterial({
+            color: 0x94a3b8,
+            roughness: 0.45,
+            metalness: 0.25
+        });
+        const stadiumRingMesh = new THREE.Mesh(extrudeGeo, roofMat);
+        stadiumRingMesh.position.set(centerX, 0.0, centerZ);
+        stadiumRingMesh.castShadow = true;
+        stadiumRingMesh.receiveShadow = true;
+        config6StructuresGroup.add(stadiumRingMesh);
+
+        const ringEdges = new THREE.EdgesGeometry(extrudeGeo, 20);
+        const ringLines = new THREE.LineSegments(ringEdges, edgeLineMat);
+        ringLines.position.set(centerX, 0.0, centerZ);
+        config6StructuresGroup.add(ringLines);
+
+        // 2. Interior Tiered Tribune Steps inside the bowl
+        const numTiers = 3;
+        const tierMat = new THREE.MeshStandardMaterial({
+            color: 0x64748b,
+            roughness: 0.6,
+            metalness: 0.15
+        });
+        for (let t = 1; t <= numTiers; t++) {
+            const rTierOuter = R_inner;
+            const rTierInner = Math.max(0.5, R_inner - (t * (R_inner * 0.14)));
+            if (rTierOuter > rTierInner + 0.2) {
+                const tierH = actualH * (1 - t * 0.22);
+                const tierShape = makeStadiumPath(halfS, rTierOuter, false);
+                tierShape.holes.push(makeStadiumPath(halfS, rTierInner, true));
+                const tierGeo = new THREE.ExtrudeGeometry(tierShape, {
+                    depth: Math.max(0.5, tierH),
+                    bevelEnabled: false,
+                    curveSegments: 32
+                });
+                tierGeo.rotateX(Math.PI / 2);
+                const tierMesh = new THREE.Mesh(tierGeo, tierMat);
+                tierMesh.position.set(centerX, -(actualH - tierH), centerZ);
+                config6StructuresGroup.add(tierMesh);
+            }
+        }
+
+        // 3. Central Green Pitch / Field at Y = -actualH + 0.1
+        const pitchShape = makeStadiumPath(halfS, R_inner, false);
+        const pitchGeo = new THREE.ExtrudeGeometry(pitchShape, {
+            depth: 0.15,
+            bevelEnabled: false,
+            curveSegments: 32
+        });
+        pitchGeo.rotateX(Math.PI / 2);
+        const pitchMat = new THREE.MeshStandardMaterial({
+            color: 0x15803d,
+            roughness: 0.8,
+            metalness: 0.05
+        });
+        const pitchMesh = new THREE.Mesh(pitchGeo, pitchMat);
+        pitchMesh.position.set(centerX, -actualH + 0.15, centerZ);
+        pitchMesh.receiveShadow = true;
+        config6StructuresGroup.add(pitchMesh);
+
+        // White pitch markings (touchlines, halfway line, center circle)
+        const lineMatWhite = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+        const pitchL = Math.max(2.0, S * 0.85);
+        const pitchW = Math.max(1.5, R_inner * 1.15);
+        const markY = -actualH + 0.17;
+        const borderGroup = new THREE.Group();
+        const borderThick = 0.12;
+        const topLine = new THREE.Mesh(new THREE.PlaneGeometry(pitchL, borderThick), lineMatWhite);
+        topLine.rotation.x = -Math.PI / 2;
+        topLine.position.set(0, 0, -pitchW / 2);
+        const botLine = new THREE.Mesh(new THREE.PlaneGeometry(pitchL, borderThick), lineMatWhite);
+        botLine.rotation.x = -Math.PI / 2;
+        botLine.position.set(0, 0, pitchW / 2);
+        const leftLine = new THREE.Mesh(new THREE.PlaneGeometry(borderThick, pitchW), lineMatWhite);
+        leftLine.rotation.x = -Math.PI / 2;
+        leftLine.position.set(-pitchL / 2, 0, 0);
+        const rightLine = new THREE.Mesh(new THREE.PlaneGeometry(borderThick, pitchW), lineMatWhite);
+        rightLine.rotation.x = -Math.PI / 2;
+        rightLine.position.set(pitchL / 2, 0, 0);
+        const midLine = new THREE.Mesh(new THREE.PlaneGeometry(borderThick, pitchW), lineMatWhite);
+        midLine.rotation.x = -Math.PI / 2;
+        const centerCircleGeo = new THREE.RingGeometry(Math.min(pitchW * 0.2, 3.0), Math.min(pitchW * 0.2, 3.0) + borderThick, 32);
+        const centerCircle = new THREE.Mesh(centerCircleGeo, lineMatWhite);
+        centerCircle.rotation.x = -Math.PI / 2;
+        borderGroup.add(topLine, botLine, leftLine, rightLine, midLine, centerCircle);
+        borderGroup.position.set(centerX, markY, centerZ);
+        config6StructuresGroup.add(borderGroup);
+
+        // 4. Exterior Structural Ribs along straight sides & semicircles
+        const ribGeo = new THREE.CylinderGeometry(0.05, 0.05, actualH, 8);
+        const numStraightRibs = Math.max(2, Math.round(S / 7.5));
+        for (let i = 0; i <= numStraightRibs; i++) {
+            const rx = centerX - halfS + (i * S) / numStraightRibs;
+            const rib1 = new THREE.Mesh(ribGeo, rimMat);
+            rib1.position.set(rx, -actualH / 2, centerZ - R_outer - 0.03);
+            const rib2 = new THREE.Mesh(ribGeo, rimMat);
+            rib2.position.set(rx, -actualH / 2, centerZ + R_outer + 0.03);
+            config6StructuresGroup.add(rib1, rib2);
+        }
+        const numArcRibs = 8;
+        for (let i = 1; i < numArcRibs; i++) {
+            const ang1 = -Math.PI / 2 + (i * Math.PI) / numArcRibs;
+            const ribR = new THREE.Mesh(ribGeo, rimMat);
+            ribR.position.set(centerX + halfS + (R_outer + 0.03) * Math.cos(ang1), -actualH / 2, centerZ + (R_outer + 0.03) * Math.sin(ang1));
+            const ang2 = Math.PI / 2 + (i * Math.PI) / numArcRibs;
+            const ribL = new THREE.Mesh(ribGeo, rimMat);
+            ribL.position.set(centerX - halfS + (R_outer + 0.03) * Math.cos(ang2), -actualH / 2, centerZ + (R_outer + 0.03) * Math.sin(ang2));
+            config6StructuresGroup.add(ribR, ribL);
+        }
+
+        // 5. Access Ladder on outer stadium wall near A1 (centerX - halfS, centerZ - R_outer)
+        const ladderGroup = new THREE.Group();
+        const railGeo = new THREE.CylinderGeometry(0.025, 0.025, actualH + 1.0, 12);
+        const rail1 = new THREE.Mesh(railGeo, steelMat);
+        rail1.position.set(-0.25, -actualH / 2 + 0.5, 0);
+        const rail2 = new THREE.Mesh(railGeo, steelMat);
+        rail2.position.set(0.25, -actualH / 2 + 0.5, 0);
+        ladderGroup.add(rail1, rail2);
+
+        const numRungs = Math.floor(actualH / 0.3);
+        for (let rg = 0; rg <= numRungs; rg++) {
+            const rungY = -actualH + rg * 0.3;
+            const rungGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.5, 8);
+            const rungMesh = new THREE.Mesh(rungGeo, steelMat);
+            rungMesh.rotation.z = Math.PI / 2;
+            rungMesh.position.set(0, rungY, 0);
+            ladderGroup.add(rungMesh);
+        }
+
+        const cageStartY = -actualH * 0.4;
+        const cageNumHoops = 6;
+        for (let ch = 0; ch < cageNumHoops; ch++) {
+            const hoopY = cageStartY + (ch * (actualH * 0.4)) / (cageNumHoops - 1);
+            const hoopGeo = new THREE.TorusGeometry(0.4, 0.015, 8, 16, Math.PI * 1.2);
+            const hoopMesh = new THREE.Mesh(hoopGeo, steelMat);
+            hoopMesh.rotation.x = Math.PI / 2;
+            hoopMesh.rotation.z = Math.PI;
+            hoopMesh.position.set(0, hoopY, 0.1);
+            ladderGroup.add(hoopMesh);
+        }
+
+        ladderGroup.position.set(centerX - halfS, 0, centerZ - R_outer - 0.15);
+        ladderGroup.rotation.y = Math.PI;
+        config6StructuresGroup.add(ladderGroup);
+        return;
+    }
+    --------------------------------------------------------------- */
 
     // 1. Main Cylindrical Tank Body (from Y = -actualH to Y = 0)
     const cylGeo = new THREE.CylinderGeometry(R, R, actualH, 64);
@@ -13797,8 +15538,8 @@ function renderConfig12GridSystem3D() {
             ? (proComp ? proComp.file : "models/new_pro/New_Pro.glb")
             : ((lrComp && lrComp.file) || (afixComp && afixComp.file) || "models/long_range/LongRange.glb");
 
-        // Absorber eyelet/gorge offset (0.251m for XTREME gorge, 0.060m for PRO)
-        const absorberEyeletOffset = isProChecked ? 0.060 : (hasAbsorberModel ? 0.251 : 0.0);
+        // Absorber eyelet/gorge offset (0.068m for XTREME gorge, 0.060m for PRO)
+        const absorberEyeletOffset = isProChecked ? 0.060 : (hasAbsorberModel ? 0.068 : 0.0);
         const postTopY = cableHeight - absorberEyeletOffset;
 
         // Column height from top of base plate (Y = 0.02) to bottom of top plate (Y = postTopY - 0.02)
@@ -13926,21 +15667,22 @@ const SHOW_BUILDING_FACADE = true; // Corps de bâtiment décoratif sous la toit
 
 // Validation according to spec
 function validateSlopeSystemSpans(spans, maxSpan) {
+    const isEn = (parseInt(state.lang) === 1);
     if (!spans || spans.length === 0) {
-        return { valid: false, error: "Aucune portée définie pour le système en pente." };
+        return { valid: false, error: isEn ? "No spans defined for the sloped system." : "Aucune portée définie pour le système en pente." };
     }
     for (let i = 0; i < spans.length; i++) {
         const sp = spans[i];
         const len = parseFloat(sp.length);
         const deg = parseFloat(sp.slopeDeg !== undefined ? sp.slopeDeg : sp.slope_deg);
         if (isNaN(len) || len <= 0) {
-            return { valid: false, error: `Portée ${i + 1} : longueur invalide (${sp.length} m). La longueur doit être > 0.` };
+            return { valid: false, error: isEn ? `Span ${i + 1}: invalid length (${sp.length} m). Length must be > 0.` : `Portée ${i + 1} : longueur invalide (${sp.length} m). La longueur doit être > 0.` };
         }
         if (maxSpan && len > maxSpan + 0.001) {
-            return { valid: false, error: `Portée ${i + 1} : longueur ${len.toFixed(2)} m dépasse le maximum admissible (${maxSpan} m) pour ${state.product}.` };
+            return { valid: false, error: isEn ? `Span ${i + 1}: length ${len.toFixed(2)} m exceeds maximum allowed (${maxSpan} m) for ${state.product}.` : `Portée ${i + 1} : longueur ${len.toFixed(2)} m dépasse le maximum admissible (${maxSpan} m) pour ${state.product}.` };
         }
         if (isNaN(deg) || deg < SLOPE_MIN_DEG || deg > SLOPE_MAX_DEG) {
-            return { valid: false, error: `Portée ${i + 1} : angle ${deg}° hors plage autorisée [${SLOPE_MIN_DEG}°, ${SLOPE_MAX_DEG}°].` };
+            return { valid: false, error: isEn ? `Span ${i + 1}: angle ${deg}° outside allowed range [${SLOPE_MIN_DEG}°, ${SLOPE_MAX_DEG}°].` : `Portée ${i + 1} : angle ${deg}° hors plage autorisée [${SLOPE_MIN_DEG}°, ${SLOPE_MAX_DEG}°].` };
         }
     }
     return { valid: true };
@@ -14799,7 +16541,9 @@ function update3DScene() {
             if (idx > 0) {
                 rotYIn = Math.atan2(pos.z - nodesList[idx - 1].z, pos.x - nodesList[idx - 1].x);
             } else if (state.closedLoop && nodesList.length > 1) {
-                const prevNode = nodesList[nodesList.length - 2] || nodesList[nodesList.length - 1];
+                const lastN = nodesList[nodesList.length - 1];
+                const distToLast = Math.hypot(pos.x - lastN.x, pos.z - lastN.z);
+                const prevNode = (distToLast < 0.01 && nodesList.length > 2) ? nodesList[nodesList.length - 2] : lastN;
                 rotYIn = Math.atan2(pos.z - prevNode.z, pos.x - prevNode.x);
             }
 
@@ -14824,8 +16568,8 @@ function update3DScene() {
                 } else if (idx === nodesList.length - 1 && state.closedLoop) {
                     calculatedRotY = rotYOut;
                 } else {
-                    // Open lifeline end post: orient towards interior of the line (away from crimp terminal / sertissage)
-                    calculatedRotY = rotYIn + Math.PI;
+                    // Open lifeline end post: même orientation le long de la ligne que l'ancrage de gauche
+                    calculatedRotY = rotYIn;
                 }
             }
 
@@ -15350,9 +17094,21 @@ function collectSceneGeometryContext(layout) {
             const nodeRotY = pos.rotY || 0;
             if (isDoubledCorner && nodesList.length > 1) {
                 let rotYIn = 0;
-                if (idx > 0) rotYIn = Math.atan2(pos.z - nodesList[idx - 1].z, pos.x - nodesList[idx - 1].x);
+                if (idx > 0) {
+                    rotYIn = Math.atan2(pos.z - nodesList[idx - 1].z, pos.x - nodesList[idx - 1].x);
+                } else if (state.closedLoop && nodesList.length > 1) {
+                    const lastN = nodesList[nodesList.length - 1];
+                    const distToLast = Math.hypot(pos.x - lastN.x, pos.z - lastN.z);
+                    const prevNode = (distToLast < 0.01 && nodesList.length > 2) ? nodesList[nodesList.length - 2] : lastN;
+                    rotYIn = Math.atan2(pos.z - prevNode.z, pos.x - prevNode.x);
+                }
                 let rotYOut = rotYIn + ((pos.bendDeg || 0) * Math.PI) / 180;
-                if (idx < nodesList.length - 1) rotYOut = Math.atan2(nodesList[idx + 1].z - pos.z, nodesList[idx + 1].x - pos.x);
+                if (idx < nodesList.length - 1) {
+                    rotYOut = Math.atan2(nodesList[idx + 1].z - pos.z, nodesList[idx + 1].x - pos.x);
+                } else if (state.closedLoop && nodesList.length > 1) {
+                    const nextNode = nodesList[0];
+                    rotYOut = Math.atan2(nextNode.z - pos.z, nextNode.x - pos.x);
+                }
                 const offsetDist = 0.45;
                 const vA = new THREE.Vector3(pos.x - offsetDist * Math.cos(rotYIn), pos.y + roofY, pos.z - offsetDist * Math.sin(rotYIn));
                 vA.rotY = rotYIn;
@@ -15635,8 +17391,11 @@ function updateCalculationsUI(layout, maxSpan) {
         let slopedRep = null;
         if (isThisSloped) {
             slopedRep = SlopedSystemConesModule.getFullScenarioReport(targetSlope, spanLen, state.lineLength);
-            sExt1 = slopedRep.retainedMax.loadCellTopKn;
-            sExt2 = slopedRep.retainedMax.loadCellBottomKn;
+            const isDown = Boolean(sp && sp.direction === "down");
+            const topVal = slopedRep.retainedMax.loadCellTopKn;
+            const bottomVal = slopedRep.retainedMax.loadCellBottomKn;
+            sExt1 = isDown ? topVal : bottomVal;
+            sExt2 = isDown ? bottomVal : topVal;
             sEffort = Calculator.effortLonge(state.product, spanLen, 1, state.norm, isOSHA ? 1.0 : enFF, support, false);
             sDefl = Calculator.deflection(state.product, spanLen, isOSHA ? 1.0 : enFF, support, 1, state.norm, false);
         } else if (!isOSHA) {
@@ -15810,12 +17569,6 @@ function updateCalculationsUI(layout, maxSpan) {
     const activeIsSloped = isSlopedRoof || Boolean(activeSpanCalc && (activeSpanCalc.isSloped || (activeSpanCalc.slopeDeg >= 14.5)));
 
     if (activeIsSloped) {
-        if (state.nbUsers > 1) {
-            state.nbUsers = 1;
-            const uInput = document.getElementById("input-users");
-            if (uInput) uInput.value = 1;
-        }
-
         const activeSlope = (activeSpanCalc && activeSpanCalc.slopeDeg >= 14.5) ? activeSpanCalc.slopeDeg : (state.roofSlope || 15);
         const slopedRep = (activeSpanCalc && activeSpanCalc.slopedReport)
             ? activeSpanCalc.slopedReport
@@ -16309,45 +18062,63 @@ function updateCalculationsUI(layout, maxSpan) {
         }
     }
 
-    // Total Fall Clearance Breakdown (Spec V2 — 04, Spec V2 — 09 & Spec V2 — 10 / Prompt 16)
-    const srl = (state.connectingDevice === "srd" && state.selectedSrlId) ? SRL_CATALOG[state.selectedSrlId] : null;
-    const madMVal = (typeof state.madM === "number" && state.madM > 0) ? state.madM : ((typeof state.customMad === "number" && state.customMad > 0) ? state.customMad : 1.07);
-    const userRetractedM = (typeof state.retractedLengthM === "number" && state.retractedLengthM > 0)
-        ? state.retractedLengthM
-        : ((state.connectingDevice === "srd")
-            ? (srl ? (srl.retracted_length_m || srl.retracted_len || 0.60) : 0.60)
-            : ((state.connectingDevice === "custom_srd" || state.connectingDevice === "custom_lanyard")
-                ? (state.customDeviceLengthM || 0.60)
-                : 1.80));
-    const isOverEdge = state.isOverEdgeFall || (state.line_to_edge < 1.0);
-    const bodyPos = state.bodyPosition || "standing";
-    const dRingH = 1.50; // 1.50 m (D-ring height relative to worker's feet)
-    const lineToEdge = Math.max(0, parseFloat(state.line_to_edge !== undefined ? state.line_to_edge : 2.0) || 0);
-    const safetyMarg = 1.00; // 1.00 m minimum safety margin
-
-    // Spec V2 — 10: Retracted length feeds total fall clearance in real-time
-    let devComp = madMVal + userRetractedM;
+    // Spec V2 — 18: Total Fall Clearance Breakdown (Poster 18/07/25)
+    FallClearanceModule.syncEdgeRestrictions(state);
 
     const defl_in_meters = (deflL > 20.0) ? (deflL / 1000.0) : deflL;
-    const totalClr = Math.max(0, defl_in_meters + devComp - lineToEdge + dRingH + safetyMarg);
+    state.currentDeflectionM = defl_in_meters;
+    state.deflectionM = defl_in_meters;
 
+    const clrResult = FallClearanceModule.compute(state, defl_in_meters);
+    const totalClr = clrResult.totalRequiredM !== null ? clrResult.totalRequiredM : null;
+
+    // Update case name banner
+    const caseNameElem = document.getElementById("clr-case-name");
+    if (caseNameElem) caseNameElem.textContent = clrResult.caseName;
+
+    // Update terms container dynamically (exact formula order)
+    const termsContainer = document.getElementById("clr-terms-container");
+    if (termsContainer) {
+        let tHtml = "";
+        clrResult.terms.forEach(t => {
+            const signStyle = (t.effectSign === "-") ? "color:#dc2626;" : "";
+            tHtml += `
+                <div class="readout-row" id="row-clr-${t.id}" style="font-size:0.75rem;">
+                    <span id="lbl-clr-${t.id}">${t.label} :</span>
+                    <span id="clr-val-${t.id}" style="${signStyle}">${t.display}</span>
+                </div>`;
+        });
+        termsContainer.innerHTML = tHtml;
+    }
+
+    // Keep legacy element lookups updated if present
     const clrDefl = document.getElementById("clr-val-defl");
-    const clrRetracted = document.getElementById("clr-val-retracted");
-    const clrMad = document.getElementById("clr-val-mad");
-    const clrEdge = document.getElementById("clr-val-edge");
-    const clrBody = document.getElementById("clr-val-body");
-    const rowBody = document.getElementById("row-clr-body");
-    const clrMargin = document.getElementById("clr-val-margin");
-    const clrTotal = document.getElementById("val-total-clearance");
-
-    if (rowBody) rowBody.style.display = "";
     if (clrDefl) clrDefl.textContent = UnitsModule.formatDeflection(defl_in_meters);
-    if (clrRetracted) clrRetracted.textContent = UnitsModule.formatLength(userRetractedM);
-    if (clrMad) clrMad.textContent = UnitsModule.formatLength(madMVal);
-    if (clrEdge) clrEdge.textContent = `- ${UnitsModule.formatLength(lineToEdge)}`;
-    if (clrBody) clrBody.textContent = `+ ${UnitsModule.formatLength(dRingH)}`;
-    if (clrMargin) clrMargin.textContent = UnitsModule.formatLength(safetyMarg);
-    if (clrTotal) clrTotal.textContent = UnitsModule.formatLength(totalClr);
+    const clrTotal = document.getElementById("val-total-clearance");
+    if (clrTotal) {
+        clrTotal.textContent = clrResult.totalDisplay;
+    }
+
+    // Suspicious Low Warning (< STRETCH_OUT + MARGIN)
+    const suspWarn = document.getElementById("clr-suspicious-warning");
+    const suspWarnTxt = document.getElementById("clr-suspicious-warning-text");
+    if (suspWarn) {
+        if (clrResult.isSuspiciousLow) {
+            suspWarn.style.display = "block";
+            const minExpStr = (state.unitSystem === "imperial" || state.unitSystem === "us") ? "3.00 ft" : "0.91 m";
+            if (suspWarnTxt) {
+                const isEn = (parseInt(state.lang) === 1);
+                const isEs = (parseInt(state.lang) === 2);
+                suspWarnTxt.textContent = isEn
+                    ? `Warning: Total required clearance (${clrResult.totalDisplay}) is less than stretch-out + margin (${minExpStr}). Suspicious value.`
+                    : (isEs
+                        ? `Advertencia: Espacio total requerido (${clrResult.totalDisplay}) menor que estiramiento + margen (${minExpStr}). Valor sospechoso.`
+                        : `Attention : Dégagement total requis (${clrResult.totalDisplay}) inférieur à l'étirement + marge (${minExpStr}). Valeur suspecte.`);
+            }
+        } else {
+            suspWarn.style.display = "none";
+        }
+    }
 
     // Clearance vs WWS verification & Optimization Suggestion
     const warnClrWwsBox = document.getElementById("clearance-wws-warning");
@@ -16365,8 +18136,10 @@ function updateCalculationsUI(layout, maxSpan) {
     const isEn = (parseInt(state.lang) === 1);
     const langIdx = parseInt(state.lang) || 0;
 
+    const lineToEdge = Math.max(0, parseFloat(state.line_to_edge !== undefined ? state.line_to_edge : 0) || 0);
+
     if (warnClrWwsBox) {
-        if (totalClr >= wwsAvailableM - 0.001) {
+        if (totalClr !== null && totalClr >= wwsAvailableM - 0.001) {
             warnClrWwsBox.style.display = "block";
             if (clrTotal) clrTotal.style.color = "#dc2626";
 
@@ -16389,23 +18162,31 @@ function updateCalculationsUI(layout, maxSpan) {
                         : `Le tirant d'air disponible (Available Fall Clearance : <strong>${UnitsModule.formatLength(wwsAvailableM)}</strong>) est inf\u00e9rieur au d\u00e9gagement requis (<strong>${UnitsModule.formatLength(totalClr)}</strong>). Risque d'impact au sol ou sur obstacle !`);
             }
 
-            if (optSuggestedVal) {
-                optSuggestedVal.textContent = UnitsModule.formatLength(clampedEdgeM);
-            }
-            if (optSuggestionTxt) {
-                optSuggestionTxt.innerHTML = isEn
-                    ? `Suggested Optimization: Increase line-to-edge setback to <strong>${UnitsModule.formatLength(clampedEdgeM)}</strong>.`
-                    : (langIdx === 2
-                        ? `Optimizaci\u00f3n sugerida: Aumentar la distancia de la l\u00ednea al borde a <strong>${UnitsModule.formatLength(clampedEdgeM)}</strong>.`
-                        : `Optimisation sugg\u00e9r\u00e9e : Augmenter la distance ligne / bord du toit \u00e0 <strong>${UnitsModule.formatLength(clampedEdgeM)}</strong>.`);
-            }
-            if (btnApplyOpt) {
-                btnApplyOpt.dataset.targetEdge = String(clampedEdgeM);
-            }
-            if (btnApplyOptTxt) {
-                btnApplyOptTxt.textContent = isEn
-                    ? `Apply optimization (${UnitsModule.formatLength(clampedEdgeM)})`
-                    : (langIdx === 2 ? `Aplicar optimizaci\u00f3n (${UnitsModule.formatLength(clampedEdgeM)})` : `Appliquer cette optimisation (${UnitsModule.formatLength(clampedEdgeM)})`);
+            const hasEdgeEffect = clrResult.terms.some(t => t.id === "edge");
+            if (hasEdgeEffect) {
+                if (optSuggestedVal) {
+                    optSuggestedVal.textContent = UnitsModule.formatLength(clampedEdgeM);
+                }
+                if (optSuggestionTxt) {
+                    optSuggestionTxt.style.display = "block";
+                    optSuggestionTxt.innerHTML = isEn
+                        ? `Suggested Optimization: Increase line-to-edge setback to <strong>${UnitsModule.formatLength(clampedEdgeM)}</strong>.`
+                        : (langIdx === 2
+                            ? `Optimización sugerida: Aumentar la distancia de la línea al borde a <strong>${UnitsModule.formatLength(clampedEdgeM)}</strong>.`
+                            : `Optimisation suggérée : Augmenter la distance ligne / bord du toit à <strong>${UnitsModule.formatLength(clampedEdgeM)}</strong>.`);
+                }
+                if (btnApplyOpt) {
+                    btnApplyOpt.style.display = "inline-flex";
+                    btnApplyOpt.dataset.targetEdge = String(clampedEdgeM);
+                }
+                if (btnApplyOptTxt) {
+                    btnApplyOptTxt.textContent = isEn
+                        ? `Apply optimization (${UnitsModule.formatLength(clampedEdgeM)})`
+                        : (langIdx === 2 ? `Aplicar optimización (${UnitsModule.formatLength(clampedEdgeM)})` : `Appliquer cette optimisation (${UnitsModule.formatLength(clampedEdgeM)})`);
+                }
+            } else {
+                if (optSuggestionTxt) optSuggestionTxt.style.display = "none";
+                if (btnApplyOpt) btnApplyOpt.style.display = "none";
             }
         } else {
             warnClrWwsBox.style.display = "none";
@@ -16591,17 +18372,9 @@ function setupUIEventListeners() {
             const val = e.target.value;
             roofSlopeGroup.style.display = (val === "sloped" || val === "triangle") ? "block" : "none";
             const uInput = document.getElementById("input-users");
-            if (val === "sloped") {
-                if (uInput) {
-                    uInput.value = 1;
-                    uInput.max = 1;
-                }
-                state.nbUsers = 1;
-            } else {
-                if (uInput) {
-                    const maxU = isPro(state.product) ? 5 : 3;
-                    uInput.max = maxU;
-                }
+            if (uInput) {
+                const maxU = isPro(state.product) ? 5 : 3;
+                uInput.max = maxU;
             }
             if (val === "flat_overhead") {
                 const modalMounting = document.getElementById("input-mounting-type");
@@ -16802,19 +18575,30 @@ function setupUIEventListeners() {
             updateCalculationsUI();
         });
 
-        arrestValInput.addEventListener("input", (e) => {
+        const handleArrestLoadInput = (e) => {
             const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
-            const raw = parseFloat(e.target.value);
+            const knToLbf = (typeof UnitsModule !== "undefined") ? UnitsModule.KN_TO_LBF : 224.8089;
+            const raw = parseFloat(String(e.target.value).replace(/,/g, '.'));
             if (!isNaN(raw) && raw > 0) {
-                const knVal = isUS ? (raw * UnitsModule.LBF_TO_KN) : raw;
-                state.arrestLoadValue = knVal;
-                state.arrestLoadKn = knVal;
+                const baseKn = isUS ? (raw * UnitsModule.LBF_TO_KN) : raw;
+                state.arrestForceKn = baseKn;
+                state.arrestForceLbf = isUS ? raw : (baseKn * knToLbf);
                 state.arrestLoadMode = "custom";
                 if (arrestModeSelect) arrestModeSelect.value = "custom";
+
+                // Compute total arrest load based on active users (Lump Sum M * F_user)
+                const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
+                const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
+                const totalKn = parseFloat((m * baseKn).toFixed(3));
+                state.arrestLoadValue = totalKn;
+                state.arrestLoadKn = totalKn;
+
                 updateLumpSumHint();
                 updateCalculationsUI();
             }
-        });
+        };
+        arrestValInput.addEventListener("input", handleArrestLoadInput);
+        arrestValInput.addEventListener("change", handleArrestLoadInput);
     }
 
     // Dynamic listener on input-users to automatically recalculate lump sum
@@ -16825,11 +18609,8 @@ function setupUIEventListeners() {
             const maxU = isPro(state.product) ? 5 : 3;
             u = Math.max(1, Math.min(maxU, u));
             state.nbUsers = u;
-            if (state.arrestLoadMode !== "custom") {
-                recalculateLumpSumArrestLoad();
-            } else {
-                updateLumpSumHint();
-            }
+            recalculateLumpSumArrestLoad();
+            updateCalculationsUI();
         };
         usersInput.addEventListener("input", onUsersChange);
         usersInput.addEventListener("change", onUsersChange);
@@ -16839,6 +18620,7 @@ function setupUIEventListeners() {
         if (e && typeof e.preventDefault === "function") e.preventDefault();
 
         try {
+            const isEn = (parseInt(state.lang) === 1);
             // Spec V2 — 04 / Prompt 13: Arrest load validation (1 lbf to 5000 lbf for direct entry)
             const currentKn = state.arrestLoadValue || state.arrestLoadKn || 6.0;
             const arrestCheck = validateArrestLoad(currentKn, state.arrestLoadMode === "custom");
@@ -16896,26 +18678,40 @@ function setupUIEventListeners() {
                 state.l = state.roof_width;
             }
             if (rEdgeInp) {
-                const rawEdge = parseFloat(String(rEdgeInp.value).replace(/,/g, '.')) || 2.0;
-                state.line_to_edge = UnitsModule.parseLengthToMeters(rawEdge);
+                const valTrim = String(rEdgeInp.value || "").trim().replace(/,/g, ".");
+                if (valTrim === "" || parseFloat(valTrim) === 0) {
+                    state.line_to_edge = 0;
+                } else {
+                    const rawEdge = parseFloat(valTrim);
+                    if (!isNaN(rawEdge)) {
+                        state.line_to_edge = UnitsModule.parseLengthToMeters(rawEdge);
+                    }
+                }
             }
             if (rHGroundInp) {
                 const rawHG = parseFloat(String(rHGroundInp.value).replace(/,/g, '.')) || 6.0;
                 state.roof_height_above_ground = UnitsModule.parseLengthToMeters(rawHG);
                 state.roofHeightAboveGround = state.roof_height_above_ground;
+                state.config6Height = state.roof_height_above_ground;
             }
 
             // Roof Validations
-            if (state.line_to_edge <= 0) {
-                alert("⚠️ Erreur de validation :\nLa distance ligne/bord (line_to_edge) doit être strictement supérieure à 0.");
+            if (state.line_to_edge < 0) {
+                alert(isEn
+                    ? "⚠️ Validation Error:\nThe line-to-edge distance cannot be negative."
+                    : "⚠️ Erreur de validation :\nLa distance ligne/bord (line_to_edge) ne peut pas être négative.");
                 return;
             }
             if (state.roof_height_above_ground <= 0) {
-                alert("⚠️ Erreur de validation :\nLa hauteur du toit (H) doit être strictement supérieure à 0.");
+                alert(isEn
+                    ? "⚠️ Validation Error:\nThe roof height (H) must be strictly greater than 0."
+                    : "⚠️ Erreur de validation :\nLa hauteur du toit (H) doit être strictement supérieure à 0.");
                 return;
             }
             if (state.roof_length <= 0 || state.roof_width <= 0) {
-                alert("⚠️ Erreur de validation :\nLes dimensions de la toiture doivent être positives.");
+                alert(isEn
+                    ? "⚠️ Validation Error:\nRoof dimensions must be positive."
+                    : "⚠️ Erreur de validation :\nLes dimensions de la toiture doivent être positives.");
                 return;
             }
 
@@ -16928,7 +18724,6 @@ function setupUIEventListeners() {
 
             if (devSel) state.connectingDevice = devSel.value;
             if (state.connectingDevice === "custom_srd" && parseInt(state.customDeviceClass) === 1) {
-                const isEn = (parseInt(state.lang) === 1);
                 alert(isEn
                     ? "⚠️ Warning:\nClass 1 data is not available at the moment. Please select Class 2."
                     : "⚠️ Avertissement :\nLes données pour la Classe 1 ne sont pas disponibles pour le moment. Veuillez sélectionner la Classe 2.");
@@ -16971,17 +18766,19 @@ function setupUIEventListeners() {
                 state.wwsElevationM = UnitsModule.parseLengthToMeters(rawWws);
             }
             if (state.wwsElevationM > state.roof_height_above_ground + 0.001) {
-                const isEn = (parseInt(state.lang) === 1);
                 alert(isEn
                     ? `⚠️ Validation Error:\nWWS/Available Fall Clearance (${formatDistance(state.wwsElevationM, 2)}) cannot be greater than the Roof Height H (${formatDistance(state.roof_height_above_ground, 2)}).`
                     : `⚠️ Erreur de validation :\nWWS/Available Fall Clearance (${formatDistance(state.wwsElevationM, 2)}) ne peut pas être supérieur à la hauteur du toit H (${formatDistance(state.roof_height_above_ground, 2)}).`);
                 return;
             }
             if (substrateInp) state.substrateInfo = substrateInp.value;
+            FallClearanceModule.syncEdgeRestrictions(state);
 
             // Lanyard over-edge fall check
             if (state.connectingDevice === "lanyard" && (state.isOverEdgeFall || state.line_to_edge < 1.0)) {
-                alert("⚠️ Restriction de sécurité :\nL'utilisation d'une longe simple est strictement interdite en cas de risque de chute par-dessus le bord de toiture. Un SRD Classe 2 est obligatoire.");
+                alert(isEn
+                    ? "⚠️ Safety Restriction:\nThe use of a simple lanyard is strictly prohibited when there is a risk of falling over the roof edge. A Class 2 SRD is mandatory."
+                    : "⚠️ Restriction de sécurité :\nL'utilisation d'une longe simple est strictement interdite en cas de risque de chute par-dessus le bord de toiture. Un SRD Classe 2 est obligatoire.");
                 return;
             }
 
@@ -17008,6 +18805,34 @@ function setupUIEventListeners() {
             }
 
             if (state.layoutType === "multi_bend_circle") {
+                const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+                /* --- MODE STADE (CONFIGURATION EN MODE CACHÉ) - VALIDATION SAUVEGARDE ---
+                const stadLenInp = document.getElementById("input-config6-stadium-length");
+                const stadWidthInp = document.getElementById("input-config6-stadium-width");
+                const stadNInp = document.getElementById("input-config6-stadium-n");
+                const stadMInp = document.getElementById("input-config6-stadium-m");
+                if (stadLenInp) {
+                    const v = parseFloat(String(stadLenInp.value).replace(/,/g, '.'));
+                    if (!isNaN(v)) state.config6StadiumLength = isUS ? (v / METERS_TO_FEET) : v;
+                }
+                if (stadWidthInp) {
+                    const v = parseFloat(String(stadWidthInp.value).replace(/,/g, '.'));
+                    if (!isNaN(v)) state.config6StadiumWidth = isUS ? (v / METERS_TO_FEET) : v;
+                }
+                if (stadNInp && !state.config6StadiumAutoN) {
+                    const v = parseInt(stadNInp.value);
+                    if (!isNaN(v)) state.config6StadiumN = Math.max(2, v);
+                }
+                if (stadMInp && !state.config6StadiumAutoM) {
+                    const v = parseInt(stadMInp.value);
+                    if (!isNaN(v)) state.config6StadiumM = Math.max(1, v);
+                }
+                if ((state.config6Mode === "stadium" || state.config6Mode === "stade") && state.config6Validation && state.config6Validation.isBlocked) {
+                    renderDynamicLayoutForm();
+                    alert(`⚠️ ${state.config6Validation.errorMessage}`);
+                    return;
+                }
+                ------------------------------------------------------------------------ */
                 recalculateConfig6Spans();
             }
 
@@ -17022,10 +18847,14 @@ function setupUIEventListeners() {
                 if (!isNaN(rawVal) && rawVal > 0) {
                     const rawMeters = isUS ? (rawVal / METERS_TO_FEET) : rawVal;
                     if (rawMeters > maxSpanM + 0.001) {
-                        alert(`⚠️ Attention : La portée saisie (${formatDistance(rawMeters, 2)}) dépasse la portée maximale autorisée pour le système ${state.product} (${formatDistance(minSpanM, 2)} à ${formatDistance(maxSpanM, 2)}).\nLa valeur a été limitée à ${formatDistance(maxSpanM, 2)}.`);
+                        alert(isEn
+                            ? `⚠️ Warning: The entered span (${formatDistance(rawMeters, 2)}) exceeds the maximum allowed span for the ${state.product} system (${formatDistance(minSpanM, 2)} to ${formatDistance(maxSpanM, 2)}).\nThe value was limited to ${formatDistance(maxSpanM, 2)}.`
+                            : `⚠️ Attention : La portée saisie (${formatDistance(rawMeters, 2)}) dépasse la portée maximale autorisée pour le système ${state.product} (${formatDistance(minSpanM, 2)} à ${formatDistance(maxSpanM, 2)}).\nLa valeur a été limitée à ${formatDistance(maxSpanM, 2)}.`);
                         if (singleInp) singleInp.value = maxSpanDisp;
                     } else if (rawMeters < minSpanM - 0.001) {
-                        alert(`⚠️ Attention : La portée saisie (${formatDistance(rawMeters, 2)}) est inférieure à la portée minimale autorisée pour le système ${state.product} (${formatDistance(minSpanM, 2)} à ${formatDistance(maxSpanM, 2)}).\nLa valeur a été ramenée à ${formatDistance(minSpanM, 2)}.`);
+                        alert(isEn
+                            ? `⚠️ Warning: The entered span (${formatDistance(rawMeters, 2)}) is less than the minimum allowed span for the ${state.product} system (${formatDistance(minSpanM, 2)} to ${formatDistance(maxSpanM, 2)}).\nThe value was adjusted to ${formatDistance(minSpanM, 2)}.`
+                            : `⚠️ Attention : La portée saisie (${formatDistance(rawMeters, 2)}) est inférieure à la portée minimale autorisée pour le système ${state.product} (${formatDistance(minSpanM, 2)} à ${formatDistance(maxSpanM, 2)}).\nLa valeur a été ramenée à ${formatDistance(minSpanM, 2)}.`);
                         if (singleInp) singleInp.value = minSpanDisp;
                     }
                     const clampedM = Math.max(minSpanM, Math.min(maxSpanM, rawMeters));
@@ -17091,11 +18920,22 @@ function setupUIEventListeners() {
                 state.fallCalculationMode = "selected_span";
             }
 
+            if (state.norm === "OSHA" && (isPro(state.product) || isCore(state.product))) {
+                const hasMultipleSpans = (state.layoutType !== "single_span" && state.layoutType !== "slope_single" && Array.isArray(state.spans) && state.spans.length > 1);
+                const subtabUnique = document.getElementById("subtab-span-unique");
+                const subtabMulti = document.getElementById("subtab-span-multi");
+                if (hasMultipleSpans) {
+                    state.oshaSpanMode = "multi";
+                    if (subtabMulti) subtabMulti.classList.add("active");
+                    if (subtabUnique) subtabUnique.classList.remove("active");
+                }
+            }
+
             if (state.layoutType === "slope_single" || state.layoutType === "slope_multi") {
                 const maxAllowedSpan = Calculator.getMaxSpan(state.product);
                 const valCheck = validateSlopeSystemSpans(state.spans, maxAllowedSpan);
                 if (!valCheck.valid) {
-                    alert(`⚠️ Erreur de validation de la pente :\n${valCheck.error}`);
+                    alert(isEn ? `⚠️ Slope validation error:\n${valCheck.error}` : `⚠️ Erreur de validation de la pente :\n${valCheck.error}`);
                     return;
                 }
             }
@@ -17135,25 +18975,35 @@ function setupUIEventListeners() {
                 }
             }
 
-            // Arrest load range check (1 lbf to 5000 lbf)
+            // Arrest load range check (1 user base force, and calculate total lump sum)
             const arrestModeSel = document.getElementById("select-arrest-load-mode");
             state.arrestLoadMode = arrestModeSel ? arrestModeSel.value : "custom";
             const arrestValInp = document.getElementById("input-arrest-load-val");
             const rawArrestVal = parseFloat(arrestValInp ? String(arrestValInp.value).replace(/,/g, '.') : "6.0") || 6.0;
 
+            const baseFKn = (state.unitSystem === "imperial" || state.unitSystem === "us")
+                ? (rawArrestVal * UnitsModule.LBF_TO_KN)
+                : rawArrestVal;
             const loadLbf = (state.unitSystem === "imperial" || state.unitSystem === "us")
                 ? rawArrestVal
                 : (rawArrestVal * UnitsModule.KN_TO_LBF);
 
             if (isNaN(loadLbf) || loadLbf < 1.0 || loadLbf > 5000.0) {
-                alert(`⚠️ Charge d'arrêt hors limites :\nLa charge d'arrêt (${Math.round(loadLbf)} lbf) doit être comprise entre 1 lbf et 5 000 lbf.`);
+                alert(isEn
+                    ? `⚠️ Arrest load out of range:\nThe arrest load (${Math.round(loadLbf)} lbf) must be between 1 lbf and 5,000 lbf.`
+                    : `⚠️ Charge d'arrêt hors limites :\nLa charge d'arrêt (${Math.round(loadLbf)} lbf) doit être comprise entre 1 lbf et 5 000 lbf.`);
                 return;
             }
 
-            state.arrestLoadValue = (state.unitSystem === "imperial" || state.unitSystem === "us")
-                ? (rawArrestVal * UnitsModule.LBF_TO_KN)
-                : rawArrestVal;
-            state.arrestLoadKn = state.arrestLoadValue;
+            state.arrestForceKn = baseFKn;
+            state.arrestForceLbf = loadLbf;
+
+            // Recalculate total arrest load for active users using Lump Sum (M * F_user)
+            const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
+            const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
+            const totalKn = parseFloat((m * baseFKn).toFixed(3));
+            state.arrestLoadValue = totalKn;
+            state.arrestLoadKn = totalKn;
 
             // Calculate total developed line length across active layout and adapt roof length (L) to lifeline length
             state.lineLength = Calculator.calculateTotalLineLength(null, state.product);
@@ -17276,7 +19126,7 @@ function setupUIEventListeners() {
             // User capacity limit check (5 users max for PRO, 3 users max for CORE and XTREME)
             const uInput = document.getElementById("input-users");
             const maxAllowedU = isPro(chosenSystem) ? 5 : 3;
-            if (uInput) uInput.max = (state.roofShape === "sloped") ? 1 : maxAllowedU;
+            if (uInput) uInput.max = maxAllowedU;
             if (state.nbUsers > maxAllowedU) {
                 alert(TRANSLATIONS.alerts.usersLimit[state.lang || 0]);
                 state.nbUsers = maxAllowedU;
@@ -18101,9 +19951,10 @@ function calculateXConeCount(layout) {
 }
 
 // ==========================================
-// HIGH-RESOLUTION DEDICATED PLAN DE REPÉRAGE SNAPSHOT FOR PDF REPORT
 // ==========================================
-function capturePlanDeReperageSnapshot(targetW = 182, targetH = 140) {
+const HOOKT_LOGO_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAfgAAABUCAYAAABugSVeAAAWfmNhQlgAABZ+anVtYgAAAB5qdW1kYzJwYQARABCAAACqADibcQNjMnBhAAAAFlhqdW1iAAAAR2p1bWRjMm1hABEAEIAAAKoAOJtxA3VybjpjMnBhOmFjYTZlNDI4LTE0NTEtNGEzOS05N2ZkLTkzYTVlMDdjM2QzYwAAAAOTanVtYgAAAClqdW1kYzJhcwARABCAAACqADibcQNjMnBhLmFzc2VydGlvbnMAAAAAuGp1bWIAAABEanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5pbmdyZWRpZW50LnYzAAAAABhjMnNoo0UVNFB7nxbCuPxEJcaVCQAAAGxjYm9yo2lkYzpmb3JtYXRpaW1hZ2UvcG5namluc3RhbmNlSUR4LHhtcDppaWQ6NjkwMDhhMmMtOTVmZi00ZTMwLWFjZWUtOTBlNjJiNGRkM2JhbHJlbGF0aW9uc2hpcGhwYXJlbnRPZgAAAeJqdW1iAAAAQWp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuYWN0aW9ucy52MgAAAAAYYzJzaCH7fR1ApnJE585n+SNgHp0AAAGZY2JvcqJnYWN0aW9uc4KiZmFjdGlvbmtjMnBhLm9wZW5lZGpwYXJhbWV0ZXJzoWtpbmdyZWRpZW50c4GiY3VybHgtc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5pbmdyZWRpZW50LnYzZGhhc2hYIGn0/zFkYj4hxHcTBBvSkVvLoPOc3nOctpCKjWRViV3ApGZhY3Rpb254HWNvbS5hbnRocm9waWMuY2xhdWRlLnByb3ZpZGVkanBhcmFtZXRlcnOheB9jb20uYW50aHJvcGljLm9yaWdpbi1jb25maWRlbmNlZ3Vua25vd25rZGVzY3JpcHRpb254ZkNsYXVkZSBwcm92aWRlZCB0aGlzIGZpbGUgYXQgdGhlIHJlcXVlc3Qgb2YgYSB1c2VyIGFuZCBtYXkgaGF2ZSBjcmVhdGVkIG9yIG1vZGlmaWVkIHRoZSBmaWxlIGNvbnRlbnRzLm1zb2Z0d2FyZUFnZW50oWRuYW1lZkNsYXVkZXJhbGxBY3Rpb25zSW5jbHVkZWT1AAAAyGp1bWIAAABAanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5oYXNoLmRhdGEAAAAAGGMyc2hW9H3tdnE4IEEFjaB/5Z8zAAAAgGNib3KlY2FsZ2ZzaGEyNTZjcGFkTQAAAAAAAAAAAAAAAABkaGFzaFggGzHz1Niu4dgoVCc47BhGl9z2ggFL5hb1UU55YX+cq5FkbmFtZW5qdW1iZiBtYW5pZmVzdGpleGNsdXNpb25zgaJlc3RhcnQYIWZsZW5ndGgZFooAAAI+anVtYgAAACdqdW1kYzJjbAARABCAAACqADibcQNjMnBhLmNsYWltLnYyAAAAAg9jYm9ypWNhbGdmc2hhMjU2aXNpZ25hdHVyZXhNc2VsZiNqdW1iZj0vYzJwYS91cm46YzJwYTphY2E2ZTQyOC0xNDUxLTRhMzktOTdmZC05M2E1ZTA3YzNkM2MvYzJwYS5zaWduYXR1cmVqaW5zdGFuY2VJRHgseG1wOmlpZDpkZTE5NDZmNy01YzA2LTQ3YzMtODg2OC1lNmMxYjdmZGI5MmJyY3JlYXRlZF9hc3NlcnRpb25zg6JjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggafT/MWRiPiHEdxMEG9KRW8ug85zec5y2kIqNZFWJXcCiY3VybHgqc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5hY3Rpb25zLnYyZGhhc2hYIOOMXLpWZxytPViJyuuepUCGMPJYKOytnu4NhP77GURcomN1cmx4KXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaGFzaC5kYXRhZGhhc2hYIM85HADpwLHck9anxHPBshuDOD8pUfxkqTJRLbHcHo1AdGNsYWltX2dlbmVyYXRvcl9pbmZvo2RuYW1lb0FudGhyb3BpYyBGaWxlc2d2ZXJzaW9uZTEuMC4wa3NwZWNWZXJzaW9uZTIuNC4wAAAQOGp1bWIAAAAoanVtZGMyY3MAEQAQgAAAqgA4m3EDYzJwYS5zaWduYXR1cmUAAAAQCGNib3LShFkCEqIBJhghWQIKMIICBjCCAY2gAwIBAgIUQOWgCu7COdC+uIP6BkIFPWdVEwAwCgYIKoZIzj0EAwMwSTEXMBUGA1UEChMOQW50aHJvcGljLCBQQkMxLjAsBgNVBAMTJUFudGhyb3BpYyBDb250ZW50IENyZWRlbnRpYWxzIFJvb3QgQ0EwHhcNMjYwODA3MTg0MzU2WhcNMjgwODA2MTk0MzU2WjBEMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEpMCcGA1UEAxMgQW50aHJvcGljIENsYXVkZSBDb250ZW50IFNpZ25pbmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASYegpry1AYBRTVNL1CpTlbROnY3dey+UrsF9C3phYrATN3ZHf93Mo8RQN0KOUuOn19P4oWNFWe5n2/She9N7eTo1gwVjAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lBA4wDAYKKwYBBAGD6F4CATAMBgNVHRMBAf8EAjAAMB8GA1UdIwQYMBaAFM5R4gSBTmRbI/jjxM+aPpzB11zCMAoGCCqGSM49BAMDA2cAMGQCMDFzHRSeAXrSy1WOzkbhPZ6Km2wGTmZ/2gK18k8BQGXyqz88Rdrz6CTX9flAnYNVxgIwcF9c3fVhqmJKpi+UhasNUMko69cyX6STPfta3Q8EjyzDjzoyrol46FP6VFHhvUcJoWNwYWRZDZ4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2WED/GKZ/Ks/YULL1siMfnh0nbc0QhrBdCIn7LzkAVwFDTaog3Dhfkz7rJyyl9Xry/EBp3GcHOw0ZrrgrQGaWwQWgd+aviwAADe9JREFUeF7t3XesZVUZBfC1pLfQlBIIAkIiREURRSNNQUVlqNKkCA4DQ0DpDkgxoYPAEBhsSC9Dh1BEAYMBIigQDIgRBSWAYKM3AWGZ77EfPObNm3fvu6fsc876JRP+4N6zy73vfPfbZxdKEqrzKoA1SP6luiJ7I+l8ADv19upC7E9yeiFXmoWk9wO4C8CHyrh+w9wPYF2SL+RUb0l7AZiRU51qdAjJ48soX9JCAP4IYIUyrj8bLwNYneRjFZU3iqTdAfykrvLHcCbJ3SWdBOCAzOrWWu9rbcs6StLiAC5zcH/HxwCcL2nuXL4Skr4E4MRc6pOBIyRV+eO6tSStneF363oA+6dOd8ypkDu7RSQtAuBSAJ9vUbOKsBmAiyXNX8TFBiHpywBmAlhwkOu0zAIAzpK0Q8vaVSlJ8WM2vluLVlrwnN0UI6MkX8qoTp3hAN8SkuImeQWAL7akSUXbOoYtJdX2nZe0DoBLACxRdONaYB4A50jaqgVtqZykpdJ3a6XKCx/b7QC2IvlcRnXqlNpudlYcSQsDuAhADP3a2HZOw/XzVd1JKXO/BsBiVZfdIBHk43HK5g2qc+0kLQ3gSgCr1V6Zd90KYFtn7vVygG+4lLnHH/cWDW9KVWIYuNJMXtLnUna1ZFWNbLB4dHGpM/nepLklFwCI0aFc3Bn3I5JP5VKhrnKAbzBJcTO80Jl7375ZVSYv6bMArnbm3pd5ncmPLwX3czJ7LHcHgG1IPj9+C6xsDvANJQ0NM8eEui0b2oS6RSZ/RpnP5NOM5qsAfKDuxjbQcCYfEyRt9o4FsGNGnXMPgM1IPpFRnTrNAb6BUnD/KYBNGlj9nEwGcEoZFZL08ZS5L1PG9TsiMvlzJW3Qkfb2TNJBAOJfLv4AYDuSz+RSIYMDfNNImituesDQhDEb3D6STi8yk0+Z+3UAlh28ep0XkxKvlbRh53sikTQls7XufwIwieQj/ozy4gy+QSTFLOPYoWq7BlW7CfYuKpNPa5HjmfvyTWh4Q8T+DjMlrd+Q+pZGUkymPb20Avr3EIDNST7a/1utbA7wDSGJsRkIMDSsbMWLTP7UQS6bhuWvdeZeipjHcF2Xg3waxbgYQOXLPMcQW45vQjKCvGXIAb4B0rD8GRXvld9FEeQntIWspFXTFsEf7GLHVSQy+UvSssNOST8eYzlc7bsxJg+npXDxX8uUA3zm0rPhOJRkz8yr2hYHSTq5n8akm29syRlB3soVkxavl7ReucXkQ1LsThd7XeQyp+Nv6Zn7g/n0ks2OA3zGJMUs4tMATM24mm20v6TDepl4J2mVlLmv2MaOyFRMvIvNcOJglVaTFI8m4vColTNp6L9iaS7JmFhnmXOAz1sM9zpzr8fBAGIL4PHEHvfO3KsXmXwci9paaSOreOa+ViaNfBLA1iR/n0l9bBwO8HmLz+e1vKvYWm8CiImNli/lW7XBpF3qYjnsRoNdqTBPp9nytxV2RSudA3zeWnsDa4Be+77X11nx2tz3P4psufgum5AYlo/tZ++e0LutNnPXVrKZmY0i6WgAu2XSNa+mU+F+nUl9rA/O4M3MMiHp2wAOzaQ6MSwfz9wd3BvKGbyZWQYkxfbTA222VKDXAWxP8uYCr2kVcwZvZlYzSV9I21DncE9+JTbVcnBvPmfwZmY1SjvzxVr3HHapeyNl7rHlsjVcDr8Wzcw6SdKHY9MeAEtm0AExLD+ZLDW4O6mskDvbRno2nVQXQ3S5WQjAFT1uPtNmcVJdKWfYF2BHAHsUcJ1OkBQbWcUWtMtl0ODY92EKydjvvkzTAVwF4H9lFjKG2Nci5jisWVHZsYxzHwD3VVTeKA7wNlL8gr+F5Fu5dUva+KOOm0JuHid5R26VCpI+nWO9ciQpdkmMYLp6BvWLv6upJM8vuy4kYx/7+FcLSc9UXPDdJO+quMx3eIjeRopfuJEp5yjq5Z3lgHly/HCSODvBxpG2oL0cwLrjvbYCkWVGcI+jqFstHbk9V8WNrHVehQO8mVm1Ype6jastckx7dyG4d1UdAT7XvdXjGZSZWWkkHQ8g1rvXLTL3A0n+sO6KWHmqfgYfQ6yrSVogs+HW+LIvUV43m1nXSdoXwLRM+uFgkidnUhcrSdUBPp5HxAzK7CZxZbIG1cxaSNIUACdm0rQjSOZSFytR1QE+LFhie8zMsiJpEoAfA7U8Ep3V4STjMBvrgDqewZuZdYKkDYGhc91zuNce7eDeLTl86czMWkfSGsDQcrgc5vccRfLw1nWyzZEDvJlZsV6WtDKASwAsXuylJ+QEkkdM6J3WaA7wZmbFiWXAywCYCSD2ma/bDJIH110Jq0cdk+zMzNoqdhqMZ+5r1dzA2NfjTACxNM86yhm8mVlxFskguIdHgKFd6ryBV4c5wJuZtc8qAI5pX7OsHw7wZmbtE/f2aZL8/L3DHODNzNrrSElfa2/zbE4c4M3M2ism/V0kqe5Jf1YDB3gzs3ZbFMA5kpZudzNtVg7wZmbt9xEAl0pauP1NtWEO8GZm3bA+gFO70VQLDvBmZt0xWZJPk+sIB3gzs245VNLO3WpyNznAm5l1zwxJG3Wv2d3iAG9m1j2xpe65klbsXtO7wwHezKyblotT7yTlcF69lcAB3sysuz6TMnnHghbyh2pm1m2TABzX7S5oJwd4MzP7rg+maZ+5K27SWwDuAfBKxeX2YjUA3srRzOrwGIAV6ih4hDiY5gGSN9RcDytI1QH+NQBbkvx7QfUvjKSzAexa2AXNzHpzDYA9AZwGYOve3lKK4YNpNiR5byklWKXqGKJfsNIW9q7qHztmZr8BsDPJfwDYB8AjNXdJHEwTy+eWqrkeVoA6AryZmQF3AdiG5IvRGSSfArAHgP/V3Dk+mKYlHODNzKr3UAzHz/q4kuSvABxVfXVG2QDA9AzqYQNwgDczq9b9ADYl+cQYxR4D4JfVVmm2dpN0ZAb1sAlygLeRBODlTLsk6hX167o3Mu6A1zOuWy4eT5n7n8eqEMk3AUwF8GQGlT5c0k4Z1MMmwBPLbKTFAVwvqe5ngLMTM3wX8seFTSWtlGE/xI+vVTOsV04iY9+MHDu4DyP5qKRY1XMdgHlrbsQZkp5Mjw+sQRzgbaS4kXzFXZK1OBzEB4Q0zzNpQt19vVad5E2STgLwvV7fU5I4mOY8SevED4+SyrASeIjezKxc/wGwOck7J1BMPAO/cQLvK1ocTHOZpGWKvrCVxwHezKw8sWvnDiRvn0gRJGNzsG8BQ8P7dfsUgLMkse6KWG8c4M3MyvHfFNxvGuTyaROcA4Chrb7r9lUfTNMcDvBmZsWL1Q67kIxtaAdG8jIAJwx8oWJMkxRb61rmHODNzIoVmfZeJC8t9rJD6+PvLviaEzVdkifkZs4B3sysOLGGfT+SZxZ3ybeRjL0gtgeQw2Fd8wGYKemTRbfTiuMAn7f4fLyUsR6x7r6XyUTxOqtHjn3/KoBLyuoOknEYzX5lXb9PwwfTLNvn+6wiDvB5ew7Av/OuYmvFjTRmMI/nr+O9wErzcGlXnrj4UTj/xN8+PpKXAzhl/FdWIg6muVpSrJW3zDjAZyzNnt3WQb5ycapXLG2KbGw8M30oRy3OA/CDWkrOQ2x+c0ceVcHaGf3gsBEc4DNHMv6Ivw4MbZZh5XsMwCSSD/RSFMmYUHUggBN7eb0V4qI4VjWtEe+k1PbYrz52yMtBHExzWA4VsXc5wDcAydsAbAEMDdlbef4ZP6ZI3ttPERHkSU5zJl+JyNx37nJwH0byQQDfqaTXe3OkpEhGLBMO8A2RMvntHORLEyd3xRGegyxDikz+1NJqaLEWfGoaNbG3Z9bHaMbPMumMmH9wtqQNM6lP5znANwjJOCN6SwAvNqjaTRATGSNz/90glU2BZ/+MbrhtcnGaFxG7w9l7xXeu50NsShaT7c6V5AORMuAA3zAkb01rYZ9vWNVzFZl7PHOfyEEgo5CMY1Pj2eiMXBvcQDFrfDLJHI8xrh3J+MEfZ7bnMk9neR9MkwcH+AYieQMwNFz/egOrn5O4IUbm/tsiK0UyNjuJZ6O5DJ022bUAvkE6c5+T9Dz+kIw+aB9MkwEH+IYi+Yv0q72XpVz2XpFlD5/yVUjmPqsRmfzZ7vwJuzlNqHPm3gOS8YPy/B5eWpU4mObYqgqz0RzgGywdQLEDAN8A+xOPN+J87oFO+RpPyuRjuP6C8V5ro8QP2PiM/CiqP/E8/qH+3lKqgyXF34DVwAG+4UheDWBXwJl8D4Yz921I3tLD6wdGMk4VmwzgyoEv1h2RucewfIyyWB9IPp3uBy/18bayxcE0G5ddiI3mAN8CJC+MGcbA0BGVNrbhzD0CSGVSkN8RQHxONmfDmfuz7qiJSRNGI5PPRWzdGwfTrJlLhbrCAb4lUiYfmaKD/LsiYw+x21wsr4qscDhzH/5/lUiTxGKk5apKCmym2NDJmXsx4nn8FcVcqhCLpeVzPpimQlUH+KrL60fVdevlpLK+kIxnvXsAQ0dW2rvi0JitSN5YZ6ekZV6RyXu4frTYknlLspTMvcq/7SrLGlOa5Dklo/Xx4aMArpEUwb4uVX4+cY8v/D7fjziKtKpNU6KhMeM7sqkcxfO++FdFcJyrrCVuJM+RFF/i4wAsmHF/l2k4O4/v9wsA9iX581RgpZn7rOIAG0m7pM9mPWCoPrXWqUbDN8BYyRCZezw/LkP8XccITtn3nmhPnNmexedJ8jlJe8VpbwAWrqD9vfgEgO9LmkayjmW+8fnEvyq+C1FGrROg/w/4zZ5o07+97wAAAABJRU5ErkJggg==";
+
+function capturePlanDeReperageSnapshot(targetW = 182, targetH = 145) {
     if (!renderer || !renderer.domElement || !scene) return null;
     if (typeof THREE === "undefined") return null;
 
@@ -18113,8 +19964,8 @@ function capturePlanDeReperageSnapshot(targetW = 182, targetH = 140) {
             if (typeof renderer.render === "function") {
                 renderer.render(scene, activeCam || perspectiveCam);
             }
-            const dataUrl = renderer.domElement.toDataURL("image/png");
-            return { dataUrl, pdfX: 14, pdfW: targetW, pdfH: targetH };
+            const dataUrl = renderer.domElement.toDataURL("image/jpeg", 0.85);
+            return { dataUrl, format: 'JPEG', pdfX: 14, pdfW: targetW, pdfH: targetH };
         } catch (e) {
             return null;
         }
@@ -18165,8 +20016,10 @@ function capturePlanDeReperageSnapshot(targetW = 182, targetH = 140) {
         if (anchorLabelsSubgroup) anchorLabelsSubgroup.visible = true;
         if (spanLabelsSubgroup) spanLabelsSubgroup.visible = true;
 
-        const renderW = Math.round(targetW * 10);
-        const renderH = Math.round(targetH * 10);
+        // Render at 150 dpi in JPEG (targetW in mm: 182 mm -> ~1075 px)
+        // 150 dpi render: Math.round(ptW * (150 / 72))
+        const renderW = Math.round(targetW * (150 / 25.4));
+        const renderH = Math.round(targetH * (150 / 25.4));
         renderer.setSize(renderW, renderH, false);
 
         const renderAspect = renderW / renderH;
@@ -18190,10 +20043,11 @@ function capturePlanDeReperageSnapshot(targetW = 182, targetH = 140) {
         snapCam.updateProjectionMatrix();
 
         renderer.render(scene, snapCam);
-        const dataUrl = renderer.domElement.toDataURL("image/png");
+        const dataUrl = renderer.domElement.toDataURL("image/jpeg", 0.85);
 
         return {
             dataUrl,
+            format: 'JPEG',
             pdfX: 14,
             pdfW: targetW,
             pdfH: targetH
@@ -18217,7 +20071,7 @@ window.capturePlanDeReperageSnapshot = capturePlanDeReperageSnapshot;
 // ==========================================
 // HIGH-RESOLUTION 3D ROOF PERSPECTIVE SNAPSHOT FOR PDF REPORT
 // ==========================================
-function captureVue3DToitSnapshot(targetW = 182, targetH = 140) {
+function captureVue3DToitSnapshot(targetW = 182, targetH = 145) {
     if (!renderer || !renderer.domElement || !scene) return null;
     if (typeof THREE === "undefined") return null;
 
@@ -18227,8 +20081,8 @@ function captureVue3DToitSnapshot(targetW = 182, targetH = 140) {
             if (typeof renderer.render === "function") {
                 renderer.render(scene, activeCam || perspectiveCam);
             }
-            const dataUrl = renderer.domElement.toDataURL("image/png");
-            return { dataUrl, pdfX: 14, pdfW: targetW, pdfH: targetH };
+            const dataUrl = renderer.domElement.toDataURL("image/jpeg", 0.85);
+            return { dataUrl, format: 'JPEG', pdfX: 14, pdfW: targetW, pdfH: targetH };
         } catch (e) {
             return null;
         }
@@ -18276,23 +20130,19 @@ function captureVue3DToitSnapshot(targetW = 182, targetH = 140) {
         const maxDim = Math.max(size.x, size.y, size.z, 14);
         const dist = maxDim * 1.45;
 
-        // Elevated axonometric/perspective 3D camera
         const snapCam3D = new THREE.PerspectiveCamera(38, targetW / targetH, 0.1, 2000);
 
         if (state.viewMode === "3d" && activeCam && typeof controls !== "undefined" && controls) {
-            // Respect user's 3D perspective orientation, ensuring obstacle is not occluded
             const camVec = new THREE.Vector3().subVectors(activeCam.position, controls.target).normalize();
             if (hasObstacle && camVec.z > 0) {
-                camVec.z = -Math.abs(camVec.z); // flip to front where obstacle and dimensions are located
+                camVec.z = -Math.abs(camVec.z);
             }
             snapCam3D.position.copy(center).addScaledVector(camVec, dist);
             snapCam3D.lookAt(center.x, center.y - (hasObstacle ? H * 0.15 : 0), center.z);
         } else if (hasObstacle) {
-            // Front-isometric view facing the front wall (negative Z) to showcase obstacle and clearance dimensions
             snapCam3D.position.set(center.x - dist * 0.65, center.y + dist * 0.55, center.z - dist * 0.85);
             snapCam3D.lookAt(center.x, center.y - H * 0.15, center.z);
         } else {
-            // Standard elevated perspective
             snapCam3D.position.set(center.x + dist * 0.70, center.y + dist * 0.85, center.z + dist * 0.75);
             snapCam3D.lookAt(center.x, center.y + 0.3, center.z);
         }
@@ -18301,15 +20151,17 @@ function captureVue3DToitSnapshot(targetW = 182, targetH = 140) {
         scene.background = new THREE.Color(0xffffff);
         if (gridHelper) gridHelper.visible = false;
 
-        const renderW = Math.round(targetW * 10);
-        const renderH = Math.round(targetH * 10);
+        // Render at 150 dpi in JPEG (targetW in mm: 182 mm -> ~1075 px)
+        const renderW = Math.round(targetW * (150 / 25.4));
+        const renderH = Math.round(targetH * (150 / 25.4));
         renderer.setSize(renderW, renderH, false);
 
         renderer.render(scene, snapCam3D);
-        const dataUrl = renderer.domElement.toDataURL("image/png");
+        const dataUrl = renderer.domElement.toDataURL("image/jpeg", 0.85);
 
         return {
             dataUrl,
+            format: 'JPEG',
             pdfX: 14,
             pdfW: targetW,
             pdfH: targetH
@@ -18330,8 +20182,48 @@ function captureVue3DToitSnapshot(targetW = 182, targetH = 140) {
 }
 window.captureVue3DToitSnapshot = captureVue3DToitSnapshot;
 
+// Helper to translate layout type to clean localized name
+function getLayoutTypeName(layoutType, lang = 0) {
+    const isEn = (parseInt(lang) === 1);
+    const isEs = (parseInt(lang) === 2);
+    const key = (layoutType || "").toLowerCase();
+    const map = {
+        "single_span": { fr: "Portée unique", en: "Single Span", es: "Vano único" },
+        "multi_straight": { fr: "Multi-portée rectiligne", en: "Multi-Span Straight", es: "Multivano rectilíneo" },
+        "multi_span": { fr: "Multi-portée standard", en: "Multi-Span Standard", es: "Multivano estándar" },
+        "slope_single": { fr: "Portée unique sur plan incliné", en: "Single Span Sloped Roof", es: "Vano único cubierta inclinada" },
+        "slope_multi": { fr: "Multi-portée sur plan incliné", en: "Multi-Span Sloped Roof", es: "Multivano cubierta inclinada" },
+        "slope_horizontal_comb": { fr: "Combinaison pente et horizontal", en: "Slope & Horizontal Combination", es: "Combinación pendiente y horizontal" },
+        "cross_spans": { fr: "Configuration en croix (4 branches)", en: "Cross Spans (4 branches)", es: "Configuración en cruz (4 ramas)" },
+        "grid_system": { fr: "Système de grille quadrillée", en: "Grid System", es: "Sistema de cuadrícula" },
+        "stadium": { fr: "Multi-portée avec coudes (Boucle ouverte stade)", en: "Multi-Span with Bends (Open Stadium Loop)", es: "Multivano con curvas (Bucle abierto estadio)" },
+        "multi_bend_circle": { fr: "Multi-portée avec coudes", en: "Multi-Span with Bends", es: "Multivano con curvas" },
+        "ring": { fr: "Multi-portée avec coudes", en: "Multi-Span with Bends", es: "Multivano con curvas" },
+        "circle": { fr: "Multi-portée avec coudes", en: "Multi-Span with Bends", es: "Multivano con curvas" },
+        "l_shape": { fr: "Configuration en L", en: "L-Shape Layout", es: "Configuración en L" },
+        "u_shape": { fr: "Configuration en U", en: "U-Shape Layout", es: "Configuración en U" }
+    };
+    if (map[key]) {
+        return isEn ? map[key].en : (isEs ? map[key].es : map[key].fr);
+    }
+    const clean = key.replace(/_/g, ' ');
+    if (isEn) return clean.charAt(0).toUpperCase() + clean.slice(1);
+    if (clean.includes("circle") || clean.includes("bend")) return "Multi-portée avec coudes";
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+// Localized number formatter (virgule en français, point en anglais)
+function formatLocalizedNumber(num, decimals = 2, lang = 0) {
+    if (num === null || num === undefined || isNaN(num)) return "--";
+    const str = Number(num).toFixed(decimals);
+    if (parseInt(lang) === 0 || parseInt(lang) === 2) {
+        return str.replace('.', ',');
+    }
+    return str;
+}
+
 // ==========================================
-// REPORT PDF GENERATOR
+// REPORT PDF GENERATOR (STYLE HOOKT CHARTE ÉLÉGANTE & TABLEAUX COMPLETS)
 // ==========================================
 function generatePDFReport() {
     try {
@@ -18339,7 +20231,10 @@ function generatePDFReport() {
         try {
             currentUser = AuthModule.requireAuth();
         } catch (e) {
-            alert("⚠️ Accès refusé : Une session active approuvée par PIP est requise pour générer ce rapport.");
+            const isEn = (parseInt(state.lang) === 1);
+            alert(isEn
+                ? "⚠️ Access denied: An active session approved by PIP is required to generate this report."
+                : "⚠️ Accès refusé : Une session active approuvée par PIP est requise pour générer ce rapport.");
             AuthModule.showLoginOverlay();
             return;
         }
@@ -18348,21 +20243,21 @@ function generatePDFReport() {
 
         const l = state.lang || 0;
         const isEn = (parseInt(l) === 1);
+        const isEs = (parseInt(l) === 2);
         const pdfTrans = TRANSLATIONS.pdf;
 
-        // Spec V2 — 10 / Prompt 16: Mandatory Retracted Length / Lanyard Length check
+        // Mandatory checks (Spec V2 — 09 & Spec V2 — 10)
         const isLanyardDev = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
         const retrM = (typeof state.retractedLengthM === "number" && !isNaN(state.retractedLengthM)) ? state.retractedLengthM : parseFloat(state.retractedLengthM);
         if (!retrM || isNaN(retrM) || retrM <= 0) {
             const fieldFr = isLanyardDev ? "La longueur de la longe" : "La longueur rétractée";
             const fieldEn = isLanyardDev ? "Lanyard length" : "Retracted length";
             alert(isEn
-                ? `⚠️ Missing Mandatory Field: ${fieldEn} must be specified and strictly greater than 0 before generating the report.`
-                : `⚠️ Champ obligatoire manquant : ${fieldFr} doit être renseignée et strictement supérieure à 0 avant de générer le rapport.`);
+                ? ("⚠️ Missing Mandatory Field: " + fieldEn + " must be specified and strictly greater than 0 before generating the report.")
+                : ("⚠️ Champ obligatoire manquant : " + fieldFr + " doit être renseignée et strictement supérieure à 0 avant de générer le rapport."));
             return;
         }
 
-        // Spec V2 — 09 / Prompt 15: Mandatory MAD and Arrest Force checks
         const madM = (typeof state.madM === "number" && !isNaN(state.madM)) ? state.madM : parseFloat(state.madM);
         if (!madM || isNaN(madM) || madM <= 0) {
             alert(isEn
@@ -18381,12 +20276,11 @@ function generatePDFReport() {
         const fLbf = fKn * UnitsModule.KN_TO_LBF;
         if (fLbf > 5000.0) {
             alert(isEn
-                ? `⚠️ Arrest Force Out of Range: ${Math.round(fLbf)} lbf exceeds the 5,000 lbf maximum threshold.`
-                : `⚠️ Force d'arrêt hors limites : ${Math.round(fLbf)} lbf dépasse le maximum autorisé de 5 000 lbf.`);
+                ? ("⚠️ Arrest Force Out of Range: " + Math.round(fLbf) + " lbf exceeds the 5,000 lbf maximum threshold.")
+                : ("⚠️ Force d'arrêt hors limites : " + Math.round(fLbf) + " lbf dépasse le maximum autorisé de 5 000 lbf."));
             return;
         }
 
-        // Spec V2 — 04 / Prompt 15 & Spec V2 — 10 / Prompt 16: Mandatory SRL Selection & Class Validation Gate
         if (state.connectingDevice === "srd" && !state.selectedSrlId) {
             const srlCard = document.getElementById("srl-selection-card");
             if (srlCard && typeof srlCard.scrollIntoView === 'function') {
@@ -18405,8 +20299,8 @@ function generatePDFReport() {
         const targetClass = (state.connectingDevice === "srd" && srlData) ? srlData.classe : (state.connectingDevice === "custom_srd" ? (parseInt(state.customDeviceClass) || 2) : 2);
         if (targetClass === 1 && (state.hllElevationPreset === "knee" || hllElev < 1.49)) {
             alert(isEn
-                ? `⚠️ SRL Class 1 Rejected: Lifeline is below D-ring height. A Class 2 device is mandatory for this report.`
-                : `⚠️ Non-conformité SRL Classe 1 : La ligne de vie est sous l'anneau D. Un dispositif Classe 2 est obligatoire pour éditer ce rapport.`);
+                ? "⚠️ SRL Class 1 Rejected: Lifeline is below D-ring height. A Class 2 device is mandatory for this report."
+                : "⚠️ Non-conformité SRL Classe 1 : La ligne de vie est sous l'anneau D. Un dispositif Classe 2 est obligatoire pour éditer ce rapport.");
             return;
         }
 
@@ -18423,16 +20317,49 @@ function generatePDFReport() {
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
 
-        // Brand Header
-        doc.setFillColor(15, 23, 42); // Slate dark
-        doc.rect(0, 0, 210, 26, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(20);
-        doc.text("HOOKT", 14, 17);
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "normal");
-        doc.text(pdfTrans.title[l], 50, 16);
+        // HOOKT Official Color Palette
+        const C_HOOKT_BLACK = [29, 29, 27];
+        const C_BLACK = [29, 29, 27];
+        const HEADER_H = 111.0;
+        const FOOTER_H = 29.0;     // #1D1D1B
+        const C_HOOKT_WHITE = [255, 255, 255]; // #FFFFFF
+        const C_HOOKT_GRAY = [109, 109, 108];   // #6D6D6C
+        const C_HOOKT_LINE = [203, 213, 225];   // #CBD5E1 (crisp visible border)
+        const C_HOOKT_LABEL_BG = [248, 250, 252];
+        const C_HOOKT_ORANGE = [234, 88, 12];   // #EA580C (critical accent)
+
+        // Header builder for all pages
+        function drawHeader(titleText, subtitleText) {
+            doc.setFillColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
+            doc.rect(0, 0, 210, 24, 'F');
+
+            // Logo HOOKT wordmark
+            if (HOOKT_LOGO_BASE64) {
+                try {
+                    doc.addImage(HOOKT_LOGO_BASE64, 'PNG', 14, 5, 42, 14);
+                } catch (e) {
+                    doc.setTextColor(255, 255, 255);
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(15);
+                    doc.text("HOOKT", 14, 16);
+                }
+            } else {
+                doc.setTextColor(255, 255, 255);
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(15);
+                doc.text("HOOKT", 14, 16);
+            }
+
+            doc.setTextColor(255, 255, 255);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(10.5);
+            doc.text(titleText, 62, 12);
+            if (subtitleText) {
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(7.2);
+                doc.text(subtitleText, 62, 18);
+            }
+        }
 
         const dateLocales = ["fr-FR", "en-US", "es-ES"];
         const today = new Date().toLocaleDateString(dateLocales[l] || "fr-FR");
@@ -18449,10 +20376,10 @@ function generatePDFReport() {
 
         const postName = getActivePostName();
         const displayProductPdf = isXtreme(state.product)
-            ? `XTREME - ${getLongRangeSubRange(state.lineLength)}`
+            ? ("XTREME - " + getLongRangeSubRange(state.lineLength))
             : normalizeProduct(state.product || "CORE");
         const displayAbsorberPdf = isXtreme(state.product)
-            ? `XTREME (${getLongRangeSubRange(state.lineLength)})`
+            ? ("XTREME (" + getLongRangeSubRange(state.lineLength) + ")")
             : normalizeProduct(state.product || "CORE");
 
         const pInfo = state.projectInfo || {};
@@ -18460,10 +20387,10 @@ function generatePDFReport() {
         const elevPresetNames = {
             "knee": l === 1 ? "Knee height - 0.45 m" : "Hauteur de genou - 0,45 m",
             "d_ring": l === 1 ? "D-ring - 1.50 m" : "Anneau D - 1,50 m",
-            "overhead": (isXtreme(state.product) ? "Overhead - 3,00 m" : "Overhead - 1,80 m"),
-            "custom": `Personnalisée - ${parseFloat(state.hllElevation).toFixed(2)} m`
+            "overhead": (isXtreme(state.product) ? (l === 1 ? "Overhead - 3.00 m" : "Overhead - 3,00 m") : (l === 1 ? "Overhead - 1.80 m" : "Overhead - 1,80 m")),
+            "custom": (l === 1 ? ("Custom - " + parseFloat(state.hllElevation).toFixed(2) + " m") : ("Personnalisée - " + formatLocalizedNumber(parseFloat(state.hllElevation), 2, l) + " m"))
         };
-        const elevLabel = elevPresetNames[state.hllElevationPreset] || `${parseFloat(state.hllElevation).toFixed(2)} m`;
+        const elevLabel = elevPresetNames[state.hllElevationPreset] || (formatLocalizedNumber(parseFloat(state.hllElevation), 2, l) + " m");
 
         // Record audit event
         AuthModule.logAudit("REPORT_GENERATED", {
@@ -18476,7 +20403,7 @@ function generatePDFReport() {
         // Synchronize active arrest load from input element if available
         const arrestInpEl = document.getElementById("input-arrest-load-val");
         if (arrestInpEl && arrestInpEl.value) {
-            const rawInp = parseFloat(arrestInpEl.value);
+            const rawInp = parseFloat(String(arrestInpEl.value).replace(/,/g, '.'));
             if (!isNaN(rawInp) && rawInp > 0) {
                 const parsedKn = (state.unitSystem === "imperial" || state.unitSystem === "us")
                     ? (rawInp * UnitsModule.LBF_TO_KN)
@@ -18491,21 +20418,58 @@ function generatePDFReport() {
         const isProvisional = (lumpU === 5);
         const lumpDetail = (state.arrestLoadMode === "custom")
             ? ""
-            : ` (Lump Sum M=${lumpM.toFixed(2)}${isProvisional ? " prov." : ""})`;
-        const arrestForceStr = UnitsModule.formatForce(currentArrestKn) + lumpDetail;
+            : (" (Lump Sum M=" + formatLocalizedNumber(lumpM, 2, l) + (isProvisional ? " prov." : "") + ")");
+        const arrestForceStr = (isEn ? (currentArrestKn.toFixed(2) + " kN") : (formatLocalizedNumber(currentArrestKn, 2, l) + " kN")) + lumpDetail;
 
-        // Section 1: Lifeline Details & Project Info (Single Title Call)
+        const prodUpper = (state.product || "").toUpperCase();
+        const maxSysUsers = (prodUpper.includes("LIGHT") || prodUpper.includes("LONG")) ? 3 : 5;
+        const fallFactorVal = (typeof state.fallFactor === "number" && !isNaN(state.fallFactor)) ? state.fallFactor : 1.00;
+
+        const hasPostUsed = hasActivePostInConfig();
+        const is10mmCableSystem = isPro(state.product) || isXtreme(state.product);
+        const cableSpecStr = is10mmCableSystem
+            ? (isEn
+                ? "Stainless Steel 7x19 strands - diam. 10 mm - Breaking strength 53.1 kN"
+                : (isEs
+                    ? "Cable Inox 7x19 cordones - diám. 10 mm - Valor de rotura 53,1 kN"
+                    : "Câble Inox 7x19 torons - diam. 10 mm - Valeur de rupture 53,1 kN"))
+            : (isEn
+                ? "Stainless Steel 7x19 strands - diam. 8 mm - Breaking strength >= 36 kN"
+                : (isEs
+                    ? "Cable Inox 7x19 cordones - diám. 8 mm - Valor de rotura >= 36 kN"
+                    : "Câble Inox 7x19 torons - diam. 8 mm - Valeur de rupture >= 36 kN"));
+
+        // Single Source of Truth System Labels
+        const pdfSystemLabels = SystemLabelingModule.generateSystemLabels(state);
+        const fallSpanIdx = state.spans ? Math.max(0, state.spans.findIndex(s => s.id === state.selectedFallSpanId)) : 0;
+        const activeFallId = state.selectedFallSpanId || (state.spans && state.spans[fallSpanIdx] ? state.spans[fallSpanIdx].id : "S1");
+
+        // Fall Clearance computations
+        const longestSpanLen = state.spans ? Math.max(...state.spans.map(s => s.length || 0)) : 15;
+        const calcDefl = Calculator.deflection(state.product, longestSpanLen, fallFactorVal, support, 1, state.norm, isMultiSpan);
+        const calcDeflMeters = (calcDefl > 20.0) ? (calcDefl / 1000.0) : calcDefl;
+        const clrPdf = FallClearanceModule.compute(state, calcDeflMeters);
+        const wwsAvailableM = (typeof state.wwsElevationM === "number" && !isNaN(state.wwsElevationM) && state.wwsElevationM > 0)
+            ? state.wwsElevationM
+            : parseFloat(state.roof_height_above_ground || 6.0);
+
+        // =========================================================================
+        // PAGE 1: PRÉSENTATION, CALCULS MÉCANIQUES & COMPOSANTS (TABLEAUX COMPLETS)
+        // =========================================================================
+        drawHeader("HOOKT - " + (isEn ? "TECHNICAL INSTALLATION REPORT" : "RAPPORT TECHNIQUE D'INSTALLATION"), pdfTrans.title[l]);
+
+        // Section 1: Lifeline Details & Project Info Table (Grid visible)
         doc.setFont("helvetica", "bold");
         doc.setFontSize(10.5);
         doc.setTextColor(30, 41, 59);
-        doc.text(pdfTrans.sec1Title[l], 14, 33);
+        doc.text(pdfTrans.sec1Title[l], 14, 32);
 
         const sec1Labels = {
             user: ["Utilisateur PIP", "PIP User", "Usuario PIP"][l],
             project: ["Projet / Lieu", "Project / Location", "Proyecto / Ubicación"][l],
             hllDate: ["Repère / Date", "Mark / Date", "Referencia / Fecha"][l],
             product: ["Gamme Produit", "Product Range", "Gama Producto"][l],
-            config: ["Configuration OSHA", "OSHA Configuration", "Configuración OSHA"][l],
+            config: ["Configuration", "Configuration", "Configuración"][l],
             app: ["Application", "Application", "Aplicación"][l],
             elev: ["Élévation ligne", "Lifeline Elevation", "Elevación de Línea"][l],
             arrest: ["Charge d'arrêt", "Arrest Load", "Carga de parada"][l],
@@ -18519,57 +20483,56 @@ function generatePDFReport() {
 
         const sec1TableBody = [
             [
-                sec1Labels.user, `${currentUser.nom} - ${currentUser.société}`,
+                sec1Labels.user, currentUser.nom + " - " + currentUser.société,
                 sec1Labels.arrest, arrestForceStr
             ],
             [
-                sec1Labels.project, `${pInfo.name || "N/A"} - ${pInfo.location || "N/A"}`,
-                sec1Labels.anchors, `${totalAnchors}`
+                sec1Labels.project, (pInfo.name || "N/A") + " - " + (pInfo.location || "N/A"),
+                sec1Labels.anchors, String(totalAnchors)
             ],
             [
-                sec1Labels.hllDate, `${pInfo.hllName || "HLL-01"} - ${today}`,
-                sec1Labels.absorbers, `${totalAnchors}`
+                sec1Labels.hllDate, (pInfo.hllName || "HLL-01") + " - " + today,
+                sec1Labels.absorbers, String(totalAnchors)
             ],
             [
-                sec1Labels.product, `${displayProductPdf}`,
-                sec1Labels.devLen, `${formatDistance(totalLineLen, 2, l)}`
+                sec1Labels.product, displayProductPdf,
+                sec1Labels.devLen, formatDistance(totalLineLen, 2, l)
             ],
             [
-                sec1Labels.config, `${state.layoutType.replace(/_/g, ' ').toUpperCase()}`,
-                sec1Labels.realSpan, `${formatDistance(realSpanMax, 2, l)}`
+                sec1Labels.config, getLayoutTypeName(state.layoutType, l),
+                sec1Labels.realSpan, formatDistance(realSpanMax, 2, l)
             ],
             [
-                sec1Labels.app, `${state.appMode === "restraint" ? (l === 1 ? "Restraint" : "Retenue") : (l === 1 ? "Fall Arrest" : "Arrêt de chute")}`,
-                sec1Labels.maxUsers, `${state.nbUsers}`
+                sec1Labels.app, state.appMode === "restraint" ? (l === 1 ? "Restraint" : "Retenue") : (l === 1 ? "Fall Arrest" : "Arrêt de chute"),
+                sec1Labels.maxUsers, state.nbUsers + " " + (isEn ? "user(s)" : "pers.") + " (" + (isEn ? ("cert. 1 to " + maxSysUsers) : ("gamme 1 à " + maxSysUsers + " pers.")) + ")"
             ],
             [
-                sec1Labels.elev, `${elevLabel}`,
+                sec1Labels.elev, elevLabel,
                 sec1Labels.srl, getConnectingDeviceReportName(l)
             ]
         ];
 
         doc.autoTable({
-            startY: 36,
+            startY: 35,
             body: sec1TableBody,
-            theme: 'plain',
+            theme: 'grid',
             styles: {
-                fontSize: 7.0,
-                cellPadding: 1.3,
+                fontSize: 7.2,
+                cellPadding: 2.0,
                 textColor: [30, 41, 59],
-                lineColor: [226, 232, 240],
-                lineWidth: 0.15
+                lineColor: C_HOOKT_LINE,
+                lineWidth: 0.25
             },
             columnStyles: {
-                0: { fontStyle: 'bold', textColor: [71, 85, 105], cellWidth: 38 },
+                0: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 38 },
                 1: { cellWidth: 53 },
-                2: { fontStyle: 'bold', textColor: [71, 85, 105], cellWidth: 38 },
+                2: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 38 },
                 3: { cellWidth: 53 }
             }
         });
 
-        const sec2StartY = doc.lastAutoTable.finalY + 6;
-
         // Section 2: Mechanical calculations table
+        const sec2StartY = doc.lastAutoTable.finalY + 6;
         const activePdfFallSpan = (state.spans && state.selectedFallSpanId)
             ? state.spans.find(s => s.id === state.selectedFallSpanId)
             : null;
@@ -18584,17 +20547,17 @@ function generatePDFReport() {
         doc.setTextColor(30, 41, 59);
 
         if (isPdfSloped) {
-            // SINGLE MERGED COMPREHENSIVE TABLE FOR SLOPED ROOF SYSTEM (1 USER, 50kg & 140kg)
+            // SLOPED ROOF COMPREHENSIVE SCENARIO TABLE
             doc.text(pdfTrans.sec2Title[l], 14, sec2StartY);
 
             const slopedReport = SlopedSystemConesModule.getFullScenarioReport(effectivePdfSlope, realSpanMax, state.lineLength);
             const sc = slopedReport.scenarios;
             const formatConeSlips = (cones) => cones.map(c => `C${c.index}:${c.slipMm}mm`).join(" | ");
 
-            const uEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, state.fallFactor, support, isMultiSpan);
-            const uDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, 1, state.norm, isMultiSpan);
+            const uEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, fallFactorVal, support, isMultiSpan);
+            const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, 1, state.norm, isMultiSpan);
             const porteeStr = formatDistance(realSpanMax, 2, l);
-            const effortStr = `${uEffort.toFixed(2)} kN`;
+            const effortStr = `${formatLocalizedNumber(uEffort, 2, l)} kN`;
             const deflStr = formatDeflection(uDefl, l);
 
             const slopedHeaders = [
@@ -18610,24 +20573,24 @@ function generatePDFReport() {
             };
 
             const slopedBody = [
-                [scNames.sliding, "50 kg", `${sc.m50_sliding.initialAngleDeg}°`, `${sc.m50_sliding.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${sc.m50_sliding.loadCellTopKn.toFixed(3)} kN`, `${sc.m50_sliding.loadCellBottomKn.toFixed(3)} kN`, formatConeSlips(sc.m50_sliding.cones)],
-                [scNames.freefall, "50 kg", `${sc.m50_freefall.initialAngleDeg}°`, `${sc.m50_freefall.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${sc.m50_freefall.loadCellTopKn.toFixed(3)} kN`, `${sc.m50_freefall.loadCellBottomKn.toFixed(3)} kN`, formatConeSlips(sc.m50_freefall.cones)],
-                [scNames.sliding, "140 kg", `${sc.m140_sliding.initialAngleDeg}°`, `${sc.m140_sliding.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${sc.m140_sliding.loadCellTopKn.toFixed(3)} kN`, `${sc.m140_sliding.loadCellBottomKn.toFixed(3)} kN`, formatConeSlips(sc.m140_sliding.cones)],
-                [scNames.freefall, "140 kg", `${sc.m140_freefall.initialAngleDeg}°`, `${sc.m140_freefall.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${sc.m140_freefall.loadCellTopKn.toFixed(3)} kN`, `${sc.m140_freefall.loadCellBottomKn.toFixed(3)} kN`, formatConeSlips(sc.m140_freefall.cones)],
-                [scNames.retained, "140 kg", `${slopedReport.retainedMax.initialAngleDeg}°`, `${slopedReport.retainedMax.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${slopedReport.retainedMax.loadCellTopKn.toFixed(3)} kN`, `${slopedReport.retainedMax.loadCellBottomKn.toFixed(3)} kN`, formatConeSlips(slopedReport.retainedMax.cones)]
+                [scNames.sliding, "50 kg", `${sc.m50_sliding.initialAngleDeg}°`, `${sc.m50_sliding.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${formatLocalizedNumber(sc.m50_sliding.loadCellTopKn, 2, l)} kN`, `${formatLocalizedNumber(sc.m50_sliding.loadCellBottomKn, 2, l)} kN`, formatConeSlips(sc.m50_sliding.cones)],
+                [scNames.freefall, "50 kg", `${sc.m50_freefall.initialAngleDeg}°`, `${sc.m50_freefall.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${formatLocalizedNumber(sc.m50_freefall.loadCellTopKn, 2, l)} kN`, `${formatLocalizedNumber(sc.m50_freefall.loadCellBottomKn, 2, l)} kN`, formatConeSlips(sc.m50_freefall.cones)],
+                [scNames.sliding, "140 kg", `${sc.m140_sliding.initialAngleDeg}°`, `${sc.m140_sliding.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${formatLocalizedNumber(sc.m140_sliding.loadCellTopKn, 2, l)} kN`, `${formatLocalizedNumber(sc.m140_sliding.loadCellBottomKn, 2, l)} kN`, formatConeSlips(sc.m140_sliding.cones)],
+                [scNames.freefall, "140 kg", `${sc.m140_freefall.initialAngleDeg}°`, `${sc.m140_freefall.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${formatLocalizedNumber(sc.m140_freefall.loadCellTopKn, 2, l)} kN`, `${formatLocalizedNumber(sc.m140_freefall.loadCellBottomKn, 2, l)} kN`, formatConeSlips(sc.m140_freefall.cones)],
+                [scNames.retained, "140 kg", `${slopedReport.retainedMax.initialAngleDeg}°`, `${slopedReport.retainedMax.finalAngleDeg}°`, porteeStr, effortStr, deflStr, `${formatLocalizedNumber(slopedReport.retainedMax.loadCellTopKn, 2, l)} kN`, `${formatLocalizedNumber(slopedReport.retainedMax.loadCellBottomKn, 2, l)} kN`, formatConeSlips(slopedReport.retainedMax.cones)]
             ];
 
             doc.autoTable({
-                startY: sec2StartY + 4,
+                startY: sec2StartY + 3,
                 head: [slopedHeaders],
                 body: slopedBody,
                 theme: 'grid',
-                headStyles: { fillColor: [15, 23, 42] },
-                styles: { fontSize: 6.8, cellPadding: 2 },
+                headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                styles: { fontSize: 6.8, cellPadding: 2.0, lineColor: C_HOOKT_LINE, lineWidth: 0.25 },
                 didParseCell: function (data) {
                     if (data.row.index === 4) {
                         data.cell.styles.fontWeight = 'bold';
-                        data.cell.styles.fillColor = [226, 232, 240];
+                        data.cell.styles.fillColor = [241, 245, 249];
                         data.cell.styles.textColor = [15, 23, 42];
                     }
                 }
@@ -18638,16 +20601,12 @@ function generatePDFReport() {
                 doc.setFont("helvetica", "bold");
                 doc.setFontSize(9);
 
-                const prodUpper = (state.product || "").toUpperCase();
-                const maxSysUsers = (prodUpper.includes("LIGHT") || prodUpper.includes("LONG")) ? 3 : 5;
-
-                // Compute sample to get adapted titles and row labels
-                const sampleEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, state.fallFactor, support, true);
-                const sampleDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, 1, state.norm, true);
-                const sampleExt1 = Calculator.extremiteForce1(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
-                const sampleExt2 = Calculator.extremiteForce2(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
-                const sampleExt3 = Calculator.extremiteForce3(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
-                const sampleExt4 = Calculator.extremiteForce4(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
+                const sampleEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, fallFactorVal, support, true);
+                const sampleDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, 1, state.norm, true);
+                const sampleExt1 = Calculator.extremiteForce1(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
+                const sampleExt2 = Calculator.extremiteForce2(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
+                const sampleExt3 = Calculator.extremiteForce3(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
+                const sampleExt4 = Calculator.extremiteForce4(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
                 const sampleSix = AnchorEffortDistributionModule.calculateRule1_MultiSpan(sampleExt1, sampleExt2, sampleExt3, sampleExt4);
                 const sampleFinalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sampleSix, state.spans, state.fallPosition?.segmentIndex || 0);
                 const adaptedSample = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(sampleFinalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
@@ -18660,46 +20619,41 @@ function generatePDFReport() {
                 }
 
                 const anchorRows = adaptedSample.points.map(pt => [pt.pdfLabel]);
-
                 for (let u = 1; u <= maxSysUsers; u++) {
-                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, state.fallFactor, support, true);
-                    const uDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, u, state.norm, true);
-                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
-                    const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
-                    const uExt3 = Calculator.extremiteForce3(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
-                    const uExt4 = Calculator.extremiteForce4(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
+                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, fallFactorVal, support, true);
+                    const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, u, state.norm, true);
+                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
+                    const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
+                    const uExt3 = Calculator.extremiteForce3(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
+                    const uExt4 = Calculator.extremiteForce4(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
 
                     const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(uExt1, uExt2, uExt3, uExt4);
                     const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, state.fallPosition?.segmentIndex || 0);
                     const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
 
                     adaptedU.points.forEach((pt, pIdx) => {
-                        anchorRows[pIdx].push(`${pt.val.toFixed(2)} kN`);
+                        anchorRows[pIdx].push(`${formatLocalizedNumber(pt.val, 2, l)} kN`);
                     });
                 }
 
                 doc.autoTable({
-                    startY: currentSubY + 4,
+                    startY: currentSubY + 3,
                     head: [table2HeaderRow],
                     body: anchorRows,
-                    theme: 'striped',
-                    headStyles: { fillColor: [15, 23, 42] },
-                    styles: { fontSize: 7 }
+                    theme: 'grid',
+                    headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                    styles: { fontSize: 7.0, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
                 });
             }
         } else {
-            // STANDARD TABLE 2 FOR FLAT ROOF / OVERHEAD / TRIANGLE ROOF
+            // STANDARD TABLE 2 FOR FLAT ROOF / OVERHEAD
             doc.text(pdfTrans.sec2Title[l], 14, sec2StartY);
-
-            const prodUpper = (state.product || "").toUpperCase();
-            const maxSysUsers = (prodUpper.includes("LIGHT") || prodUpper.includes("LONG")) ? 3 : 5;
 
             const isSingleSpan = (state.layoutType === "single_span" || state.layoutType === "slope_single");
             const isCrossLayout = (state.layoutType === "cross_spans");
             const isGridLayout = (state.layoutType === "grid_system");
 
             if (isCrossLayout && isOSHA) {
-                // Configuration 11: Cross Spans (Rule 3 - 4 branches)
                 const fallBr = state.fallPosition?.branch || "north";
                 const table2HeaderRow = [["Indicateur / Branche (Croix)", "Indicator / Branch (Cross)", "Indicador / Rama (Cruz)"][l]];
                 for (let u = 1; u <= maxSysUsers; u++) {
@@ -18718,50 +20672,39 @@ function generatePDFReport() {
                 const rowWest = [pdfTrans.rowCrossWest[l] + (fallBr === "west" ? tagFall : tagOther)];
 
                 for (let u = 1; u <= maxSysUsers; u++) {
-                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, state.fallFactor, support, false);
-                    const uDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, u, state.norm, false);
-                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, false);
+                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, fallFactorVal, support, false);
+                    const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, u, state.norm, false);
+                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, false);
                     const crossRes = AnchorEffortDistributionModule.calculateRule3_Cross(uExt1, fallBr);
 
                     rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
-                    rowForceL.push(`${uEffort.toFixed(2)} kN`);
+                    rowForceL.push(`${formatLocalizedNumber(uEffort, 2, l)} kN`);
                     rowDefl.push(formatDeflection(uDefl, l));
 
-                    rowNorth.push(`${crossRes.values[0].toFixed(2)} kN`);
-                    rowEast.push(`${crossRes.values[1].toFixed(2)} kN`);
-                    rowSouth.push(`${crossRes.values[2].toFixed(2)} kN`);
-                    rowWest.push(`${crossRes.values[3].toFixed(2)} kN`);
+                    rowNorth.push(`${formatLocalizedNumber(crossRes.values[0], 2, l)} kN`);
+                    rowEast.push(`${formatLocalizedNumber(crossRes.values[1], 2, l)} kN`);
+                    rowSouth.push(`${formatLocalizedNumber(crossRes.values[2], 2, l)} kN`);
+                    rowWest.push(`${formatLocalizedNumber(crossRes.values[3], 2, l)} kN`);
                 }
 
-                const mechData = [
-                    rowMaxSpan,
-                    rowForceL,
-                    rowDefl,
-                    rowNorth,
-                    rowEast,
-                    rowSouth,
-                    rowWest
-                ];
-
                 doc.autoTable({
-                    startY: sec2StartY + 4,
+                    startY: sec2StartY + 3,
                     head: [table2HeaderRow],
-                    body: mechData,
-                    theme: 'striped',
-                    headStyles: { fillColor: [15, 23, 42] },
-                    styles: { fontSize: 8 }
+                    body: [rowMaxSpan, rowForceL, rowDefl, rowNorth, rowEast, rowSouth, rowWest],
+                    theme: 'grid',
+                    headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                    styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
                 });
             } else if (isGridLayout && isOSHA) {
-                // Configuration 12: Grid System (Rule 4 - Preload & Dynamic Levels)
                 const gs = state.gridSystem || { nx: 3, ny: 3 };
                 const nx = Math.max(2, gs.nx || 3);
                 const ny = Math.max(2, gs.ny || 3);
                 const fallCross = { x: state.fallPosition?.gridCrossX || 0, z: state.fallPosition?.gridCrossZ || 0 };
                 const fallBranch = state.fallPosition?.gridBranch || "X+";
 
-                const uEffort = Calculator.effortLonge(state.product, realSpanMax, state.nbUsers, state.norm, state.fallFactor, support, true);
-                const uDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, state.nbUsers, state.norm, true);
-                const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, state.nbUsers, state.norm, uEffort, uDefl, state.fallFactor, support, true);
+                const uEffort = Calculator.effortLonge(state.product, realSpanMax, state.nbUsers, state.norm, fallFactorVal, support, true);
+                const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, state.nbUsers, state.norm, true);
+                const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, state.nbUsers, state.norm, uEffort, uDefl, fallFactorVal, support, true);
                 const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(uExt1, nx, ny, state.userMassKg || 141, state.gridPretensionKg || 600, fallCross, fallBranch);
 
                 const gridHeaders = [
@@ -18774,8 +20717,8 @@ function generatePDFReport() {
                 gridRows.push([
                     ["Croix Chute - Niv. 0", "Fall Cross - Level 0", "Cruz Caída - Nivel 0"][l],
                     "100%",
-                    `${gridRes.level0.totalFall.toFixed(2)} kN - P0+W: ${gridRes.prechargeFall.toFixed(2)} + Dyn: ${gridRes.dynFall.toFixed(2)}`,
-                    `${gridRes.level0.totalOther.toFixed(2)} kN - P0+W/3: ${gridRes.prechargeOther.toFixed(2)} + Dyn: ${gridRes.dynOther.toFixed(2)}`,
+                    `${formatLocalizedNumber(gridRes.level0.totalFall, 2, l)} kN - P0+W: ${formatLocalizedNumber(gridRes.prechargeFall, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynFall, 2, l)}`,
+                    `${formatLocalizedNumber(gridRes.level0.totalOther, 2, l)} kN - P0+W/3: ${formatLocalizedNumber(gridRes.prechargeOther, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynOther, 2, l)}`,
                     ["Actif", "Active", "Activo"][l]
                 ]);
 
@@ -18794,22 +20737,21 @@ function generatePDFReport() {
                     gridRows.push([
                         `${["Croix Niveau", "Cross Level", "Cruz Nivel"][l]} ${lvl}`,
                         `${(factor * 100).toFixed(factor < 0.01 ? 2 : 1)}%`,
-                        `${pChute.toFixed(2)} kN`,
-                        `${pOther.toFixed(2)} kN`,
+                        `${formatLocalizedNumber(pChute, 2, l)} kN`,
+                        `${formatLocalizedNumber(pOther, 2, l)} kN`,
                         statusStr
                     ]);
                 }
 
                 doc.autoTable({
-                    startY: sec2StartY + 4,
+                    startY: sec2StartY + 3,
                     head: [gridHeaders],
                     body: gridRows,
-                    theme: 'striped',
-                    headStyles: { fillColor: [15, 23, 42] },
-                    styles: { fontSize: 7.5 }
+                    theme: 'grid',
+                    headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                    styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
                 });
             } else if (!isOSHA || isSingleSpan || (state.oshaSpanMode === "unique")) {
-                // EN 795 (toujours 2 points) OU OSHA single-portée (2 points)
                 const table2HeaderRow = [pdfTrans.table2Headers[l][0]];
                 for (let u = 1; u <= maxSysUsers; u++) {
                     table2HeaderRow.push(l === 1 ? (u === 1 ? "1 user" : `${u} users`) : `${u} pers.`);
@@ -18830,7 +20772,6 @@ function generatePDFReport() {
                         uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
                         uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, "EN 795", uEffort, uDefl, enFF, support, false);
                     } else {
-                        // En norme OSHA, pas de facteur de chute
                         uEffort = Calculator.effortLonge(state.product, realSpanMax, u, "OSHA", 1.0, support, false);
                         uDefl = Calculator.deflection(state.product, realSpanMax, 1.0, support, u, "OSHA", false);
                         uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, "OSHA", uEffort, uDefl, 1.0, support, false);
@@ -18838,40 +20779,28 @@ function generatePDFReport() {
                     }
 
                     rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
-                    rowForceL.push(`${uEffort.toFixed(2)} kN`);
+                    rowForceL.push(`${formatLocalizedNumber(uEffort, 2, l)} kN`);
                     rowDefl.push(formatDeflection(uDefl, l));
-                    rowExt1.push(`${uExt1.toFixed(2)} kN`);
-                    rowExt2.push(`${uExt2.toFixed(2)} kN`);
+                    rowExt1.push(`${formatLocalizedNumber(uExt1, 2, l)} kN`);
+                    rowExt2.push(`${formatLocalizedNumber(uExt2, 2, l)} kN`);
                 }
-
-                const mechData = [
-                    rowMaxSpan,
-                    rowForceL,
-                    rowDefl,
-                    rowExt1,
-                    rowExt2
-                ];
 
                 doc.autoTable({
                     startY: sec2StartY + 3,
                     head: [table2HeaderRow],
-                    body: mechData,
-                    theme: 'striped',
-                    headStyles: { fillColor: [15, 23, 42] },
-                    styles: { fontSize: 7.2, cellPadding: 1.3 }
+                    body: [rowMaxSpan, rowForceL, rowDefl, rowExt1, rowExt2],
+                    theme: 'grid',
+                    headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                    styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
                 });
             } else {
-                // OSHA Multi-Portée : résultats adaptés au nombre réel d'ancrages (tous les ancrages)
-                const prodUpper = (state.product || "").toUpperCase();
-                const maxSysUsers = (prodUpper.includes("LIGHT") || prodUpper.includes("LONG")) ? 3 : 5;
-
-                // Compute first user sample to get adapted headers and row names
-                const sampleEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, state.fallFactor, support, true);
-                const sampleDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, 1, state.norm, true);
-                const sampleExt1 = Calculator.extremiteForce1(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
-                const sampleExt2 = Calculator.extremiteForce2(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
-                const sampleExt3 = Calculator.extremiteForce3(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
-                const sampleExt4 = Calculator.extremiteForce4(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, state.fallFactor, support, true);
+                // OSHA Multi-Portée : résultats adaptés pour tous les ancrages réels
+                const sampleEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, fallFactorVal, support, true);
+                const sampleDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, 1, state.norm, true);
+                const sampleExt1 = Calculator.extremiteForce1(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
+                const sampleExt2 = Calculator.extremiteForce2(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
+                const sampleExt3 = Calculator.extremiteForce3(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
+                const sampleExt4 = Calculator.extremiteForce4(state.product, realSpanMax, 1, state.norm, sampleEffort, sampleDefl, fallFactorVal, support, true);
                 const sampleSix = AnchorEffortDistributionModule.calculateRule1_MultiSpan(sampleExt1, sampleExt2, sampleExt3, sampleExt4);
                 const sampleFinalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sampleSix, state.spans, state.fallPosition?.segmentIndex || 0);
                 const adaptedSample = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(sampleFinalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
@@ -18887,44 +20816,37 @@ function generatePDFReport() {
                 const anchorRows = adaptedSample.points.map(pt => [pt.pdfLabel]);
 
                 for (let u = 1; u <= maxSysUsers; u++) {
-                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, state.fallFactor, support, true);
-                    const uDefl = Calculator.deflection(state.product, realSpanMax, state.fallFactor, support, u, state.norm, true);
-                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
-                    const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
-                    const uExt3 = Calculator.extremiteForce3(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
-                    const uExt4 = Calculator.extremiteForce4(state.product, realSpanMax, u, state.norm, uEffort, uDefl, state.fallFactor, support, true);
+                    const uEffort = Calculator.effortLonge(state.product, realSpanMax, u, state.norm, fallFactorVal, support, true);
+                    const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, u, state.norm, true);
+                    const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
+                    const uExt2 = Calculator.extremiteForce2(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
+                    const uExt3 = Calculator.extremiteForce3(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
+                    const uExt4 = Calculator.extremiteForce4(state.product, realSpanMax, u, state.norm, uEffort, uDefl, fallFactorVal, support, true);
 
                     const sixPoints = AnchorEffortDistributionModule.calculateRule1_MultiSpan(uExt1, uExt2, uExt3, uExt4);
                     const finalSix = AnchorEffortDistributionModule.calculateRule2_FromSpans(sixPoints, state.spans, state.fallPosition?.segmentIndex || 0);
                     const adaptedU = AnchorEffortDistributionModule.getAdaptedMultiSpanResults(finalSix, totalAnchors, l, state.fallPosition?.segmentIndex || 0, null, state.spans);
 
                     rowMaxSpan.push(formatDistance(realSpanMax, 2, l));
-                    rowForceL.push(`${uEffort.toFixed(2)} kN`);
+                    rowForceL.push(`${formatLocalizedNumber(uEffort, 2, l)} kN`);
                     rowDefl.push(formatDeflection(uDefl, l));
                     adaptedU.points.forEach((pt, pIdx) => {
-                        anchorRows[pIdx].push(`${pt.val.toFixed(2)} kN`);
+                        anchorRows[pIdx].push(`${formatLocalizedNumber(pt.val, 2, l)} kN`);
                     });
                 }
-
-                const mechData = [
-                    rowMaxSpan,
-                    rowForceL,
-                    rowDefl,
-                    ...anchorRows
-                ];
 
                 doc.autoTable({
                     startY: sec2StartY + 3,
                     head: [table2HeaderRow],
-                    body: mechData,
-                    theme: 'striped',
-                    headStyles: { fillColor: [15, 23, 42] },
-                    styles: { fontSize: 7.2, cellPadding: 1.3 }
+                    body: [rowMaxSpan, rowForceL, rowDefl, ...anchorRows],
+                    theme: 'grid',
+                    headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+                    styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
                 });
             }
         }
 
-        // Section 3: Components & Fixations Table with exact 3 columns
+        // Section 3: Components & Fixations Table (exact 3 columns, theme: 'grid')
         const currentY = doc.lastAutoTable.finalY + 6;
         doc.setFont("helvetica", "bold");
         doc.setFontSize(10.5);
@@ -18933,7 +20855,6 @@ function generatePDFReport() {
 
         const compsList = (COMPONENTS_DB[normalizeProduct(state.product)] || COMPONENTS_DB[state.product]) || [];
         const checkedComps = compsList.filter(c => c.checked);
-
         const hasOmegaOrMini = checkedComps.some(c => {
             const idL = (c.id || "").toLowerCase();
             const nL = (c.name || "").toLowerCase();
@@ -18941,14 +20862,12 @@ function generatePDFReport() {
         });
 
         const tableRows = [];
-
-        // 1. Matrice (Absorbeur) selon la gamme / sous-gamme
         const pdfSubRange = getLongRangeSubRange(state.lineLength);
         const matriceXtremeText = pdfSubRange === "LONG RANGE"
-            ? ["Matrice Xtreme - Long Range", "Xtreme Matrix - Long Range", "Matriz Xtreme - Long Range"][l]
+            ? (isEn ? "Xtreme Matrix - Long Range" : "Matrice Xtreme - Long Range")
             : (pdfSubRange === "SUPER RANGE"
-                ? ["Matrice Xtreme - Super Range", "Xtreme Matrix - Super Range", "Matriz Xtreme - Super Range"][l]
-                : ["Matrice Xtreme - Ultra Range", "Xtreme Matrix - Ultra Range", "Matriz Xtreme - Ultra Range"][l]);
+                ? (isEn ? "Xtreme Matrix - Super Range" : "Matrice Xtreme - Super Range")
+                : (isEn ? "Xtreme Matrix - Ultra Range" : "Matrice Xtreme - Ultra Range"));
         const matriceName = isPro(state.product) ? (pdfTrans.matricePro || pdfTrans.matriceNewPro)[l] : (isCore(state.product) ? (pdfTrans.matriceCore || pdfTrans.matriceLightPro)[l] : matriceXtremeText);
         const lvl1 = getFixationInfo(state.product, "matrice_platine", state.roofTexture, state.product);
         const countLvl1 = typeof lvl1.nombre === 'number' ? `${lvl1.nombre * totalAnchors} - ${lvl1.nombre}/matrice` : lvl1.nombre;
@@ -18958,25 +20877,19 @@ function generatePDFReport() {
             formatFixationType(lvl1.type_fixation)
         ]);
 
-        // 2. Platine de fixation au support / potelet
         const platineName = isPro(state.product) ? (pdfTrans.platinePro || pdfTrans.platineNewPro)[l] : (isCore(state.product) ? (pdfTrans.platineCore || pdfTrans.platineLightPro)[l] : (pdfTrans.platineXtreme || pdfTrans.platineLongRange)[l]);
         const lvl2 = getFixationInfo(state.product, "platine_support", state.roofTexture, state.product);
         const countLvl2 = typeof lvl2.nombre === 'number' ? `${lvl2.nombre * totalAnchors} - ${lvl2.nombre}/platine` : lvl2.nombre;
         const typeFixPlatine = hasOmegaOrMini ? pdfTrans.inoxBolts[l] : formatFixationType(lvl2.type_fixation);
-
         tableRows.push([
             `${platineName} - x${totalAnchors}`,
             `${countLvl2}`,
             typeFixPlatine
         ]);
 
-        // 3. Potelets ou pièces additionnelles présent(e)s dans la configuration
         checkedComps.forEach(c => {
             const cIdLower = (c.id || "").toLowerCase();
-
-            if (cIdLower === "new_pro" || cIdLower === "lightpro" || cIdLower === "longrange") {
-                return;
-            }
+            if (cIdLower === "new_pro" || cIdLower === "lightpro" || cIdLower === "longrange") return;
 
             const fixInfo = getFixationInfo(c.name, null, state.roofTexture, state.product);
             let qtyItem = totalAnchors;
@@ -18995,7 +20908,9 @@ function generatePDFReport() {
                 qtyItem = xConeCount;
                 countFix = typeof fixInfo.nombre === 'number' ? `${fixInfo.nombre * xConeCount} - ${fixInfo.nombre}/x-cone` : fixInfo.nombre;
             } else if (typeof fixInfo.nombre === 'number') {
-                countFix = `${fixInfo.nombre * totalAnchors} - ${fixInfo.nombre}/potelet`;
+                const isPostPiece = (cIdLower.includes("pb_hookt") || cIdLower.includes("galva") || cIdLower.includes("inox") || cIdLower.includes("potelet"));
+                const unitPieceLabel = isPostPiece ? (isEn ? "post" : "potelet") : (isEn ? "anchor" : "ancrage");
+                countFix = `${fixInfo.nombre * totalAnchors} - ${fixInfo.nombre}/${unitPieceLabel}`;
             }
 
             tableRows.push([
@@ -19005,34 +20920,22 @@ function generatePDFReport() {
             ]);
         });
 
-        if (tableRows.length === 0) {
-            tableRows.push([pdfTrans.noCompChecked[l], "-", "-"]);
-        }
-
         doc.autoTable({
             startY: currentY + 3,
             head: [pdfTrans.table3Headers[l]],
             body: tableRows,
             theme: 'grid',
-            headStyles: { fillColor: [37, 99, 235] },
-            styles: { fontSize: 7.2, cellPadding: 1.3 }
+            headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+            styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
         });
 
         // =========================================================================
         // PAGE 2: PLAN DE REPÉRAGE GÉNÉRAL (VUE DE DESSUS 2D — PLEINE PAGE)
         // =========================================================================
         doc.addPage();
+        drawHeader("HOOKT - " + (isEn ? "MARKING PLAN (FULL PAGE TOP-DOWN CAD VIEW)" : "PLAN DE REPÉRAGE GÉNÉRAL (VUE DE DESSUS)"), (isEn ? "Roof Geometry & Setbacks" : "Implantation et Reculs de Toiture"));
 
-        // Brand Header Page 2
-        doc.setFillColor(15, 23, 42);
-        doc.rect(0, 0, 210, 20, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(13);
-        doc.text(isEn ? "HOOKT - MARKING PLAN (FULL PAGE TOP-DOWN CAD VIEW)" : "HOOKT - PLAN DE REPÉRAGE GÉNÉRAL (VUE DE DESSUS)", 14, 14);
-
-        let currentP2Y = 27;
-
+        let currentP2Y = 28;
         doc.setFontSize(10.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
@@ -19046,60 +20949,66 @@ function generatePDFReport() {
             : `Dimensions Toiture : L = ${formatDistance(state.L || 15.0, 2, l)} | Largeur = ${formatDistance(state.l || 10.0, 2, l)} | Distance au bord : ${formatDistance(state.line_to_edge || 2.0, 2, l)} | Longueur développée : ${formatDistance(totalLineLen, 2, l)}`,
             14, currentP2Y + 4.5);
 
-        // Full page 2D capture: 182mm wide, 145mm high!
         const fullP2W = 182;
         const fullP2H = 145;
         const p2ImgY = currentP2Y + 7;
 
         try {
             const snap2D = capturePlanDeReperageSnapshot(fullP2W, fullP2H);
-            doc.setDrawColor(203, 213, 225);
+            doc.setDrawColor(C_HOOKT_LINE[0], C_HOOKT_LINE[1], C_HOOKT_LINE[2]);
             doc.setLineWidth(0.5);
             doc.rect(14, p2ImgY, fullP2W, fullP2H);
 
             if (snap2D && snap2D.dataUrl) {
-                doc.addImage(snap2D.dataUrl, 'PNG', 14, p2ImgY, fullP2W, fullP2H);
+                doc.addImage(snap2D.dataUrl, 'JPEG', 14, p2ImgY, fullP2W, fullP2H);
             }
         } catch (e) {
             console.warn("Could not capture 2D plan snapshot:", e);
         }
 
-        // Technical Blueprint Cartouche at bottom of Page 2 (Y: 184 to 274)
+        // Cartouche table at bottom of Page 2
         const cartouche2Y = p2ImgY + fullP2H + 4.5;
+        const anchorCountLabelP2 = hasPostUsed
+            ? (isEn ? "Anchor Posts Count" : (isEs ? "Número de Postes" : "Nombre de Potelets"))
+            : (isEn ? "Anchors Count" : (isEs ? "Número de Anclajes" : "Nombre d'Ancrages"));
+        const anchorCountValP2 = hasPostUsed
+            ? (isEn ? `${totalAnchors} anchors (${totalAnchors} certified posts)` : (isEs ? `${totalAnchors} anclajes (${totalAnchors} postes certificados)` : `${totalAnchors} ancrages (${totalAnchors} potelets certifiés)`))
+            : (isEn ? `${totalAnchors} anchors (direct mounting without post)` : (isEs ? `${totalAnchors} anclajes (fijación directa sin poste)` : `${totalAnchors} ancrages (fixation directe sans poteau)`));
+
         doc.autoTable({
             startY: cartouche2Y,
             body: [
                 [
                     isEn ? "CAD Layout Mode" : (isEs ? "Modo de Implantación" : "Mode d'Implantation"),
-                    `${state.layoutType.replace(/_/g, ' ').toUpperCase()}`,
-                    isEn ? "Anchor Posts Count" : (isEs ? "Número de Postes" : "Nombre de Potelets"),
-                    isEn ? `${totalAnchors} anchors (${totalAnchors} certified posts)` : (isEs ? `${totalAnchors} anclajes (${totalAnchors} postes certificados)` : `${totalAnchors} ancrages (${totalAnchors} potelets certifiés)`)
+                    getLayoutTypeName(state.layoutType, l),
+                    anchorCountLabelP2,
+                    anchorCountValP2
                 ],
                 [
                     isEn ? "Line-to-Edge Distance (d)" : (isEs ? "Distancia Línea / Borde (d)" : "Distance Ligne / Bord (d)"),
-                    `${formatDistance(state.line_to_edge || 2.0, 2, l)}`,
+                    formatDistance(state.line_to_edge || 2.0, 2, l),
                     isEn ? "Developed Wire Length" : (isEs ? "Longitud de Cable Desarrollada" : "Longueur Câble Développée"),
-                    `${formatDistance(totalLineLen, 2, l)}`
+                    formatDistance(totalLineLen, 2, l)
                 ],
                 [
                     isEn ? "Max Real Span" : (isEs ? "Vano Máximo Real" : "Portée Maximale Réelle"),
-                    `${formatDistance(realSpanMax, 2, l)}`,
+                    formatDistance(realSpanMax, 2, l),
                     isEn ? "Initial Cable Pretension" : (isEs ? "Pretensión Inicial del Cable" : "Prétension Initiale Câble"),
                     UnitsModule.formatPretension(isXtreme(state.product) ? 600 : 100)
                 ],
                 [
                     isEn ? "Lifeline Cable Type" : (isEs ? "Especificación del Cable" : "Spécification Câble"),
-                    isEn ? "316 Stainless Steel diam. 8 mm (7x7 / 7x19) - Breaking strength > 45 kN" : (isEs ? "Inox 316 diám. 8 mm (7x7 / 7x19) - Resistencia rotura > 45 kN" : "Inox 316 diam. 8 mm (7x7 / 7x19) - Résistance rupture > 45 kN"),
+                    cableSpecStr,
                     isEn ? "Technical Legend" : (isEs ? "Leyenda del Plano" : "Légende du Plan"),
                     isEn ? "[A1..An] Anchors with labels | [S1..Sn] Spans with dimensions | [d] Edge setback distance" : (isEs ? "[A1..An] Anclajes con etiquetas | [S1..Sn] Vanos con cotas | [d] Retranqueo al borde" : "[A1..An] Ancrages avec étiquettes | [S1..Sn] Portées avec cotes | [d] Recul bord toiture")
                 ]
             ],
             theme: 'grid',
-            styles: { fontSize: 7, cellPadding: 1.8, lineColor: [203, 213, 225], lineWidth: 0.2 },
+            styles: { fontSize: 7, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 },
             columnStyles: {
-                0: { fontStyle: 'bold', fillColor: [248, 250, 252], textColor: [71, 85, 105], cellWidth: 42 },
+                0: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 42 },
                 1: { cellWidth: 49 },
-                2: { fontStyle: 'bold', fillColor: [248, 250, 252], textColor: [71, 85, 105], cellWidth: 42 },
+                2: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 42 },
                 3: { cellWidth: 49 }
             }
         });
@@ -19108,17 +21017,9 @@ function generatePDFReport() {
         // PAGE 3: VISUALISATION 3D DE LA TOITURE (PLEINE PAGE)
         // =========================================================================
         doc.addPage();
+        drawHeader("HOOKT - " + (isEn ? "3D ROOF AND LIFELINE VISUALIZATION (FULL PAGE)" : "VISUALISATION 3D DE LA TOITURE ET LIGNE DE VIE"), (isEn ? "Perspective Overview & Interface" : "Perspective Globale et Interface"));
 
-        // Brand Header Page 3
-        doc.setFillColor(15, 23, 42);
-        doc.rect(0, 0, 210, 20, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(13);
-        doc.text(isEn ? "HOOKT - 3D ROOF AND LIFELINE VISUALIZATION (FULL PAGE)" : "HOOKT - VISUALISATION 3D DE LA TOITURE ET LIGNE DE VIE", 14, 14);
-
-        let currentP3Y = 27;
-
+        let currentP3Y = 28;
         doc.setFontSize(10.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
@@ -19127,156 +21028,99 @@ function generatePDFReport() {
         doc.setFontSize(7.5);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(71, 85, 105);
+        const p3PostOrMountSubtitle = hasPostUsed
+            ? (isEn ? `Post Height: ${(parseFloat(state.hllElevation) || 0.45).toFixed(2)} m` : `Hauteur potelets : ${formatLocalizedNumber(parseFloat(state.hllElevation) || 0.45, 2, l)} m`)
+            : (isEn ? `Mounting: ${postName}` : `Pose : ${postName}`);
         doc.text(isEn
-            ? `Perspective Overview | Lifeline Elevation: ${elevLabel} | Roof Texture: ${state.roofTexture || "concrete"} | Post Height: ${(parseFloat(state.hllElevation) || 0.45).toFixed(2)} m`
-            : `Vue Perspective Globale | Élévation ligne : ${elevLabel} | Nature support : ${state.roofTexture || "béton"} | Hauteur potelets : ${(parseFloat(state.hllElevation) || 0.45).toFixed(2)} m`,
+            ? `Perspective Overview | Lifeline Elevation: ${elevLabel} | Roof Texture: ${state.roofTexture || "concrete"} | ${p3PostOrMountSubtitle}`
+            : `Vue Perspective Globale | Élévation ligne : ${elevLabel} | Nature support : ${state.roofTexture || "béton"} | ${p3PostOrMountSubtitle}`,
             14, currentP3Y + 4.5);
 
-        // Full page 3D capture: 182mm wide, 145mm high!
         const fullP3W = 182;
         const fullP3H = 145;
         const p3ImgY = currentP3Y + 7;
 
         try {
             const snap3D = captureVue3DToitSnapshot(fullP3W, fullP3H);
-            doc.setDrawColor(203, 213, 225);
+            doc.setDrawColor(C_HOOKT_LINE[0], C_HOOKT_LINE[1], C_HOOKT_LINE[2]);
             doc.setLineWidth(0.5);
             doc.rect(14, p3ImgY, fullP3W, fullP3H);
 
             if (snap3D && snap3D.dataUrl) {
-                doc.addImage(snap3D.dataUrl, 'PNG', 14, p3ImgY, fullP3W, fullP3H);
+                doc.addImage(snap3D.dataUrl, 'JPEG', 14, p3ImgY, fullP3W, fullP3H);
             }
         } catch (e) {
             console.warn("Could not capture 3D roof snapshot:", e);
         }
 
-        // Technical Blueprint Cartouche at bottom of Page 3 (Y: 184 to 274)
+        // Cartouche table at bottom of Page 3
         const cartouche3Y = p3ImgY + fullP3H + 4.5;
+        const p3PostTypeLabel = hasPostUsed
+            ? (isEn ? "Anchor Post Type" : (isEs ? "Modelo de Poste" : "Modèle de Potelet"))
+            : (isEn ? "Mounting / Interface" : (isEs ? "Tipo de Fijación" : "Type de Pose / Interface"));
+        const p3NotesText = hasPostUsed
+            ? (isEn
+                ? "Axonometric view confirms post verticality, cable routing, edge setbacks, and absence of visual clashes with structural members."
+                : (isEs
+                    ? "El modelo 3D valida la verticalidad de los postes, la continuidad del cable, el respeto de las distancias al borde y la implantación general."
+                    : "Le modèle 3D valide la verticalité des potelets, la continuité du câble, le respect des distances aux rives et l'implantation générale."))
+            : (isEn
+                ? "Axonometric view confirms anchor alignment, cable routing, edge setbacks, and absence of visual clashes with structural members."
+                : (isEs
+                    ? "El modelo 3D valida la alineación de los anclajes, la continuidad del cable, el respeto de las distancias al borde y la implantación general."
+                    : "Le modèle 3D valide l'alignement des ancrages, la continuité du câble, le respect des distances aux rives et l'implantation générale."));
+
         doc.autoTable({
             startY: cartouche3Y,
             body: [
                 [
                     isEn ? "Lifeline Elevation (HLL)" : "Élévation de Ligne (HLL)",
-                    `${elevLabel}`,
-                    isEn ? "Anchor Post Type" : "Modèle de Potelet",
-                    `${postName}`
+                    elevLabel,
+                    p3PostTypeLabel,
+                    postName
                 ],
                 [
                     isEn ? "Roof Geometry / Slope" : (isEs ? "Geometría / Pendiente Cubierta" : "Géométrie / Pente Toit"),
                     isEn ? (state.roofShape === "sloped" ? `Single slope ${state.roofSlope || 15}°` : (state.roofShape === "gable" ? `Gable roof ${state.roofSlope || 15}°` : "Flat terrace roof")) : (isEs ? (state.roofShape === "sloped" ? `Monopendiente ${state.roofSlope || 15}°` : (state.roofShape === "gable" ? `Dos aguas ${state.roofSlope || 15}°` : "Cubierta plana transitable")) : (state.roofShape === "sloped" ? `Monopente ${state.roofSlope || 15}°` : (state.roofShape === "gable" ? `Double pente ${state.roofSlope || 15}°` : "Toiture terrasse plate"))),
                     isEn ? "Clear Height Under Roof" : (isEs ? "Altura Libre Bajo Cubierta" : "Hauteur Disponible sous Toit"),
-                    `${formatDistance(state.roofHeightAboveGround || 6.0, 2, l)}`
+                    formatDistance(state.roofHeightAboveGround || 6.0, 2, l)
                 ],
                 [
                     isEn ? "Substrate / Structure" : (isEs ? "Soporte / Estructura" : "Support / Structure d'accueil"),
                     isEn ? (state.roofTexture === "steel_deck" ? "Steel deck / Trapezoidal profile" : (state.roofTexture === "wood" ? "Timber / Wood frame" : "Reinforced concrete slab")) : (isEs ? (state.roofTexture === "steel_deck" ? "Chapa grecada / Perfil trapezoidal" : (state.roofTexture === "wood" ? "Estructura de madera" : "Losa de hormigón armado")) : (state.roofTexture === "steel_deck" ? "Bac acier / Profil trapézoïdal" : (state.roofTexture === "wood" ? "Structure bois / Charpente" : "Dalle béton armé"))),
                     isEn ? "Fixation Interface" : (isEs ? "Interfaz de Fijación" : "Interface de Fixation"),
-                    `${support}`
+                    postName
                 ],
                 [
                     isEn ? "3D Verification Notes" : (isEs ? "Observaciones 3D" : "Observations 3D"),
-                    isEn
-                        ? "Axonometric view confirms post verticality, cable routing, edge setbacks, and absence of visual clashes with structural members."
-                        : (isEs
-                            ? "El modelo 3D valida la verticalidad de los postes, la continuidad del cable, el respeto de las distancias al borde y la implantación general."
-                            : "Le modèle 3D valide la verticalité des potelets, la continuité du câble, le respect des distances aux rives et l'implantation générale."),
+                    p3NotesText,
                     isEn ? "System Standard" : (isEs ? "Referencial Normativo" : "Référentiel Normatif"),
-                    `${state.norm} / OSHA 1926.502 Subpart M`
+                    isOSHA ? "OSHA 1926.502 Subpart M" : "EN 795:2012 Type C"
                 ]
             ],
             theme: 'grid',
-            styles: { fontSize: 7, cellPadding: 1.8, lineColor: [203, 213, 225], lineWidth: 0.2 },
+            styles: { fontSize: 7, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 },
             columnStyles: {
-                0: { fontStyle: 'bold', fillColor: [248, 250, 252], textColor: [71, 85, 105], cellWidth: 42 },
+                0: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 42 },
                 1: { cellWidth: 49 },
-                2: { fontStyle: 'bold', fillColor: [248, 250, 252], textColor: [71, 85, 105], cellWidth: 42 },
+                2: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 42 },
                 3: { cellWidth: 49 }
             }
         });
 
         // =========================================================================
-        // PAGE 4: TABLEAUX DÉTAILLÉS DES ANCRAGES & DES PORTÉES
+        // PAGE 4: TABLEAU DES ANCRAGES & TABLEAU DES PORTÉES
         // =========================================================================
         doc.addPage();
+        drawHeader("HOOKT - " + (isEn ? "SPANS & ANCHORS SPECIFICATIONS SUMMARY" : "TABLEAU RÉCAPITULATIF DES PORTÉES ET ANCRAGES"), (isEn ? "Critical Values Summary" : "Récapitulatif des Valeurs Critiques"));
 
-        // Brand Header Page 4
-        doc.setFillColor(15, 23, 42);
-        doc.rect(0, 0, 210, 20, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(13);
-        doc.text(isEn ? "HOOKT - COMPREHENSIVE ANCHORS AND SPANS SPECIFICATIONS" : "HOOKT - TABLEAUX EXHAUSTIFS DES ANCRAGES ET DES PORTÉES", 14, 14);
+        let currentP4Y = 28;
 
-        let currentP4Y = 27;
-
-        // Single Source of Truth Generator
-        const pdfSystemLabels = SystemLabelingModule.generateSystemLabels(state);
-        const fallSpanIdx = state.spans ? Math.max(0, state.spans.findIndex(s => s.id === state.selectedFallSpanId)) : 0;
-        const baseTensionKn = 12.0;
-
-        // 3. Tableau Complet de Tous les Ancrages (A1..AN)
+        // Tableau des Portées
         doc.setFontSize(10.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "3. Comprehensive Table of All Anchors (A1 to An) :" : (isEs ? "3. Tabla Exhaustiva de Todos los Anclajes (A1 a An) :" : "3. Tableau Exhaustif de Tous les Ancrages (A1 à An) :"), 14, currentP4Y);
-
-        const allGeneratedAnchors = generateAllAnchorsTable(state.spans, fallSpanIdx, baseTensionKn, state.product, l);
-        const isPdfOSHA = (state.norm === "OSHA");
-        const pdfEngCoef = isPdfOSHA
-            ? 1.00
-            : ((typeof state.fallFactor === "number" && !isNaN(state.fallFactor)) ? state.fallFactor : 1.00);
-        const isPdfAdjusted = !isPdfOSHA && (Math.abs(pdfEngCoef - 1.00) > 0.001);
-
-        let anchorHeaders, anchorRows;
-        if (isPdfAdjusted) {
-            anchorHeaders = isEn
-                ? [["Tag", "Type / Role", "Adjacent Spans", "Test Result", `Adjusted (Fall Factor ${pdfEngCoef.toFixed(2)})`, "Status / Remark"]]
-                : (isEs
-                    ? [["Etiqueta", "Tipo / Rol", "Vanos Adyacentes", "Resultado de ensayo", `Resultado ajustado (Fall Factor ${pdfEngCoef.toFixed(2)})`, "Estado / Observación"]]
-                    : [["Étiquette", "Type / Rôle", "Portées Adjacentes", "Résultat d'essai", `Résultat ajusté (Fall Factor ${pdfEngCoef.toFixed(2)})`, "Statut / Remarque"]]);
-            anchorRows = allGeneratedAnchors.map(a => [
-                a.id,
-                a.role,
-                (a.adjacentSpans && a.adjacentSpans.length > 0) ? a.adjacentSpans.join(", ") : "-",
-                UnitsModule.formatForce(a.effortKn),
-                UnitsModule.formatForce(a.effortKn * pdfEngCoef),
-                a.remark
-            ]);
-        } else {
-            anchorHeaders = isEn
-                ? [["Tag", "Type / Role", "Adjacent Spans", `Load (${state.unitSystem === "imperial" ? "lbf" : "kN"})`, "Status / Remark"]]
-                : (isEs
-                    ? [["Etiqueta", "Tipo / Rol", "Vanos Adyacentes", `Esfuerzo (${state.unitSystem === "imperial" ? "lbf" : "kN"})`, "Estado / Observación"]]
-                    : [["Étiquette", "Type / Rôle", "Portées Adjacentes", `Effort (${state.unitSystem === "imperial" ? "lbf" : "kN"})`, "Statut / Remarque"]]);
-            anchorRows = allGeneratedAnchors.map(a => [
-                a.id,
-                a.role,
-                (a.adjacentSpans && a.adjacentSpans.length > 0) ? a.adjacentSpans.join(", ") : "-",
-                UnitsModule.formatForce(a.effortKn),
-                a.remark
-            ]);
-        }
-
-        doc.autoTable({
-            startY: currentP4Y + 4,
-            head: anchorHeaders,
-            body: anchorRows,
-            theme: 'striped',
-            headStyles: { fillColor: [15, 23, 42] },
-            styles: { fontSize: 7.5, cellPadding: 2.2 },
-            didParseCell: function (data) {
-                if (data.section === 'body' && data.column.index === 0) {
-                    data.cell.styles.fontWeight = 'bold';
-                }
-            }
-        });
-
-        // 4. Tableau des Portées (Longueurs en FT en unités US, jamais de pouces)
-        const spanTableY = doc.lastAutoTable.finalY + 8;
-        doc.setFontSize(10.5);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "4. Spans Table - Critical Values Summary :" : (isEs ? "4. Tabla de Vanos - Resumen de Valores Críticos :" : "4. Tableau des Portées - Récapitulatif des Valeurs Critiques :"), 14, spanTableY);
+        doc.text(isEn ? "3. Spans Table - Critical Values Summary :" : (isEs ? "3. Tabla de Vanos - Resumen de Valores Críticos :" : "3. Tableau des Portées - Récapitulatif des Valeurs Critiques :"), 14, currentP4Y);
 
         doc.setFontSize(7.5);
         doc.setFont("helvetica", "normal");
@@ -19286,102 +21130,135 @@ function generatePDFReport() {
             : (isEs
                 ? "Esta tabla resume los valores críticos (flecha máxima del cable y esfuerzos de anclaje calculados en el caso más desfavorable)."
                 : "Ce tableau récapitule les valeurs critiques (flèche maximale du câble et efforts d'ancrage calculés au cas le plus défavorable)."),
-            14, spanTableY + 4.5);
+            14, currentP4Y + 4.5);
 
-        const longestSpanLen = state.spans ? Math.max(...state.spans.map(s => s.length || 0)) : 15;
         const spanHeaders = isEn
             ? [["Span", "End Anchors", "Length", "Slope", "Critical Span Status"]]
             : (isEs
                 ? [["Vano", "Extremos", "Longitud", "Pendiente", "Estado / Análisis Crítico"]]
                 : [["Portée", "Extrémités", "Longueur", "Pente", "Statut / Analyse Critique"]]);
-        const activeFallId = state.selectedFallSpanId || (state.spans && state.spans[fallSpanIdx] ? state.spans[fallSpanIdx].id : "S1");
+
         const spanRows = (pdfSystemLabels.spans || []).map(s => {
-            const isCritical = (s.id === activeFallId) || (s.internalSpanId === activeFallId) || (s.spanIndex === fallSpanIdx) || Boolean(s.isFallSpan);
+            const isCritical = Boolean(s.isFallSpan || (activeFallId && (s.id === activeFallId || s.internalSpanId === activeFallId)));
             return [
                 s.id,
                 `${s.fromAnchorId} - ${s.toAnchorId}`,
                 UnitsModule.formatLength(s.length),
                 s.slopeDeg ? `${s.slopeDeg}°` : "-",
-                isCritical ? (isEn ? "CRITICAL SPAN - Max Tension and Deflection" : (isEs ? "VANO CRÍTICO - Tensión y Flecha máx" : "PORTÉE CRITIQUE - Tension et Flèche max")) : (isEn ? "Standard span" : (isEs ? "Vano estándar" : "Portée conforme"))
+                isCritical ? (isEn ? "CRITICAL SPAN - Max Tension & Deflection" : (isEs ? "VANO CRÍTICO - Tensión y Flecha máx" : "PORTÉE CRITIQUE - Tension et Flèche max")) : (isEn ? "Standard span" : (isEs ? "Vano estándar" : "Portée conforme"))
             ];
         });
 
         doc.autoTable({
-            startY: spanTableY + 7.5,
+            startY: currentP4Y + 7.5,
             head: spanHeaders,
             body: spanRows,
             theme: 'grid',
-            headStyles: { fillColor: [37, 99, 235] },
-            styles: { fontSize: 7.5, cellPadding: 2.2 },
+            headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+            styles: { fontSize: 7.2, cellPadding: 2.2, lineColor: C_HOOKT_LINE, lineWidth: 0.25 },
             didParseCell: function (data) {
                 if (data.section === 'body' && data.row.raw && data.row.raw[4] && (data.row.raw[4].includes("CRITICAL SPAN") || data.row.raw[4].includes("PORTÉE CRITIQUE"))) {
                     data.cell.styles.fontWeight = 'bold';
-                    data.cell.styles.fillColor = [254, 242, 242];
+                    data.cell.styles.textColor = C_HOOKT_ORANGE;
+                    data.cell.styles.fillColor = [254, 243, 199];
                 }
             }
         });
 
+        // Tableau Détaillé de Tous les Ancrages (A1 à An)
+        currentP4Y = doc.lastAutoTable.finalY + 12.0;
+        doc.setFontSize(10.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 41, 59);
+        doc.text(isEn ? "4. Full Anchors Table (A1 to An) :" : "4. Tableau Détaillé de Tous les Ancrages (A1 à An) :", 14, currentP4Y);
+
+        const isAdjustedFF = isOSHA && (Math.abs(fallFactorVal - 1.00) > 0.001);
+        const anchorHeaders = isAdjustedFF
+            ? (isEn
+                ? [["Tag", "Type", "Spans", "Test Result", `Adjusted (FF ${fallFactorVal.toFixed(2)})`, "Remark"]]
+                : [["Étiquette", "Type", "Portées", "Résultat essai", `Résultat ajusté (FF ${formatLocalizedNumber(fallFactorVal, 2, l)})`, "Remarque"]])
+            : (isEn
+                ? [["Tag", "Type", "Spans", "Load (kN)", "Remark"]]
+                : [["Étiquette", "Type", "Portées", "Effort (kN)", "Remarque"]]);
+
+        const allAnchorItems = [...(pdfSystemLabels.anchors || []), ...(pdfSystemLabels.xMatrixPieces || [])];
+        const anchorTableRows = allAnchorItems.map((a, aIdx) => {
+            const rawEffort = parseFloat(a.effortKn) || 0;
+            const effortStr = `${formatLocalizedNumber(rawEffort, 2, l)} kN`;
+            const typeStr = a.isCorner ? (isEn ? "Corner" : "Angle / Coude") : (a.isIntermediate ? (isEn ? "Intermediate" : "Intermédiaire") : (isEn ? "End Extremity" : "Extrémité"));
+            const spansStr = (a.spans && a.spans.length > 0) ? a.spans.join(", ") : "-";
+
+            if (isAdjustedFF) {
+                const adjEffort = rawEffort * fallFactorVal;
+                const adjEffortStr = `${formatLocalizedNumber(adjEffort, 2, l)} kN`;
+                return [a.id || `A${aIdx + 1}`, typeStr, spansStr, effortStr, adjEffortStr, a.remark || ""];
+            }
+            return [a.id || `A${aIdx + 1}`, typeStr, spansStr, effortStr, a.remark || ""];
+        });
+
+        doc.autoTable({
+            startY: currentP4Y + 6.0,
+            head: anchorHeaders,
+            body: anchorTableRows,
+            theme: 'grid',
+            headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+            styles: { fontSize: 7.0, cellPadding: 2.0, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
+        });
+
         // =========================================================================
-        // PAGE 5: SOMMAIRE, SRL TECHNIQUE, EFFORTS DE COIN & SCHÉMA DE CHUTE
+        // PAGE 5: DISPOSITIF SRL, BILAN DE CHUTE & HOMOLOGATION
         // =========================================================================
         doc.addPage();
+        drawHeader("HOOKT - " + (isEn ? "SRL SPECIFICATIONS, FALL CLEARANCE & COMPLIANCE" : "DISPOSITIF SRL, BILAN DE CHUTE ET HOMOLOGATION"), (isEn ? "Fall Clearance & Regulatory Assessment" : "Bilan Réglementaire et Homologation"));
 
-        // Brand Header Page 5
-        doc.setFillColor(15, 23, 42);
-        doc.rect(0, 0, 210, 20, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(13);
-        doc.text(isEn ? "HOOKT - SRL SPECIFICATIONS, CORNER FORCES AND FALL CLEARANCE" : "HOOKT - DISPOSITIF SRL, EFFORTS DE COIN ET BILAN DE CHUTE", 14, 14);
-
-        let p3Y = 27;
+        let p5Y = 28;
 
         // A. Table des Matières (Sommaire)
         doc.setFontSize(9.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "Table of Contents :" : "Table des Matières du Dossier Réglementaire :", 14, p3Y);
+        doc.text(isEn ? "Table of Contents :" : "Table des Matières du Dossier Réglementaire :", 14, p5Y);
 
         const tocHeaders = isEn
             ? [["Page", "Chapter Title", "Reference / Specification"]]
             : [["Page", "Titre du Chapitre", "Norme / Spécification"]];
         const tocRows = [
-            ["Page 1", isEn ? "General Project Information, Mechanical Assessment and BOM" : "Informations Générales, Projet, Bilan Mécanique et Nomenclature", "OSHA 1926.502 / EN 795-C"],
+            ["Page 1", isEn ? "General Project Information, Mechanical Assessment & BOM" : "Informations Générales, Projet, Bilan Mécanique et Nomenclature", isOSHA ? "OSHA 1926.502" : "EN 795-C"],
             ["Page 2", isEn ? "Marking Plan (Full Page Top-Down CAD View)" : "Plan de Repérage Général (Pleine Page - Vue de Dessus)", "Implantation et Cotes de Toiture"],
-            ["Page 3", isEn ? "3D Roof and Lifeline Visualization (Full Page Axonometric)" : "Visualisation 3D de la Toiture (Pleine Page - Rendu Tridimensionnel)", "Perspective et Élévation de Ligne"],
-            ["Page 4", isEn ? "Comprehensive Anchors Table and Spans Table (Critical Values Summary)" : "Tableaux Exhaustifs des Ancrages et Récapitulatif des Valeurs Critiques par Portée", "Efforts et Portée Critique"],
-            ["Page 5", isEn ? "SRL Device Datasheet, Corner Forces, Fall Clearance Formula and Schematic" : "Fiche Technique SRL, Efforts de Coin, Formule et Schéma de Chute", "ANSI Z359.14 / Bilan Réglementaire"]
+            ["Page 3", isEn ? "3D Roof & Lifeline Visualization (Full Axonometric)" : "Visualisation 3D de la Toiture (Pleine Page - Rendu Tridimensionnel)", "Perspective et Élévation de Ligne"],
+            ["Page 4", isEn ? "Spans Table & Detailed Anchors Table (A1..An)" : "Tableau Récapitulatif des Portées et Tableau des Ancrages (A1..An)", "Efforts et Portée Critique"],
+            ["Page 5", isEn ? "SRL Datasheet, Fall Clearance Assessment & Homologation Notice" : "Fiche Technique SRL, Schéma de Chute, Formule et Homologation", isOSHA ? "ANSI Z359.14 / OSHA" : "EN 360 / Normes CE"]
         ];
 
         doc.autoTable({
-            startY: p3Y + 3,
+            startY: p5Y + 3,
             head: tocHeaders,
             body: tocRows,
-            theme: 'striped',
-            headStyles: { fillColor: [71, 85, 105] },
-            styles: { fontSize: 6.5, cellPadding: 1.1 }
+            theme: 'grid',
+            headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+            styles: { fontSize: 6.8, cellPadding: 1.5, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
         });
 
-        p3Y = doc.lastAutoTable.finalY + 6;
+        p5Y = doc.lastAutoTable.finalY + 6;
 
         // B. Fiche Technique Dispositif de Connexion & Paramètres d'Arrêt
         doc.setFontSize(10);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "Connecting Device Technical Datasheet and Arrest Parameters :" : "Fiche Technique Dispositif et Paramètres d'Arrêt :", 14, p3Y);
+        doc.text(isEn ? "Connecting Device Technical Datasheet and Arrest Parameters :" : "Fiche Technique Dispositif et Paramètres d'Arrêt :", 14, p5Y);
 
         const devName = getConnectingDeviceReportName(l);
         const madMVal = (typeof state.madM === "number" && state.madM > 0) ? state.madM : ((typeof state.customMad === "number" && state.customMad > 0) ? state.customMad : 1.07);
         const madInVal = madMVal / 0.0254;
-        const madDualStr = `${madMVal.toFixed(2)} m (${madInVal.toFixed(1)} in)`;
+        const madDualStr = `${formatLocalizedNumber(madMVal, 2, l)} m (${madInVal.toFixed(1)} in)`;
 
-        const arrestFKn = (typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) ? state.arrestForceKn : 4.5;
+        const arrestFKn = (typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) ? state.arrestForceKn : 6.0;
         const arrestFLbf = arrestFKn * UnitsModule.KN_TO_LBF;
-        const arrestForce1UserStr = `${arrestFLbf.toFixed(0)} lbf (${arrestFKn.toFixed(2)} kN)`;
+        const arrestForce1UserStr = `${arrestFLbf.toFixed(0)} lbf (${formatLocalizedNumber(arrestFKn, 2, l)} kN)`;
 
         const globalArrestStr = (state.arrestLoadMode === "custom")
             ? UnitsModule.formatForce(state.arrestLoadValue || state.arrestLoadKn || arrestFKn)
-            : `${(lumpM * arrestFLbf).toFixed(1)} lbf (${(lumpM * arrestFKn).toFixed(2)} kN)`;
+            : `${(lumpM * arrestFLbf).toFixed(0)} lbf (${formatLocalizedNumber(lumpM * arrestFKn, 2, l)} kN)`;
 
         const devClassStr = (state.connectingDevice === "srd")
             ? (srlData ? `${isEn ? "Class" : "Classe"} ${srlData.classe}` : "Classe 2")
@@ -19398,161 +21275,57 @@ function generatePDFReport() {
                     ? (state.customDeviceLengthM || 0.60)
                     : 1.80));
 
-        // Determine modified flags for report (Spec V2 — 10 / Prompt 16)
-        const isRetractedMod = state.isRetractedLengthModified || (
-            state.connectingDevice === "srd" && srlData && srlData.retracted_length_m != null &&
-            Math.abs(userRetractedM - srlData.retracted_length_m) > 0.005
-        );
-        const isArrestForceMod = state.isArrestForceModified || (
-            state.connectingDevice === "srd" && srlData &&
-            Math.abs(state.arrestForceKn - srlData.default_arrest_force_kn) > 0.05
-        );
-        const isMadMod = (state.isMadModified === true);
-
-        const modTag = isEn ? " (user modified value)" : " (valeur modifiée par l'utilisateur)";
-
         const lenLabel = isLanyard
             ? (isEn ? "Lanyard Length" : "Longueur de la Longe")
             : (isEn ? "Retracted Length" : "Longueur Rétractée");
 
-        let lenValStr = UnitsModule.formatLength(userRetractedM);
-        if (isRetractedMod) lenValStr += modTag;
-
-        let madValStr = madDualStr;
-        if (isMadMod) madValStr += modTag;
-
-        let afValStr = arrestForce1UserStr;
-        if (isArrestForceMod) afValStr += modTag;
+        const safetyMarginVal = (state.unitSystem === "imperial" || state.unitSystem === "us")
+            ? FALL_CLEARANCE_CONSTANTS.CLEARANCE_MARGIN_FT
+            : FALL_CLEARANCE_CONSTANTS.CLEARANCE_MARGIN_M;
 
         const srlRows = [
             [isEn ? "Connecting Device" : "Dispositif Sélectionné", devName, isEn ? "Manufacturer" : "Fabricant", (srlData && srlData.manufacturer) ? srlData.manufacturer : "Miller / Honeywell / Custom"],
-            [isEn ? "OSHA / ANSI Class" : "Classe OSHA / ANSI", devClassStr, isEn ? "Lifeline Elevation" : "Élévation de Ligne (HLL)", `${elevLabel}`],
-            [isEn ? "Max Arrest Distance (MAD)" : "Distance d'Arrêt Max (MAD)", madValStr, lenLabel, lenValStr],
-            [isEn ? "Arrest Force (1 user)" : "Force d'Arrêt (1 user)", afValStr, isEn ? "Global Arrest Load" : "Charge d'Arrêt Globale", globalArrestStr],
-            [isEn ? "Cable Pretension P0" : (isEs ? "Pretensión Cable P0" : "Prétension Câble P0"), UnitsModule.formatPretension(isXtreme(state.product) ? 600 : 100), isPdfOSHA ? (isEn ? "Standard" : (isEs ? "Norma" : "Norme")) : (isEn ? "Fall Factor" : (isEs ? "Factor de caída" : "Facteur de chute")), isPdfOSHA ? "OSHA 1910.140 / 1926.502" : `${pdfEngCoef.toFixed(2)}`],
-            [isEn ? "Buffer Setback" : (isEs ? "Retranqueo del Buffer" : "Recul du Buffer"), isEn ? "To be specified" : (isEs ? "Dato a especificar" : "Donnée à renseigner"), isEn ? "Safety Margin" : (isEs ? "Margen de Seguridad" : "Marge de Sécurité"), UnitsModule.formatLength(1.00)]
+            [isEn ? "OSHA / ANSI Class" : "Classe OSHA / ANSI", devClassStr, isEn ? "Lifeline Elevation" : "Élévation de Ligne (HLL)", elevLabel],
+            [isEn ? "Max Arrest Distance (MAD)" : "Distance d'Arrêt Max (MAD)", madDualStr, lenLabel, UnitsModule.formatLength(userRetractedM)],
+            [isEn ? "Arrest Force (1 user)" : "Force d'Arrêt (1 user)", arrestForce1UserStr, isEn ? "Global Arrest Load" : "Charge d'Arrêt Globale", globalArrestStr],
+            [isEn ? "Cable Pretension P0" : "Prétension Câble P0", UnitsModule.formatPretension(isXtreme(state.product) ? 600 : 100), isOSHA ? (isEn ? "Standard" : "Norme") : (isEn ? "Fall Factor" : "Facteur de chute"), isOSHA ? "OSHA 1926.502" : formatLocalizedNumber(fallFactorVal, 2, l)],
+            [isEn ? "Buffer Setback" : "Recul du Buffer", isEn ? "To be specified" : "Donnée à renseigner", isEn ? "Safety Margin" : "Marge de Sécurité", UnitsModule.formatLength(safetyMarginVal)]
         ];
 
         doc.autoTable({
-            startY: p3Y + 3,
+            startY: p5Y + 3,
             body: srlRows,
             theme: 'grid',
-            styles: { fontSize: 6.5, cellPadding: 1.2 },
+            styles: { fontSize: 6.8, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 },
             columnStyles: {
-                0: { fontStyle: 'bold', fillColor: [248, 250, 252], cellWidth: 42 },
+                0: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 42 },
                 1: { cellWidth: 49 },
-                2: { fontStyle: 'bold', fillColor: [248, 250, 252], cellWidth: 42 },
+                2: { fontStyle: 'bold', fillColor: C_HOOKT_LABEL_BG, textColor: C_HOOKT_GRAY, cellWidth: 42 },
                 3: { cellWidth: 49 }
             }
         });
 
-        p3Y = doc.lastAutoTable.finalY + 6;
+        p5Y = doc.lastAutoTable.finalY + 6;
 
-        // C. Synthèse des Efforts de Coin Résolus (Vector Math)
+        // C. Dégagement Total Requis & Illustration Schématique de Chute
         doc.setFontSize(10);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "Resolved Corner Forces - Vector Sum :" : (isEs ? "Esfuerzos de Esquina Resueltos - Suma Vectorial :" : "Efforts de Coin Résolus - Somme Vectorielle :"), 14, p3Y);
+        doc.text(isEn ? "Total Required Fall Clearance and Fall Schematic Illustration :" : "Dégagement Total Requis et Illustration Schématique de Chute :", 14, p5Y);
 
-        const cornerRows = [];
-        const cornerNodes = (state.spans || []).filter(s => s.bend_after_deg || s.bendDeg || s.bend90);
-        if (cornerNodes.length > 0) {
-            cornerNodes.forEach((cn, cIdx) => {
-                const angle = cn.bend_after_deg !== undefined ? cn.bend_after_deg : (cn.bendDeg || 90);
-                const effortRes = calculateCornerEffort({ bendAngleDeg: angle }, baseTensionKn, baseTensionKn);
-                const isDoubled = effortRes.isDoubledAnchor;
-                const cornerLoc = isEn ? `Corner C${cIdx + 1} - ${angle}°` : (isEs ? `Esquina C${cIdx + 1} - ${angle}°` : `Coin C${cIdx + 1} - ${angle}°`);
-                const anchorLayout = isDoubled
-                    ? (isEn ? `Doubled pair - ${UnitsModule.formatForce(effortRes.distribution.anchor1Kn)} / post` : (isEs ? `Par duplicado - ${UnitsModule.formatForce(effortRes.distribution.anchor1Kn)} / poste` : `Paire doublée - ${UnitsModule.formatForce(effortRes.distribution.anchor1Kn)} / potelet`))
-                    : (isEn ? "Single anchor" : (isEs ? "Anclaje simple" : "Ancrage simple"));
-                cornerRows.push([
-                    cornerLoc,
-                    UnitsModule.formatForce(effortRes.t1Kn),
-                    UnitsModule.formatForce(effortRes.t2Kn),
-                    UnitsModule.formatForce(effortRes.resultantKn),
-                    `${effortRes.angleWithBisectorDeg}°`,
-                    anchorLayout
-                ]);
-            });
-        } else {
-            // Sample standard corner if straight line
-            const standardCorner = calculateCornerEffort({ bendAngleDeg: 90 }, baseTensionKn, baseTensionKn);
-            cornerRows.push([
-                isEn ? "Example 90° Corner" : (isEs ? "Ejemplo Esquina 90°" : "Exemple Coude 90°"),
-                UnitsModule.formatForce(10.0),
-                UnitsModule.formatForce(10.0),
-                UnitsModule.formatForce(standardCorner.resultantKn),
-                `${standardCorner.angleWithBisectorDeg}°`,
-                isEn ? "Doubled pair - R/2 per anchor" : (isEs ? "Par duplicado - R/2 por anclaje" : "Paire doublée - R/2 par ancrage")
-            ]);
-        }
-
-        const cornerHeaders = isEn
-            ? [["Corner Location", "Tension T1", "Tension T2", "Resultant Force |R|", "Angle / Bisector", "Anchor Layout"]]
-            : (isEs
-                ? [["Ubicación Esquina", "Tensión T1", "Tensión T2", "Esfuerzo Resultante |R|", "Ángulo / Bisectriz", "Implantación Anclajes"]]
-                : [["Emplacement Coude", "Tension T1", "Tension T2", "Effort Résultant |R|", "Angle / Bissectrice", "Implantation Ancrages"]]);
-
-        doc.autoTable({
-            startY: p3Y + 3,
-            head: cornerHeaders,
-            body: cornerRows,
-            theme: 'striped',
-            headStyles: { fillColor: [15, 23, 42] },
-            styles: { fontSize: 6.8, cellPadding: 1.2 }
-        });
-
-        p3Y = doc.lastAutoTable.finalY + 6;
-
-        // D. Dégagement Total Requis & Illustration Schématique de Chute
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "Total Required Fall Clearance and Fall Schematic Illustration :" : "Dégagement Total Requis et Illustration Schématique de Chute :", 14, p3Y);
-
-        const bodyPos = state.bodyPosition || "standing";
-        const dRingH = 1.50;
-        const lineToEdge = Math.max(0, parseFloat(state.line_to_edge !== undefined ? state.line_to_edge : 2.0) || 0);
-        const isOverEdge = state.isOverEdgeFall || (state.line_to_edge !== undefined && state.line_to_edge < 1.0);
-        let bodyOffset = 0;
-        if (!isOverEdge) {
-            if (bodyPos === "kneeling") bodyOffset = 36 * 0.0254; // +36 po (0.914m)
-            else if (bodyPos === "lying") bodyOffset = dRingH;
-        }
-        const totalBody = dRingH + bodyOffset;
-        const postureStr = (bodyPos === "kneeling") ? "À genoux" : (bodyPos === "lying" ? "Allongé au sol" : "Debout");
-        const calcDefl = Calculator.deflection(state.product, longestSpanLen, state.fallFactor || 1, support, 1, state.norm, isMultiSpan);
-        const calcDeflMeters = (calcDefl > 20.0) ? (calcDefl / 1000.0) : calcDefl;
-        let devComp = madMVal + userRetractedM;
-        const safetyMargin = 1.00; // 1.00 m minimum safety margin
-        const totalRequiredClearance = Math.max(0, calcDeflMeters + devComp - lineToEdge + dRingH + safetyMargin);
-        const wwsAvailableM = (typeof state.wwsElevationM === "number" && !isNaN(state.wwsElevationM) && state.wwsElevationM > 0)
-            ? state.wwsElevationM
-            : parseFloat(state.roof_height_above_ground || 6.0);
-
-        // Vector Fall Illustration Schematic
         const schX = 14;
-        const schY = p3Y + 4;
+        const schY = p5Y + 3.5;
         const schW = 182;
         const schH = 46;
-        doc.setFillColor(248, 250, 252);
-        doc.setDrawColor(203, 213, 225);
+        doc.setFillColor(250, 250, 250);
+        doc.setDrawColor(C_HOOKT_LINE[0], C_HOOKT_LINE[1], C_HOOKT_LINE[2]);
         doc.rect(schX, schY, schW, schH, 'FD');
 
-        // Schematic Title (clean ASCII hyphens, no em-dashes)
         doc.setFontSize(7.5);
-        doc.setTextColor(37, 99, 235);
+        doc.setTextColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
         doc.setFont("helvetica", "bold");
-        let factorSchematicTitle = (state.hllElevationPreset === "overhead" || parseFloat(state.hllElevation) > 1.65)
-            ? (isEn ? "Fall Clearance Schematic - Overhead Lifeline" : "Schéma de Dégagement de Chute - Ligne Overhead")
-            : (isOverEdge
-                ? (isEn ? "Fall Clearance Schematic - Over-Edge Fall" : "Schéma de Dégagement de Chute - Chute par-dessus bord")
-                : (state.hllElevationPreset === "d_ring" || (parseFloat(state.hllElevation) >= 1.35 && parseFloat(state.hllElevation) <= 1.65)
-                    ? (isEn ? "Fall Clearance Schematic - D-Ring Elevation Lifeline" : "Schéma de Dégagement de Chute - Ligne à hauteur Anneau D")
-                    : (isEn ? "Fall Clearance Schematic - Low Lifeline (Knee / Foot Level)" : "Schéma de Dégagement de Chute - Ligne basse (niveau genou / pieds)")));
-        doc.text(factorSchematicTitle, schX + 8, schY + 6.5);
+        doc.text(clrPdf.caseName, schX + 8, schY + 6.5);
 
-        // Graphic dimensions (isolated on left to avoid any text collision)
         const diagLeftX = schX + 8;
         const diagRightX = schX + 44;
         const diagApexX = schX + 26;
@@ -19562,178 +21335,145 @@ function generatePDFReport() {
         const groundY = srlEndY + 10;
         const labelsX = schX + 50;
 
-        // 1. Lifeline cable bar (horizontal blue)
-        doc.setDrawColor(37, 99, 235);
+        // 1. Cable bar (black)
+        doc.setDrawColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
         doc.setLineWidth(1.2);
         doc.line(diagLeftX, cableY, diagRightX, cableY);
 
-        // 2. Deflection sag curve (red V-shape)
-        doc.setDrawColor(239, 68, 68);
+        // 2. Deflection sag (orange accent)
+        doc.setDrawColor(C_HOOKT_ORANGE[0], C_HOOKT_ORANGE[1], C_HOOKT_ORANGE[2]);
         doc.setLineWidth(1.0);
         doc.line(diagLeftX, cableY, diagApexX, apexY);
         doc.line(diagApexX, apexY, diagRightX, cableY);
 
-        // Deflection leader & label (in clear right column, zero overlap)
-        doc.setDrawColor(239, 68, 68);
-        doc.setLineWidth(0.4);
-        doc.line(diagApexX, schY + 15.5, labelsX - 2, schY + 15.5);
         doc.setFontSize(7);
-        doc.setTextColor(220, 38, 38);
+        doc.setTextColor(C_HOOKT_ORANGE[0], C_HOOKT_ORANGE[1], C_HOOKT_ORANGE[2]);
         doc.setFont("helvetica", "bold");
         doc.text(`${isEn ? "Deflection:" : "Flèche :"} ${UnitsModule.formatDeflection(calcDefl)}`, labelsX, schY + 16);
 
-        // 3. SRL connection & MAD + Retracted (orange vertical bar)
-        doc.setDrawColor(245, 158, 11);
+        // 3. SRL connection
+        doc.setDrawColor(C_HOOKT_GRAY[0], C_HOOKT_GRAY[1], C_HOOKT_GRAY[2]);
         doc.setLineWidth(1.8);
         doc.line(diagApexX, apexY, diagApexX, srlEndY);
 
-        // SRL leader & label
-        doc.setDrawColor(245, 158, 11);
-        doc.setLineWidth(0.4);
-        doc.line(diagApexX, schY + 24.5, labelsX - 2, schY + 24.5);
-        doc.setTextColor(180, 83, 9);
-        doc.setFont("helvetica", "bold");
-        const devLabel = isOverEdge
-            ? `${isEn ? "SRL Arrest + Retr.:" : "Arrêt SRL + Rétracté :"} ${UnitsModule.formatLength(devComp)}`
-            : `${isEn ? "SRL Arrest (MAD) + Retr.:" : "Arrêt SRL (MAD) + Rétracté :"} ${UnitsModule.formatLength(devComp)}`;
+        const hasRetrTerm = clrPdf.terms.some(t => t.id === "retracted" || t.key === "retracted");
+        const devLabel = hasRetrTerm
+            ? `${isEn ? "SRL Arrest (MAD) + Retr.:" : "Arrêt SRL (MAD) + Rétracté :"} ${UnitsModule.formatLength(madMVal + userRetractedM)}`
+            : `${isEn ? "SRL Arrest (MAD):" : "Arrêt SRL (MAD) :"} ${UnitsModule.formatLength(madMVal)}`;
+        doc.setTextColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
         doc.text(devLabel, labelsX, schY + 25);
 
-        // 4. Safety margin (green vertical bar down to ground/obstacle)
-        doc.setDrawColor(16, 185, 129);
-        doc.setLineWidth(1.8);
+        // 4. Safety margin
+        doc.setDrawColor(C_HOOKT_GRAY[0], C_HOOKT_GRAY[1], C_HOOKT_GRAY[2]);
+        doc.setLineWidth(1.4);
         doc.line(diagApexX, srlEndY, diagApexX, groundY);
+        doc.setTextColor(C_HOOKT_GRAY[0], C_HOOKT_GRAY[1], C_HOOKT_GRAY[2]);
+        doc.text(`${isEn ? "Safety Margin:" : "Marge de sécurité :"} ${UnitsModule.formatLength(safetyMarginVal)}`, labelsX, schY + 35);
 
-        // Safety margin leader & label
-        doc.setDrawColor(16, 185, 129);
-        doc.setLineWidth(0.4);
-        doc.line(diagApexX, schY + 34.5, labelsX - 2, schY + 34.5);
-        doc.setTextColor(5, 150, 105);
-        doc.setFont("helvetica", "bold");
-        doc.text(`${isEn ? "Safety Margin:" : "Marge de sécurité :"} ${UnitsModule.formatLength(safetyMargin)}`, labelsX, schY + 35);
-
-        // 5. Ground / obstacle line (horizontal dark slate)
-        doc.setDrawColor(71, 85, 105);
+        // 5. Ground line
+        doc.setDrawColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
         doc.setLineWidth(1.0);
         doc.line(diagLeftX, groundY, diagRightX, groundY);
 
-        // Total required assessment box on the right
+        // Required fall clearance assessment box
         const boxX = schX + 104;
         const boxY = schY + 7;
         const boxW = 72;
         const boxH = 32;
-        doc.setFillColor(239, 246, 255);
-        doc.setDrawColor(191, 219, 254);
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
+        doc.setLineWidth(0.6);
         doc.rect(boxX, boxY, boxW, boxH, 'FD');
 
         doc.setTextColor(30, 41, 59);
         doc.setFontSize(8);
         doc.setFont("helvetica", "bold");
-        doc.text(isEn ? "Required Fall Clearance Assessment:" : "Bilan Dégagement de Chute Requis :", boxX + 5, boxY + 7.5);
+        doc.text(isEn ? "Required Clearance Assessment:" : "Bilan Dégagement Requis :", boxX + 5, boxY + 7.5);
 
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "bold");
-        const isExceededPdf = totalRequiredClearance >= (wwsAvailableM - 0.001);
+        let displayedTermsSum = 0;
+        clrPdf.terms.forEach(t => {
+            const rawV = Math.abs(t.value || 0);
+            const r2 = Math.round(rawV * 100) / 100;
+            if (t.effectSign === '-') displayedTermsSum -= r2;
+            else displayedTermsSum += r2;
+        });
+        const finalRequiredVal = Math.max(0, displayedTermsSum);
+        const finalRequiredStr = isEn
+            ? `${finalRequiredVal.toFixed(2)} ${clrPdf.distUnit}`
+            : `${formatLocalizedNumber(finalRequiredVal, 2, l)} ${clrPdf.distUnit}`;
+
+        const isExceededPdf = (finalRequiredVal >= (wwsAvailableM - 0.001));
+        doc.setFontSize(9.5);
         if (isExceededPdf) {
-            doc.setTextColor(220, 38, 38);
+            doc.setTextColor(C_HOOKT_ORANGE[0], C_HOOKT_ORANGE[1], C_HOOKT_ORANGE[2]);
         } else {
-            doc.setTextColor(37, 99, 235);
+            doc.setTextColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
         }
-        doc.text(`${isEn ? "TOTAL REQUIRED =" : "TOTAL REQUIS ="} ${UnitsModule.formatLength(totalRequiredClearance)}`, boxX + 5, boxY + 16.5);
+        doc.text(`${isEn ? "TOTAL REQUIRED =" : "TOTAL REQUIS ="} ${finalRequiredStr}`, boxX + 5, boxY + 16.5);
 
         doc.setFontSize(7);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(71, 85, 105);
-        const wwsLabelPdf = isEn
-            ? `Available Fall Clearance: ${UnitsModule.formatLength(wwsAvailableM)}`
-            : `Available Fall Clearance : ${UnitsModule.formatLength(wwsAvailableM)}`;
-        doc.text(wwsLabelPdf, boxX + 5, boxY + 24.5);
+        doc.text(`${isEn ? "Available Clearance:" : "Tirant d'air disponible :"} ${UnitsModule.formatLength(wwsAvailableM)}`, boxX + 5, boxY + 24.5);
 
-        // E. Formule Mathématique & Décomposition Analytique du Dégagement de Chute
-        p3Y = schY + schH + 4;
+        // D. Formule Mathématique & Décomposition Analytique du Dégagement
+        p5Y = schY + schH + 4;
         doc.setFontSize(9.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
         doc.text(isEn
-            ? "E. Fall Clearance Mathematical Formula and Detailed Analytical Breakdown :"
-            : "E. Formule Mathématique et Décomposition Détaillée du Dégagement de Chute :", 14, p3Y);
+            ? "Fall Clearance Mathematical Formula and Detailed Analytical Breakdown :"
+            : "Formule Mathématique et Décomposition Détaillée du Dégagement de Chute :", 14, p5Y);
 
-        // Formula highlight box
-        const formBoxY = p3Y + 2.5;
+        const formBoxY = p5Y + 2.5;
         const formBoxH = 6.5;
-        doc.setFillColor(241, 245, 249);
-        doc.setDrawColor(203, 213, 225);
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(C_HOOKT_LINE[0], C_HOOKT_LINE[1], C_HOOKT_LINE[2]);
         doc.rect(14, formBoxY, 182, formBoxH, 'FD');
         doc.setFontSize(7.0);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
-        const formulaStr = isEn
-            ? "Total Required Fall Clearance = Cable Deflection + SRL Arrest (MAD) + Retracted Length - Line-to-Edge + D-Ring + Safety Margin"
-            : "Dégagement Total Requis = Flèche Câble + Arrêt SRL (MAD) + Longueur Rétractée - Recul Ligne/Bord + Anneau D + Marge Sécurité";
-        doc.text(formulaStr, 17, formBoxY + 4.5);
+        doc.text(clrPdf.formulaStr, 17, formBoxY + 4.5);
 
-        // Parameters table
         const fcHeaders = isEn
             ? [["Component / Parameter", "Standard / Reference", "Value", "Effect on Clearance"]]
             : [["Composant / Paramètre", "Norme / Référence", "Valeur", "Incidence sur Dégagement"]];
 
-        const fcRows = [
-            [
-                isEn ? "Cable Dynamic Deflection (Sag)" : "Flèche dynamique du câble",
-                isEn ? "Critical span fall arrest simulation" : "Calcul dynamique au cas le plus défavorable",
-                UnitsModule.formatDeflection(calcDefl),
-                `+ ${UnitsModule.formatDeflection(calcDefl)}`
-            ],
-            [
-                isEn ? "SRL Maximum Arrest Distance (MAD)" : "Distance d'arrêt maximale SRL (MAD)",
-                "ANSI Z359.14 / OSHA 1926.502",
-                UnitsModule.formatLength(madMVal),
-                `+ ${UnitsModule.formatLength(madMVal)}`
-            ],
-            [
-                isEn ? "SRL Retracted / Initial Free Length" : "Longueur initiale non-rétractée / longe",
-                isEn ? "Manufacturer nominal retracted length" : "Spécification fabricant dispositif de connexion",
-                UnitsModule.formatLength(userRetractedM),
-                `+ ${UnitsModule.formatLength(userRetractedM)}`
-            ],
-            [
-                isEn ? "Line-to-Roof Edge Setback" : "Recul de ligne par rapport au bord de toiture",
-                isEn ? "Edge setback deduction (fall delay)" : "Déduction géométrique (retardement basculement)",
-                UnitsModule.formatLength(lineToEdge),
-                `- ${UnitsModule.formatLength(lineToEdge)}`
-            ],
-            [
-                isEn ? "Harness D-Ring Height" : "Hauteur de l'anneau D dorsal de référence",
-                isEn ? "Standing worker height (OSHA standard)" : "Travailleur debout (hauteur standard 1,50 m)",
-                UnitsModule.formatLength(dRingH),
-                `+ ${UnitsModule.formatLength(dRingH)}`
-            ],
-            [
-                isEn ? "Mandatory Safety Margin" : "Marge de sécurité réglementaire",
-                isEn ? "Minimum clearance buffer (OSHA / EN 795)" : "Garde d'arrêt minimale obligatoire (1,00 m)",
-                UnitsModule.formatLength(safetyMargin),
-                `+ ${UnitsModule.formatLength(safetyMargin)}`
-            ],
-            [
-                isEn ? "TOTAL REQUIRED FALL CLEARANCE" : "DÉGAGEMENT TOTAL REQUIS",
-                isEn ? "Formula Result (Safety Baseline)" : "Résultat formule analytique (Valeur retenue)",
-                UnitsModule.formatLength(totalRequiredClearance),
-                `= ${UnitsModule.formatLength(totalRequiredClearance)}`
-            ],
-            [
-                isEn ? "AVAILABLE FALL CLEARANCE" : "TIRANT D'AIR DISPONIBLE (WWS)",
-                isEn ? "Clearance to ground or first obstacle" : "Hauteur libre mesurée jusqu'au sol / obstacle",
-                UnitsModule.formatLength(wwsAvailableM),
-                isExceededPdf ? (isEn ? "NON-COMPLIANT" : "NON CONFORME") : (isEn ? "COMPLIANT" : "CONFORME")
-            ]
-        ];
+        const fcRows = [];
+        clrPdf.terms.forEach(t => {
+            const valNum = Math.abs(t.value || 0);
+            const valStr = isEn ? `${valNum.toFixed(2)} ${clrPdf.distUnit}` : `${formatLocalizedNumber(valNum, 2, l)} ${clrPdf.distUnit}`;
+            const sign = t.effectSign === '-' ? '-' : '+';
+            const effStr = `${sign} ${valStr}`;
+            fcRows.push([
+                t.label,
+                t.ref,
+                valStr,
+                effStr
+            ]);
+        });
+
+        fcRows.push([
+            isEn ? "TOTAL REQUIRED FALL CLEARANCE" : "DÉGAGEMENT TOTAL REQUIS",
+            isEn ? "Formula Result (Safety Baseline)" : "Résultat formule analytique (Valeur retenue)",
+            finalRequiredStr,
+            `= ${finalRequiredStr}`
+        ]);
+
+        fcRows.push([
+            isEn ? "AVAILABLE FALL CLEARANCE" : "TIRANT D'AIR DISPONIBLE (WWS)",
+            isEn ? "Clearance to ground or first obstacle" : "Hauteur libre mesurée jusqu'au sol / obstacle",
+            UnitsModule.formatLength(wwsAvailableM),
+            isExceededPdf ? (isEn ? "NON-COMPLIANT" : "NON CONFORME") : (isEn ? "COMPLIANT" : "CONFORME")
+        ]);
 
         doc.autoTable({
             startY: formBoxY + formBoxH + 2,
             head: fcHeaders,
             body: fcRows,
             theme: 'grid',
-            headStyles: { fillColor: [15, 23, 42] },
-            styles: { fontSize: 6.4, cellPadding: 1.1 },
+            headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
+            styles: { fontSize: 6.4, cellPadding: 1.2, lineColor: C_HOOKT_LINE, lineWidth: 0.25 },
             columnStyles: {
                 0: { fontStyle: 'bold', cellWidth: 58 },
                 1: { cellWidth: 64 },
@@ -19742,55 +21482,47 @@ function generatePDFReport() {
             },
             didParseCell: function (data) {
                 if (data.section === 'body') {
-                    if (data.row.index === 6) {
+                    if (data.row.index === fcRows.length - 2) {
                         data.cell.styles.fontStyle = 'bold';
-                        data.cell.styles.fillColor = [239, 246, 255];
-                        if (data.column.index === 3) data.cell.styles.textColor = [37, 99, 235];
-                    } else if (data.row.index === 7) {
+                        data.cell.styles.fillColor = [248, 250, 252];
+                    } else if (data.row.index === fcRows.length - 1) {
                         data.cell.styles.fontStyle = 'bold';
                         if (isExceededPdf) {
-                            data.cell.styles.fillColor = [254, 242, 242];
-                            if (data.column.index === 3) data.cell.styles.textColor = [220, 38, 38];
-                        } else {
-                            data.cell.styles.fillColor = [240, 253, 244];
-                            if (data.column.index === 3) data.cell.styles.textColor = [22, 101, 52];
+                            data.cell.styles.textColor = C_HOOKT_ORANGE;
                         }
                     }
                 }
             }
         });
 
-        // MANDATORY SAFETY DISCLAIMER / HOMOLOGATION NOTICE (Last Page Only - Styled Box)
-        p3Y = doc.lastAutoTable.finalY + 4.0;
-        const disclaimBoxH = 13.5;
-        doc.setFillColor(254, 242, 242);
-        doc.setDrawColor(239, 68, 68);
-        doc.setLineWidth(0.4);
-        doc.roundedRect(14, p3Y, 182, disclaimBoxH, 2.0, 2.0, 'FD');
+        // Homologation Notice & Legal Warning
+        p5Y = doc.lastAutoTable.finalY + 4.0;
+        const disclaimBoxH = 12.0;
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
+        doc.setLineWidth(0.6);
+        doc.roundedRect(14, p5Y, 182, disclaimBoxH, 1.5, 1.5, 'FD');
 
-        doc.setFontSize(7.5);
+        doc.setFontSize(7.2);
         doc.setFont("helvetica", "bold");
-        doc.setTextColor(185, 28, 28);
+        doc.setTextColor(30, 41, 59);
         const disclaimTitle = isEn
             ? "MANDATORY SAFETY DISCLAIMER / HOMOLOGATION NOTICE"
-            : (isEs
-                ? "AVISO DE HOMOLOGACIÓN Y ADVERTENCIA DE SEGURIDAD OBLIGATORIA"
-                : "AVIS D'HOMOLOGATION ET AVERTISSEMENT DE SÉCURITÉ OBLIGATOIRE");
-        doc.text(disclaimTitle, 18, p3Y + 5.0);
+            : (isEs ? "AVISO DE HOMOLOGACIÓN Y ADVERTENCIA DE SEGURIDAD OBLIGATORIA" : "AVIS D'HOMOLOGATION ET AVERTISSEMENT DE SÉCURITÉ OBLIGATOIRE");
+        doc.text(disclaimTitle, 18, p5Y + 4.5);
 
-        doc.setFontSize(7.0);
+        doc.setFontSize(6.5);
         doc.setFont("helvetica", "normal");
-        doc.setTextColor(153, 27, 27);
+        doc.setTextColor(71, 85, 105);
         const disclaimText = isEn
             ? "Miller-Soll HOOKT Horizontal Lifeline Systems are only approved for use with Miller Turbolite+ and Falcon+ Self Retracting Connecting Devices."
             : (isEs
                 ? "Los sistemas de línea de vida horizontal Miller-Soll HOOKT solo están homologados para su uso con dispositivos anticaídas retráctiles Miller Turbolite+ y Falcon+."
                 : "Les systèmes de ligne de vie horizontale Miller-Soll HOOKT sont uniquement homologués pour une utilisation avec les dispositifs de liaison rétractables Miller Turbolite+ et Falcon+.");
-        doc.text(disclaimText, 18, p3Y + 9.8, { maxWidth: 174 });
+        doc.text(disclaimText, 18, p5Y + 8.8, { maxWidth: 174 });
 
-        // Legal Warning - Multi-line safe with maxWidth 182
-        p3Y = p3Y + disclaimBoxH + 3.5;
-        doc.setFontSize(6.2);
+        p5Y = p5Y + disclaimBoxH + 3.0;
+        doc.setFontSize(6.0);
         doc.setFont("helvetica", "italic");
         doc.setTextColor(100, 116, 139);
         const legalWarn1 = isEn
@@ -19799,38 +21531,39 @@ function generatePDFReport() {
                 ? "Aviso legal: Esta memoria de cálculo y conformidad reglamentaria se emite bajo la responsabilidad del sistema automatizado HOOKT Configurator v3.0."
                 : "Avertissement légal : Cette note de calcul et de conformité réglementaire est éditée sous la responsabilité du système automatisé HOOKT Configurator v3.0.");
         const legalWarn2 = isEn
-            ? "Load and clearance calculations comply with OSHA 1926.502, ANSI Z359.14 and EN 795-C standards subject to strict compliance with installation guidelines and tightening torques."
+            ? ("Load and clearance calculations comply with " + (isOSHA ? "OSHA 1926.502 and ANSI Z359.14" : "EN 795-C") + " standards subject to strict compliance with installation guidelines and tightening torques.")
             : (isEs
-                ? "Los cálculos de esfuerzos y espacios libres cumplen con las normas OSHA 1926.502, ANSI Z359.14 y EN 795-C a condición del cumplimiento estricto de las recomendaciones de instalación y pares de apriete."
-                : "Les calculs d'efforts et de dégagements sont conformes aux référentiels OSHA 1926.502, ANSI Z359.14 et EN 795-C sous réserve du respect scrupuleux des préconisations de pose et des couples de serrage.");
-        doc.text(legalWarn1, 14, p3Y, { maxWidth: 182 });
-        doc.text(legalWarn2, 14, p3Y + 3.5, { maxWidth: 182 });
+                ? ("Los cálculos de esfuerzos y espacios libres cumplen con las normas " + (isOSHA ? "OSHA 1926.502 y ANSI Z359.14" : "EN 795-C") + " a condición del cumplimiento estricto de las recomendaciones de instalación y pares de apriete.")
+                : ("Les calculs d'efforts et de dégagements sont conformes au référentiel " + (isOSHA ? "OSHA 1926.502 et ANSI Z359.14" : "EN 795-C") + " sous réserve du respect scrupuleux des préconisations de pose et des couples de serrage."));
+        doc.text(legalWarn1, 14, p5Y, { maxWidth: 182 });
+        doc.text(legalWarn2, 14, p5Y + 3.2, { maxWidth: 182 });
 
         // Footer on all PDF pages with Website, Email, and Phone number
         const pageCount = doc.internal.getNumberOfPages();
         for (let i = 1; i <= pageCount; i++) {
             doc.setPage(i);
-            doc.setDrawColor(203, 213, 225);
-            doc.setLineWidth(0.3);
-            doc.line(14, 281, 196, 281);
+            doc.setFillColor(C_HOOKT_BLACK[0], C_HOOKT_BLACK[1], C_HOOKT_BLACK[2]);
+            doc.rect(0, 283, 210, 14, 'F');
 
-            doc.setFontSize(6.8);
+            doc.setFontSize(7.2);
             doc.setFont("helvetica", "normal");
-            doc.setTextColor(100, 116, 139);
+            doc.setTextColor(255, 255, 255);
 
-            const currentYear = new Date().getFullYear();
-            doc.text(pdfTrans.footerRights[l].replace('{year}', currentYear), 14, 285.5);
-            doc.text(pdfTrans.footerContacts[l], 14, 289.5);
-            doc.text(`${pdfTrans.pageStr[l]} ${i} / ${pageCount}`, 196, 289.5, { align: 'right' });
+            doc.text("HOOKT © " + new Date().getFullYear(), 14, 291.5);
+            doc.text("go-hookt.com - contact@go-hookt.com - 05 59 52 40 48", 105, 291.5, { align: 'center' });
+            doc.text((isEn ? "Page " : "Page ") + i + " / " + pageCount, 196, 291.5, { align: 'right' });
         }
 
-        doc.save(`HOOKT_Rapport_Installation_${state.product.replace(/\s+/g, '_')}_${today.replace(/\//g, '-')}.pdf`);
+        // Save PDF
+        const prodFileName = (state.product || "LINE").replace(/\s+/g, '_');
+        const dateFileName = today.replace(/\//g, '-');
+        doc.save("HOOKT_Rapport_Installation_" + prodFileName + "_" + dateFileName + ".pdf");
     } catch (err) {
         console.error("PDF Generation Error:", err);
         const errL = (typeof state !== "undefined" && state && state.lang) || 0;
         alert(errL === 1
-            ? `⚠️ PDF Generation Error: ${err.message}`
-            : `⚠️ Erreur lors de la génération du rapport PDF : ${err.message}`);
+            ? ("⚠️ PDF Generation Error: " + err.message)
+            : ("⚠️ Erreur lors de la génération du rapport PDF : " + err.message));
     }
 }
 if (typeof window !== "undefined") {
@@ -19897,7 +21630,14 @@ function renderComponentsChecklist() {
                 const hasSlope = hasRoofSlope || hasSlopedLayout || hasSlopedSpans;
 
                 if (!hasSlope) {
-                    alert("⚠️ CONFIGURATION INCOMPATIBLE :\nL'option X-CONE est utilisable uniquement sur les configurations comportant une pente (toit incliné ou portées en pente entre 15° and 75°).");
+                    const isEn = (parseInt(state.lang) === 1);
+                    const isEs = (parseInt(state.lang) === 2);
+                    const msg = isEn
+                        ? "⚠️ INCOMPATIBLE CONFIGURATION:\nThe X-CONE option can only be used on configurations with a slope (pitched roof or sloped spans between 15° and 75°)."
+                        : (isEs
+                            ? "⚠️ CONFIGURACIÓN INCOMPATIBLE:\nLa opción X-CONE solo se puede utilizar en configuraciones con pendiente (cubierta inclinada o vanos con pendiente entre 15° y 75°)."
+                            : "⚠️ CONFIGURATION INCOMPATIBLE :\nL'option X-CONE est utilisable uniquement sur les configurations comportant une pente (toit incliné ou portées en pente entre 15° et 75°).");
+                    alert(msg);
                     c.checked = false;
                     chk.checked = false;
                     item.classList.remove("active");
