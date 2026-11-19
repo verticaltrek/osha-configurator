@@ -19755,7 +19755,10 @@ function setupUIEventListeners() {
 
     const exportPdfBtn = document.getElementById("export-pdf-btn");
     if (exportPdfBtn) {
-        exportPdfBtn.addEventListener("click", () => {
+        exportPdfBtn.removeAttribute("onclick");
+        exportPdfBtn.onclick = null;
+        exportPdfBtn.addEventListener("click", (e) => {
+            if (e) e.preventDefault();
             generatePDFReport();
         });
     }
@@ -20257,7 +20260,13 @@ function formatLocalizedNumber(num, decimals = 2, lang = 0) {
 // ==========================================
 // REPORT PDF GENERATOR (STYLE HOOKT CHARTE ÉLÉGANTE & TABLEAUX COMPLETS)
 // ==========================================
+let isGeneratingPDF = false;
 function generatePDFReport() {
+    if (isGeneratingPDF) {
+        console.warn("generatePDFReport is already running, ignoring duplicate call.");
+        return;
+    }
+    isGeneratingPDF = true;
     try {
         let currentUser;
         try {
@@ -21596,6 +21605,10 @@ function generatePDFReport() {
         alert(errL === 1
             ? ("⚠️ PDF Generation Error: " + err.message)
             : ("⚠️ Erreur lors de la génération du rapport PDF : " + err.message));
+    } finally {
+        setTimeout(() => {
+            isGeneratingPDF = false;
+        }, 1500);
     }
 }
 if (typeof window !== "undefined") {
