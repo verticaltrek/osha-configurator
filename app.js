@@ -6727,8 +6727,48 @@ function populateConfigModalInputs() {
     state.roof_type = "flat";
     if (!isXtreme(state.product)) state.roofShape = "flat";
     if (rTypeSel) rTypeSel.value = "flat";
-    if (rLenInp) rLenInp.value = toCurrentLen(state.roof_length || 25.0).toFixed(1);
-    if (rWidInp) rWidInp.value = toCurrentLen(state.roof_width || 15.0).toFixed(1);
+    if (rLenInp) {
+        rLenInp.value = toCurrentLen(state.roof_length || 25.0).toFixed(1);
+        if (!rLenInp.dataset.hasListener) {
+            rLenInp.dataset.hasListener = "true";
+            rLenInp.addEventListener("input", () => {
+                const valTrim = String(rLenInp.value || "").trim().replace(/,/g, ".");
+                const raw = parseFloat(valTrim);
+                if (!isNaN(raw) && raw > 0) {
+                    state.roof_length = UnitsModule.parseLengthToMeters(raw);
+                    state.userRoofLength = state.roof_length;
+                    syncRoofLengthWithLifelineUI();
+                    if (typeof updateCalculationsUI === "function") {
+                        const maxSpan = Calculator.getMaxSpan(state.product);
+                        const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                        updateCalculationsUI(layout, maxSpan);
+                    }
+                    if (typeof update3DScene === "function") update3DScene();
+                }
+            });
+        }
+    }
+    if (rWidInp) {
+        rWidInp.value = toCurrentLen(state.roof_width || 15.0).toFixed(1);
+        if (!rWidInp.dataset.hasListener) {
+            rWidInp.dataset.hasListener = "true";
+            rWidInp.addEventListener("input", () => {
+                const valTrim = String(rWidInp.value || "").trim().replace(/,/g, ".");
+                const raw = parseFloat(valTrim);
+                if (!isNaN(raw) && raw > 0) {
+                    state.roof_width = UnitsModule.parseLengthToMeters(raw);
+                    state.userRoofWidth = state.roof_width;
+                    syncRoofLengthWithLifelineUI();
+                    if (typeof updateCalculationsUI === "function") {
+                        const maxSpan = Calculator.getMaxSpan(state.product);
+                        const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                        updateCalculationsUI(layout, maxSpan);
+                    }
+                    if (typeof update3DScene === "function") update3DScene();
+                }
+            });
+        }
+    }
     if (rEdgeInp) {
         rEdgeInp.value = toCurrentLen(state.line_to_edge !== undefined ? state.line_to_edge : 2.0).toFixed(1);
         if (!rEdgeInp.dataset.hasListener) {
@@ -6845,15 +6885,15 @@ function syncRoofLengthWithLifelineUI() {
             const dispW = isUS ? (state.l * UnitsModule.M_TO_FT) : state.l;
             rWidInp.value = dispW.toFixed(1);
         }
-        const isAutoRoof = (state.layoutType === "grid_system" || state.layoutType === "cross_spans");
+        const isAutoRoof = (state.layoutType === "cross_spans");
         if (rLenInp) {
             rLenInp.readOnly = isAutoRoof;
-            if (isAutoRoof) rLenInp.setAttribute("title", (parseInt(state.lang) === 1) ? "Auto-computed from layout dimensions" : "Calculé automatiquement d'après la grille");
+            if (isAutoRoof) rLenInp.setAttribute("title", (parseInt(state.lang) === 1) ? "Auto-computed from layout dimensions" : "Calculé automatiquement d'après la disposition");
             else rLenInp.removeAttribute("title");
         }
         if (rWidInp) {
             rWidInp.readOnly = isAutoRoof;
-            if (isAutoRoof) rWidInp.setAttribute("title", (parseInt(state.lang) === 1) ? "Auto-computed from layout dimensions" : "Calculé automatiquement d'après la grille");
+            if (isAutoRoof) rWidInp.setAttribute("title", (parseInt(state.lang) === 1) ? "Auto-computed from layout dimensions" : "Calculé automatiquement d'après la disposition");
             else rWidInp.removeAttribute("title");
         }
     } catch (e) { }
@@ -10590,17 +10630,33 @@ const Calculator = {
             const sumX = xSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
             const sumZ = zSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
 
-            // Dynamically adapt roof dimensions to grid spans + margins
-            const roofL = parseFloat((sumX + 2 * endMargin + 2 * edgeDist).toFixed(2));
-            const roofl = parseFloat((sumZ + 2 * endMargin + 2 * edgeDist).toFixed(2));
+            // Dynamically adapt roof dimensions to grid spans + margins (Option 1: preserve user dimensions, expand only if grid exceeds)
+            const minRoofL = parseFloat((sumX + 2 * endMargin + 2 * edgeDist).toFixed(2));
+            const minRoofl = parseFloat((sumZ + 2 * endMargin + 2 * edgeDist).toFixed(2));
+
+            const userRoofL = (typeof state.userRoofLength === "number" && state.userRoofLength > 0)
+                ? state.userRoofLength
+                : ((typeof state.roof_length === "number" && state.roof_length > 0) ? state.roof_length : 25.0);
+            const userRoofl = (typeof state.userRoofWidth === "number" && state.userRoofWidth > 0)
+                ? state.userRoofWidth
+                : ((typeof state.roof_width === "number" && state.roof_width > 0) ? state.roof_width : 15.0);
+
+            const roofL = parseFloat(Math.max(userRoofL, minRoofL).toFixed(2));
+            const roofl = parseFloat(Math.max(userRoofl, minRoofl).toFixed(2));
 
             state.L = roofL;
             state.l = roofl;
             state.roof_length = roofL;
             state.roof_width = roofl;
 
-            const startX = edgeDist + endMargin;
-            const startZ = edgeDist + endMargin;
+            // Center grid on roof
+            const gridWidthX = sumX + 2 * endMargin;
+            const gridWidthZ = sumZ + 2 * endMargin;
+            const marginX = (roofL - gridWidthX) / 2;
+            const marginZ = (roofl - gridWidthZ) / 2;
+
+            const startX = marginX + endMargin;
+            const startZ = marginZ + endMargin;
             const xCoords = [startX];
             for (let i = 0; i < xSpacings.length; i++) {
                 xCoords.push(xCoords[i] + (parseFloat(xSpacings[i]) || 5.0));
@@ -13235,12 +13291,22 @@ const Dimensions3DModule = {
             grp.add(this.createDimensionLine(pWws1, pWws2, new THREE.Vector3(-1.2, 0, 0), wwsLabel, 0x10b981));
         }
 
-        // 4. Line to edge (connecting roof edge at Z=0 to lifeline at Z=lineToEdge)
-        const lEdgeText = `d: ${UnitsModule.formatLength(lineToEdge)}`;
-        const dimX = Math.min(L * 0.5, lineToEdge + 3.0);
-        const yE1 = getRoofHeightAt(dimX, lineToEdge) + 0.15;
+        // 4. Line to edge (connecting roof edge at Z=0 to lifeline / grid North posts)
+        let actualEdgeDist = lineToEdge;
+        if (state.layoutType === "grid_system") {
+            const gs = state.gridSystem || {};
+            const ny = Math.max(2, gs.ny || 3);
+            const zSpacings = (gs.zSpacings && gs.zSpacings.length === ny - 1) ? gs.zSpacings : Array(ny - 1).fill(5.0);
+            const sumZ = zSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
+            const endMargin = Math.max(0.5, (typeof gs.end_margin === "number" && !isNaN(gs.end_margin)) ? gs.end_margin : (parseFloat(gs.end_margin) || 2.0));
+            const gridWidthZ = sumZ + 2 * endMargin;
+            actualEdgeDist = Math.max(lineToEdge, (l - gridWidthZ) / 2);
+        }
+        const lEdgeText = `d: ${UnitsModule.formatLength(actualEdgeDist)}`;
+        const dimX = Math.min(L * 0.5, actualEdgeDist + 3.0);
+        const yE1 = getRoofHeightAt(dimX, actualEdgeDist) + 0.15;
         const yE2 = getRoofHeightAt(dimX, 0) + 0.15;
-        const pE1 = new THREE.Vector3(dimX, yE1, lineToEdge);
+        const pE1 = new THREE.Vector3(dimX, yE1, actualEdgeDist);
         const pE2 = new THREE.Vector3(dimX, yE2, 0);
         grp.add(this.createDimensionLine(pE1, pE2, new THREE.Vector3(0, 0.1, 0), lEdgeText, 0xf59e0b));
 
@@ -15627,8 +15693,15 @@ function renderConfig12GridSystem3D() {
     const zSpacings = gs.zSpacings && gs.zSpacings.length === ny - 1 ? gs.zSpacings : Array(ny - 1).fill(5.0);
 
     const edgeDist = parseFloat(state.line_to_edge !== undefined ? state.line_to_edge : 2.0);
-    const startX = edgeDist + endMargin;
-    const startZ = edgeDist + endMargin;
+    const sumX = xSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
+    const sumZ = zSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
+    const gridWidthX = sumX + 2 * endMargin;
+    const gridWidthZ = sumZ + 2 * endMargin;
+    const marginX = (state.L - gridWidthX) / 2;
+    const marginZ = (state.l - gridWidthZ) / 2;
+
+    const startX = marginX + endMargin;
+    const startZ = marginZ + endMargin;
     const xCoords = [startX];
     for (let i = 0; i < xSpacings.length; i++) {
         xCoords.push(xCoords[i] + (xSpacings[i] || 5.0));
@@ -17116,8 +17189,15 @@ function collectSceneGeometryContext(layout) {
         const zSpacings = gs.zSpacings && gs.zSpacings.length === ny - 1 ? gs.zSpacings : Array(ny - 1).fill(5.0);
 
         const edgeDist = parseFloat(state.line_to_edge !== undefined ? state.line_to_edge : 2.0);
-        const startX = edgeDist + endMargin;
-        const startZ = edgeDist + endMargin;
+        const sumX = xSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
+        const sumZ = zSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
+        const gridWidthX = sumX + 2 * endMargin;
+        const gridWidthZ = sumZ + 2 * endMargin;
+        const marginX = (state.L - gridWidthX) / 2;
+        const marginZ = (state.l - gridWidthZ) / 2;
+
+        const startX = marginX + endMargin;
+        const startZ = marginZ + endMargin;
         const xCoords = [startX];
         for (let i = 0; i < xSpacings.length; i++) xCoords.push(xCoords[i] + (xSpacings[i] || 5.0));
         const zCoords = [startZ];
