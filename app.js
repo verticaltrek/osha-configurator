@@ -21072,16 +21072,16 @@ function generatePDFReport() {
         });
 
         // =========================================================================
-        // PAGE 2: PLAN DE REPÉRAGE GÉNÉRAL (VUE DE DESSUS 2D — PLEINE PAGE)
+        // PAGE 2: PLAN DE REPÉRAGE GÉNÉRAL
         // =========================================================================
         doc.addPage();
-        drawHeader("HOOKT - " + (isEn ? "MARKING PLAN (FULL PAGE TOP-DOWN CAD VIEW)" : "PLAN DE REPÉRAGE GÉNÉRAL (VUE DE DESSUS)"), (isEn ? "Roof Geometry & Setbacks" : "Implantation et Reculs de Toiture"));
+        drawHeader("HOOKT - " + (isEn ? "MARKING PLAN" : (isEs ? "PLANO DE REPLANTEO GENERAL" : "PLAN DE REPÉRAGE GÉNÉRAL")), (isEn ? "Roof Geometry & Setbacks" : (isEs ? "Implantación y Retranqueos de Cubierta" : "Implantation et Reculs de Toiture")));
 
         let currentP2Y = 28;
         doc.setFontSize(10.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "1. Marking Plan (Top View - CAD Scale) :" : "1. Plan de repérage général (Vue de dessus - Échelle CAD) :", 14, currentP2Y);
+        doc.text(isEn ? "1. Marking Plan :" : (isEs ? "1. Plano de replanteo general :" : "1. Plan de repérage général :"), 14, currentP2Y);
 
         doc.setFontSize(7.5);
         doc.setFont("helvetica", "normal");
@@ -21156,10 +21156,10 @@ function generatePDFReport() {
         });
 
         // =========================================================================
-        // PAGE 3: VISUALISATION 3D DE LA TOITURE (PLEINE PAGE)
+        // PAGE 3: VISUALISATION 3D DE LA TOITURE
         // =========================================================================
         doc.addPage();
-        drawHeader("HOOKT - " + (isEn ? "3D ROOF AND LIFELINE VISUALIZATION (FULL PAGE)" : "VISUALISATION 3D DE LA TOITURE ET LIGNE DE VIE"), (isEn ? "Perspective Overview & Interface" : "Perspective Globale et Interface"));
+        drawHeader("HOOKT - " + (isEn ? "3D ROOF AND LIFELINE VISUALIZATION" : (isEs ? "VISUALIZACIÓN 3D DE LA CUBIERTA Y LÍNEA DE VIDA" : "VISUALISATION 3D DE LA TOITURE ET LIGNE DE VIE")), (isEn ? "Perspective Overview & Interface" : (isEs ? "Perspectiva Global e Interfaz" : "Perspective Globale et Interface")));
 
         let currentP3Y = 28;
         doc.setFontSize(10.5);
@@ -21312,7 +21312,7 @@ function generatePDFReport() {
         doc.setFontSize(10.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(30, 41, 59);
-        doc.text(isEn ? "4. Full Anchors Table (A1 to An) :" : "4. Tableau Détaillé de Tous les Ancrages (A1 à An) :", 14, currentP4Y);
+        doc.text(isEn ? "4. Full Anchors Table :" : (isEs ? "4. Tabla Detallada de Anclajes :" : "4. Tableau Détaillé de Tous les Ancrages :"), 14, currentP4Y);
 
         const isAdjustedFF = isOSHA && (Math.abs(fallFactorVal - 1.00) > 0.001);
         const anchorHeaders = isAdjustedFF
@@ -21366,9 +21366,9 @@ function generatePDFReport() {
             : [["Page", "Titre du Chapitre", "Norme / Spécification"]];
         const tocRows = [
             ["Page 1", isEn ? "General Project Information, Mechanical Assessment & BOM" : "Informations Générales, Projet, Bilan Mécanique et Nomenclature", isOSHA ? "OSHA 1926.502" : "EN 795-C"],
-            ["Page 2", isEn ? "Marking Plan (Full Page Top-Down CAD View)" : "Plan de Repérage Général (Pleine Page - Vue de Dessus)", "Implantation et Cotes de Toiture"],
-            ["Page 3", isEn ? "3D Roof & Lifeline Visualization (Full Axonometric)" : "Visualisation 3D de la Toiture (Pleine Page - Rendu Tridimensionnel)", "Perspective et Élévation de Ligne"],
-            ["Page 4", isEn ? "Spans Table & Detailed Anchors Table (A1..An)" : "Tableau Récapitulatif des Portées et Tableau des Ancrages (A1..An)", "Efforts et Portée Critique"],
+            ["Page 2", isEn ? "Marking Plan" : (isEs ? "Plano de Replanteo General" : "Plan de Repérage Général"), isEn ? "Roof Geometry & Setbacks" : (isEs ? "Implantación y Cotes de Cubierta" : "Implantation et Cotes de Toiture")],
+            ["Page 3", isEn ? "3D Roof & Lifeline Visualization" : (isEs ? "Visualización 3D de la Cubierta" : "Visualisation 3D de la Toiture"), isEn ? "Perspective & Elevation" : (isEs ? "Perspectiva y Elevación" : "Perspective et Élévation de Ligne")],
+            ["Page 4", isEn ? "Spans Table & Detailed Anchors Table" : (isEs ? "Tabla de Vanos y Tabla de Anclajes" : "Tableau Récapitulatif des Portées et Tableau des Ancrages"), isEn ? "Critical Values Summary" : (isEs ? "Resumen de Valores Críticos" : "Efforts et Portée Critique")],
             ["Page 5", isEn ? "SRL Datasheet, Fall Clearance Assessment & Homologation Notice" : "Fiche Technique SRL, Schéma de Chute, Formule et Homologation", isOSHA ? "ANSI Z359.14 / OSHA" : "EN 360 / Normes CE"]
         ];
 
