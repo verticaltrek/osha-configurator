@@ -5308,19 +5308,20 @@ function updateSrlCardsDisplay() {
 
     const badgeTurbo = document.getElementById("badge-turbolite-class");
     const badgeFalcon = document.getElementById("badge-falcon-class");
-    const classTxt = isEn ? "Class 2" : "Classe 2";
+    const l = parseInt(state.lang) || 0;
+    const classTxt = isEn ? "Class 2" : (l === 2 ? "Clase 2" : "Classe 2");
     if (badgeTurbo) badgeTurbo.textContent = classTxt;
     if (badgeFalcon) badgeFalcon.textContent = classTxt;
 
-    if (lblTurbo) lblTurbo.textContent = isEn ? "Retracted:" : "Rétracté :";
-    if (lblFalcon) lblFalcon.textContent = isEn ? "Retracted:" : "Rétracté :";
+    if (lblTurbo) lblTurbo.textContent = isEn ? "Retracted:" : (l === 2 ? "Retraído:" : "Rétracté :");
+    if (lblFalcon) lblFalcon.textContent = isEn ? "Retracted:" : (l === 2 ? "Retraído:" : "Rétracté :");
 
     if (valTurbo) {
         if (turboData && turboData.retracted_length_m !== null && turboData.retracted_length_m !== undefined) {
             const ft = (turboData.retracted_length_m / 0.3048).toFixed(1);
             valTurbo.textContent = `${turboData.retracted_length_m.toFixed(2)} m (${ft} ft)`;
         } else {
-            valTurbo.textContent = isEn ? "Data to provide" : "Donnée à renseigner";
+            valTurbo.textContent = isEn ? "Data to provide" : (l === 2 ? "Dato a proporcionar" : "Donnée à renseigner");
         }
     }
 
@@ -5329,7 +5330,7 @@ function updateSrlCardsDisplay() {
             const ft = (falconData.retracted_length_m / 0.3048).toFixed(1);
             valFalcon.textContent = `${falconData.retracted_length_m.toFixed(2)} m (${ft} ft)`;
         } else {
-            valFalcon.textContent = isEn ? "Data to provide" : "Donnée à renseigner";
+            valFalcon.textContent = isEn ? "Data to provide" : (l === 2 ? "Dato a proporcionar" : "Donnée à renseigner");
         }
     }
 }
@@ -5549,8 +5550,8 @@ function updateConnectingDeviceUI() {
     const lblClrRetr = document.getElementById("lbl-clr-retracted");
     if (lblClrRetr) {
         lblClrRetr.textContent = isLanyard
-            ? (isEn ? "Longueur de la longe :" : "Longueur de la longe :")
-            : (isEn ? "Longueur rétractée :" : "Longueur rétractée :");
+            ? (isEn ? "Lanyard Length:" : (l === 2 ? "Longitud de la eslinga:" : "Longueur de la longe :"))
+            : (isEn ? "Retracted Length:" : (l === 2 ? "Longitud retraída:" : "Longueur rétractée :"));
     }
 
     const customRetractedGroup = document.getElementById("group-custom-retracted-length");
@@ -5825,24 +5826,29 @@ function selectSrlModel(srlId) {
 
     // Do NOT automatically fill length or MAD: the user enters the values ("c'est le user qui renseigne")
     // Update placeholders to guide the user on maximum specifications
-    const isEn = (parseInt(state.lang) === 1);
+    const l = parseInt(state.lang) || 0;
+    const isEn = (l === 1);
     const lenInp = document.getElementById("input-srl-retracted-length");
     const madInp = document.getElementById("input-srl-mad");
 
     if (lenInp) {
         if (srlId === "turbo_light_9ft") {
-            lenInp.placeholder = isEn ? "Max: 11 ft (3.35 m)" : "Max : 11 ft (3,35 m)";
+            lenInp.placeholder = isEn ? "Max: 11 ft (3.35 m)" : (l === 2 ? "Máx: 11 ft (3.35 m)" : "Max : 11 ft (3,35 m)");
         } else if (srlId === "falcon_leading_edge") {
-            lenInp.placeholder = isEn ? "Max: 50 ft (15.24 m)" : "Max : 50 ft (15,24 m)";
+            lenInp.placeholder = isEn ? "Max: 50 ft (15.24 m)" : (l === 2 ? "Máx: 50 ft (15.24 m)" : "Max : 50 ft (15,24 m)");
+        } else {
+            lenInp.placeholder = isEn ? "Enter length..." : (l === 2 ? "Introducir longitud..." : "Saisir la longueur...");
         }
         updateRetractedLengthEquivalentUI();
     }
 
     if (madInp) {
         if (srlId === "turbo_light_9ft") {
-            madInp.placeholder = isEn ? "Max: 42 in (1.07 m)" : "Max : 42 in (1,07 m)";
+            madInp.placeholder = isEn ? "Max: 42 in (1.07 m)" : (l === 2 ? "Máx: 42 in (1.07 m)" : "Max : 42 in (1,07 m)");
         } else if (srlId === "falcon_leading_edge") {
-            madInp.placeholder = isEn ? "Max: 165 in (4.19 m)" : "Max : 165 in (4,19 m)";
+            madInp.placeholder = isEn ? "Max: 165 in (4.19 m)" : (l === 2 ? "Máx: 165 in (4.19 m)" : "Max : 165 in (4,19 m)");
+        } else {
+            madInp.placeholder = isEn ? "Enter MAD..." : (l === 2 ? "Introducir MAD..." : "Saisir la MAD...");
         }
         updateMadEquivalentUI();
     }
@@ -6070,9 +6076,18 @@ function initSrlMadControls() {
                 state.retractedLengthM = 1.80;
             }
         } else if (newVal === "custom_srd" || newVal === "custom_lanyard") {
-            if (lenInp && (state.customDeviceLengthM === undefined || state.customDeviceLengthM === null)) {
-                lenInp.value = "";
-                state.retractedLengthM = null;
+            const l = parseInt(state.lang) || 0;
+            const isEn = (l === 1);
+            if (lenInp) {
+                lenInp.placeholder = isEn ? "Enter length..." : (l === 2 ? "Introducir longitud..." : "Saisir la longueur...");
+                if (state.customDeviceLengthM === undefined || state.customDeviceLengthM === null) {
+                    lenInp.value = "";
+                    state.retractedLengthM = null;
+                }
+            }
+            const madInp = document.getElementById("input-srl-mad");
+            if (madInp) {
+                madInp.placeholder = isEn ? "Enter MAD..." : (l === 2 ? "Introducir MAD..." : "Saisir la MAD...");
             }
         }
 
@@ -9373,7 +9388,8 @@ function getComponentName(c) {
 }
 
 function applyLanguage(langIndex) {
-    state.lang = (parseInt(langIndex) === 1) ? 1 : 0;
+    const parsed = parseInt(langIndex);
+    state.lang = [0, 1, 2].includes(parsed) ? parsed : 0;
     const l = state.lang;
     const isEn = (l === 1);
     if (typeof window !== "undefined" && window.localStorage) {
@@ -9669,6 +9685,18 @@ function applyLanguage(langIndex) {
             ? ["Longueur de la longe :", "Lanyard Length:", "Longitud de la eslinga:"][l]
             : ["Longueur rétractée :", "Retracted Length:", "Longitud retraída:"][l];
     }
+    const inSrlRetracted = document.getElementById("input-srl-retracted-length");
+    if (inSrlRetracted) {
+        if (state.selectedSrlId === "turbo_light_9ft") {
+            inSrlRetracted.placeholder = isEn ? "Max: 11 ft (3.35 m)" : (l === 2 ? "Máx: 11 ft (3.35 m)" : "Max : 11 ft (3,35 m)");
+        } else if (state.selectedSrlId === "falcon_leading_edge") {
+            inSrlRetracted.placeholder = isEn ? "Max: 50 ft (15.24 m)" : (l === 2 ? "Máx: 50 ft (15.24 m)" : "Max : 50 ft (15,24 m)");
+        } else {
+            inSrlRetracted.placeholder = isEn ? "Enter length..." : (l === 2 ? "Introducir longitud..." : "Saisir la longueur...");
+        }
+    }
+    const btnResetRetracted = document.getElementById("btn-reset-retracted-length");
+    if (btnResetRetracted) btnResetRetracted.title = isEn ? "Reset to catalog value" : (l === 2 ? "Restablecer valor del catálogo" : "Rétablir la valeur du catalogue");
     const btnResetRetractedTxt = document.getElementById("btn-reset-retracted-length-text");
     if (btnResetRetractedTxt) btnResetRetractedTxt.textContent = ["Rétablir", "Reset", "Restablecer"][l];
     const badgeRetractedMod = document.getElementById("badge-retracted-modified");
@@ -9678,6 +9706,18 @@ function applyLanguage(langIndex) {
 
     const lblSrlMadTitle = document.getElementById("lbl-srl-mad-title");
     if (lblSrlMadTitle) lblSrlMadTitle.textContent = ["Distance d'arrêt maximale (MAD) :", "Maximum Arrest Distance (MAD):", "Distancia máxima de parada (MAD):"][l];
+    const inSrlMad = document.getElementById("input-srl-mad");
+    if (inSrlMad) {
+        if (state.selectedSrlId === "turbo_light_9ft") {
+            inSrlMad.placeholder = isEn ? "Max: 42 in (1.07 m)" : (l === 2 ? "Máx: 42 in (1.07 m)" : "Max : 42 in (1,07 m)");
+        } else if (state.selectedSrlId === "falcon_leading_edge") {
+            inSrlMad.placeholder = isEn ? "Max: 165 in (4.19 m)" : (l === 2 ? "Máx: 165 in (4.19 m)" : "Max : 165 in (4,19 m)");
+        } else {
+            inSrlMad.placeholder = isEn ? "Enter MAD..." : (l === 2 ? "Introducir MAD..." : "Saisir la MAD...");
+        }
+    }
+    const btnResetMad = document.getElementById("btn-reset-mad");
+    if (btnResetMad) btnResetMad.title = isEn ? "Reset ANSI suggestion (42 in / 1.07 m)" : (l === 2 ? "Restablecer sugerencia ANSI (42 in / 1.07 m)" : "Rétablir la suggestion ANSI (42 in / 1.07 m)");
     const btnResetMadTxt = document.getElementById("btn-reset-mad-text");
     if (btnResetMadTxt) {
         const srl = (state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) ? SRL_CATALOG[state.selectedSrlId] : null;
@@ -9687,7 +9727,24 @@ function applyLanguage(langIndex) {
         btnResetMadTxt.textContent = curUnit === "in" ? `${Math.round(defIn)} in` : `${defM.toFixed(2)} m`;
     }
     const badgeMadMod = document.getElementById("badge-mad-modified");
-    if (badgeMadMod) badgeMadMod.textContent = ["modifiée", "modified", "modificada"][l];
+    if (badgeMadMod) badgeMadMod.textContent = ["libre", "custom", "libre"][l];
+
+    const inCustomDevName = document.getElementById("input-custom-device-name");
+    if (inCustomDevName) inCustomDevName.placeholder = isEn ? "e.g. Custom SRL 10m" : (l === 2 ? "ej: SRL Personalizado 10m" : "ex: SRL Personnalisé 10m");
+    const inSideCustomName = document.getElementById("input-sidebar-custom-name");
+    if (inSideCustomName) inSideCustomName.placeholder = isEn ? "e.g. Custom SRL 10m" : (l === 2 ? "ej: SRL Personalizado 10m" : "ex: SRL Personnalisé 10m");
+
+    const badgeTurboClass = document.getElementById("badge-turbolite-class");
+    if (badgeTurboClass) badgeTurboClass.textContent = isEn ? "Class 2" : (l === 2 ? "Clase 2" : "Classe 2");
+    const badgeFalconClass = document.getElementById("badge-falcon-class");
+    if (badgeFalconClass) badgeFalconClass.textContent = isEn ? "Class 2" : (l === 2 ? "Clase 2" : "Classe 2");
+
+    const lblClrRetracted = document.getElementById("lbl-clr-retracted");
+    if (lblClrRetracted) {
+        lblClrRetracted.textContent = isLanyardDev
+            ? (isEn ? "Lanyard Length:" : (l === 2 ? "Longitud de la eslinga:" : "Longueur de la longe :"))
+            : (isEn ? "Retracted Length:" : (l === 2 ? "Longitud retraída:" : "Longueur rétractée :"));
+    }
 
     if (typeof updateRetractedLengthEquivalentUI === "function") updateRetractedLengthEquivalentUI();
     if (typeof updateMadEquivalentUI === "function") updateMadEquivalentUI();
@@ -9780,15 +9837,19 @@ function applyLanguage(langIndex) {
     const lblClrDefl = document.getElementById("lbl-clr-defl");
     if (lblClrDefl) lblClrDefl.textContent = isEn ? "Deflection under load:" : "Flèche sous charge :";
     const lblClrMad = document.getElementById("lbl-clr-mad");
-    if (lblClrMad) lblClrMad.textContent = isEn ? "SRL Arrest (MAD / FAD):" : "Arrêt SRL (MAD / FAD) :";
+    if (lblClrMad) lblClrMad.textContent = isEn ? "SRL Arrest (MAD / FAD):" : (l === 2 ? "Detención SRL (MAD / FAD):" : "Arrêt SRL (MAD / FAD) :");
+    const lblClrStretch = document.getElementById("lbl-clr-stretch");
+    if (lblClrStretch) lblClrStretch.textContent = isEn ? "Body Stretch-out (+):" : (l === 2 ? "Estiramiento del cuerpo (+):" : "Étirement du corps (+) :");
+    const lblClrKneel = document.getElementById("lbl-clr-kneel");
+    if (lblClrKneel) lblClrKneel.textContent = isEn ? "Kneeling position (+):" : (l === 2 ? "Posición de rodillas (+):" : "Ajout position à genoux (+) :");
     const lblClrEdge = document.getElementById("lbl-clr-edge");
-    if (lblClrEdge) lblClrEdge.textContent = isEn ? "Line to Roof Edge (-):" : "Distance ligne / bord (-) :";
+    if (lblClrEdge) lblClrEdge.textContent = isEn ? "Line to Roof Edge (-):" : (l === 2 ? "Distancia línea a borde (-):" : "Distance ligne / bord (-) :");
     const lblClrBody = document.getElementById("lbl-clr-body");
-    if (lblClrBody) lblClrBody.textContent = isEn ? "D-Ring Height (+):" : "Hauteur Anneau D (+) :";
+    if (lblClrBody) lblClrBody.textContent = isEn ? "D-Ring Height (+):" : (l === 2 ? "Altura Anillo D (+):" : "Hauteur Anneau D (+) :");
     const lblClrMargin = document.getElementById("lbl-clr-margin");
-    if (lblClrMargin) lblClrMargin.textContent = isEn ? "Safety Margin:" : "Marge de sécurité :";
+    if (lblClrMargin) lblClrMargin.textContent = isEn ? "Safety Margin:" : (l === 2 ? "Margen de seguridad:" : "Marge de sécurité :");
     const lblClearanceTotal = document.getElementById("lbl-clearance-total");
-    if (lblClearanceTotal) lblClearanceTotal.textContent = isEn ? "Total Required Clearance:" : "Dégagement Total :";
+    if (lblClearanceTotal) lblClearanceTotal.textContent = isEn ? "Total Required Clearance:" : (l === 2 ? "Espacio Libre Total:" : "Dégagement Total :");
 
     const lblBufRecoil = document.getElementById("lbl-buffer-recoil-row");
     if (lblBufRecoil) lblBufRecoil.textContent = isEn ? "Buffer Recoil:" : "Recul du Buffer :";
@@ -9949,21 +10010,41 @@ function applyLanguage(langIndex) {
     const lblInitialSagRow = document.getElementById("lbl-initial-sag-row");
     if (lblInitialSagRow) lblInitialSagRow.textContent = isEn ? "Initial Sag:" : "Affaissement Initial :";
     const lblMaxInterLoadRow = document.getElementById("lbl-max-inter-load-row");
-    if (lblMaxInterLoadRow) lblMaxInterLoadRow.textContent = isEn ? "Max Intermediate Load:" : "Charge Intermédiaire Max :";
+    if (lblMaxInterLoadRow) lblMaxInterLoadRow.textContent = isEn ? "Max Intermediate Load:" : (l === 2 ? "Carga Intermedia Máx:" : "Charge Intermédiaire Max :");
+    const lblAngleFinalRow = document.getElementById("lbl-angle-final-row");
+    if (lblAngleFinalRow) lblAngleFinalRow.textContent = isEn ? "Final Angle (slope under load):" : (l === 2 ? "Ángulo Final (pendiente bajo carga):" : "Angle Final (pente sous charge) :");
+    const lblConeSlipRow = document.getElementById("lbl-cone-slip-row");
+    if (lblConeSlipRow) lblConeSlipRow.textContent = isEn ? "Max Cone Slip:" : (l === 2 ? "Deslizamiento Cono Máx:" : "Glissement Cône Max :");
     const valSag = document.getElementById("val-initial-sag");
-    if (valSag) valSag.textContent = isEn ? "Data to be provided" : "Donnée à renseigner";
+    if (valSag) valSag.textContent = isEn ? "Data to be provided" : (l === 2 ? "Dato a proporcionar" : "Donnée à renseigner");
+
+    // Modal & Admin input placeholders
+    const inSaveProjName = document.getElementById("save-proj-name");
+    if (inSaveProjName) inSaveProjName.placeholder = isEn ? "e.g. South Warehouse Roof" : (l === 2 ? "ej: Techo Almacén Sur" : "ex: Toiture Entrepôt Sud");
+    const inSaveProjLoc = document.getElementById("save-proj-location");
+    if (inSaveProjLoc) inSaveProjLoc.placeholder = isEn ? "e.g. Lyon, France" : (l === 2 ? "ej: Lyon, Francia" : "ex: Lyon, France");
+    const inAdminSearch = document.getElementById("admin-user-search");
+    if (inAdminSearch) inAdminSearch.placeholder = isEn ? "Search by name, email, company..." : (l === 2 ? "Buscar por nombre, email, empresa..." : "Rechercher par nom, email, société...");
+    const inInvNom = document.getElementById("inv-nom");
+    if (inInvNom) inInvNom.placeholder = isEn ? "e.g. John Doe" : (l === 2 ? "ej: Juan Pérez" : "ex: Jean Dupont");
+    const inInvCompany = document.getElementById("inv-company");
+    if (inInvCompany) inInvCompany.placeholder = isEn ? "e.g. Safe Works Inc." : (l === 2 ? "ej: Seguridad BTP SL" : "ex: BTP Sécurité SAS");
+    const inInvEmail = document.getElementById("inv-email");
+    if (inInvEmail) inInvEmail.placeholder = isEn ? "contact@company.com" : (l === 2 ? "contacto@empresa.com" : "contact@entreprise.com");
+    const inAuthEmail = document.getElementById("auth-email");
+    if (inAuthEmail) inAuthEmail.placeholder = isEn ? "name@company.com" : (l === 2 ? "nombre@empresa.com" : "nom@entreprise.com");
 
     // Bottom Action Bar & Header Projects Button
     const btnOpenProjects = document.getElementById("btn-open-projects");
     if (btnOpenProjects) {
         const sp = btnOpenProjects.querySelector("span");
-        if (sp) sp.textContent = isEn ? "Projects" : "Projets";
-        btnOpenProjects.title = isEn ? "Saved Projects" : "Projets sauvegardés";
+        if (sp) sp.textContent = isEn ? "Projects" : (l === 2 ? "Proyectos" : "Projets");
+        btnOpenProjects.title = isEn ? "Saved Projects" : (l === 2 ? "Proyectos guardados" : "Projets sauvegardés");
     }
     const btnSaveText = document.getElementById("btn-save-project-text");
-    if (btnSaveText) btnSaveText.textContent = isEn ? "Save Project" : "Sauvegarder Projet";
+    if (btnSaveText) btnSaveText.textContent = isEn ? "Save Project" : (l === 2 ? "Guardar Proyecto" : "Sauvegarder Projet");
     const btnLoadText = document.getElementById("btn-load-project-text");
-    if (btnLoadText) btnLoadText.textContent = isEn ? "My Projects" : "Mes Projets";
+    if (btnLoadText) btnLoadText.textContent = isEn ? "My Projects" : (l === 2 ? "Mis Proyectos" : "Mes Projets");
     const btnTextExport = document.getElementById("btn-text-export");
     if (btnTextExport) btnTextExport.textContent = TRANSLATIONS.btnTextExport[l];
 
@@ -11497,7 +11578,9 @@ const SystemLabelingModule = {
     // 1. Single Source of Truth Generator
     generateSystemLabels(state, effortContext = null, geomContext = null) {
         const layout = state.layoutType || "single_span";
-        const isEn = (parseInt(state.lang) === 1);
+        const l = parseInt(state.lang) || 0;
+        const isEn = (l === 1);
+        const isEs = (l === 2);
         function formatLen(m, deg) {
             const valStr = UnitsModule.formatLength(m);
             if (deg !== undefined && deg !== null && deg !== 0) {
@@ -14142,12 +14225,18 @@ function highlightSelectedNode(nodeIdx = null, spanIdx = null) {
     // Display element name & UID
     const nodeIdVal = document.getElementById("node-id-val");
     if (nodeIdVal) {
+        const l = parseInt(state.lang) || 0;
+        const isEn = (l === 1);
+        const isEs = (l === 2);
+        const ancWord = isEn ? "Anchor" : (isEs ? "Anclaje" : "Ancrage");
+        const spWord = isEn ? "Span" : (isEs ? "Vano" : "Portée");
+        const actFallWord = isEn ? "Active fall span" : (isEs ? "Vano caída activo" : "Portée de chute active");
         if (targetSpan) {
             const isFall = (state.selectedFallSpanId === targetSpan.id);
             const uidStr = (targetSpan.id && typeof targetSpan.id === "string") ? targetSpan.id.slice(-6) : `S${sIdx + 1}`;
-            nodeIdVal.innerHTML = `<strong>Ancrage A${nIdx + 1}</strong> &bull; <strong>Portée S${sIdx + 1}</strong> <span style="font-size:0.75rem; color:#64748b;">(UID: ${uidStr})</span> ${isFall ? '<span class="badge-tag-id fall-badge" style="margin-left:4px;">Portée de chute active</span>' : ''}`;
+            nodeIdVal.innerHTML = `<strong>${ancWord} A${nIdx + 1}</strong> &bull; <strong>${spWord} S${sIdx + 1}</strong> <span style="font-size:0.75rem; color:#64748b;">(UID: ${uidStr})</span> ${isFall ? `<span class="badge-tag-id fall-badge" style="margin-left:4px;">${actFallWord}</span>` : ''}`;
         } else {
-            nodeIdVal.textContent = `Ancrage #${nIdx + 1}`;
+            nodeIdVal.textContent = `${ancWord} #${nIdx + 1}`;
         }
     }
 
