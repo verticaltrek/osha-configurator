@@ -919,13 +919,13 @@ const AnchorEffortDistributionModule = {
                     count: 7,
                     totalAnchors: 7,
                     points: [
-                        { id: "A1", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A1`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A1`, val: 5.00, isAttenuated: false, isExtremity: true, isP0: false, isFallAnchor: false, isDoubleAnchor: false, remarque: "avant le coude", sixIndex: 0 },
-                        { id: "A2a", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2a`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2a`, val: 10.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: false, isDoubleAnchor: true, remarque: "ancrage double", sixIndex: 1 },
-                        { id: "A2b", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2b`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2b`, val: 10.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: false, isDoubleAnchor: true, remarque: "ancrage double", sixIndex: 1 },
-                        { id: "A3", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A3`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A3`, val: 10.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: true, isDoubleAnchor: false, remarque: "après le coude", sixIndex: 2 },
-                        { id: "A4", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A4`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A4`, val: 9.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: true, isDoubleAnchor: false, remarque: "après le coude", sixIndex: 3 },
-                        { id: "A5", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A5`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A5`, val: 4.50, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: false, isDoubleAnchor: false, remarque: "après le coude", sixIndex: 4 },
-                        { id: "A6", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A6`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A6`, val: 2.25, isAttenuated: false, isExtremity: true, isP0: false, isFallAnchor: false, isDoubleAnchor: false, remarque: "après le coude", sixIndex: 5 }
+                        { id: "A1", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A1`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A1`, val: 5.00, isAttenuated: false, isExtremity: true, isP0: false, isFallAnchor: false, isDoubleAnchor: false, remarque: ["avant le coude", "before bend", "antes de la curva"][l], sixIndex: 0 },
+                        { id: "A2a", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2a`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2a`, val: 10.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: false, isDoubleAnchor: true, remarque: ["ancrage double", "double anchor", "anclaje doble"][l], sixIndex: 1 },
+                        { id: "A2b", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2b`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A2b`, val: 10.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: false, isDoubleAnchor: true, remarque: ["ancrage double", "double anchor", "anclaje doble"][l], sixIndex: 1 },
+                        { id: "A3", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A3`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A3`, val: 10.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: true, isDoubleAnchor: false, remarque: ["après le coude", "after bend", "después de la curva"][l], sixIndex: 2 },
+                        { id: "A4", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A4`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A4`, val: 9.00, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: true, isDoubleAnchor: false, remarque: ["après le coude", "after bend", "después de la curva"][l], sixIndex: 3 },
+                        { id: "A5", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A5`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A5`, val: 4.50, isAttenuated: false, isExtremity: false, isP0: false, isFallAnchor: false, isDoubleAnchor: false, remarque: ["après le coude", "after bend", "después de la curva"][l], sixIndex: 4 },
+                        { id: "A6", label: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A6`, pdfLabel: `${["Force Ancrage", "Anchor Force", "Fuerza Anclaje"][l]} A6`, val: 2.25, isAttenuated: false, isExtremity: true, isP0: false, isFallAnchor: false, isDoubleAnchor: false, remarque: ["après le coude", "after bend", "después de la curva"][l], sixIndex: 5 }
                     ],
                     uiSubtitle: ["Répartition des efforts aux ancrages :", "Anchor Load Distribution:", "Distribución de Cargas a los Anclajes:"][l],
                     pdfSubtitle: ["Répartition Multi-Portée OSHA", "OSHA Multi-Span Load Distribution", "Distribución Multi-Luz OSHA"][l],
@@ -1822,9 +1822,11 @@ const AnchorEffortDistributionModule = {
                     let dVal = factor * baseDyn;
                     let tVal = pVal + dVal;
 
-                    if (factor < this.config.GRID_CUTOFF_RATIO) {
-                        tVal = 0.0;
-                        pVal = 0.0;
+                    // Spec 2026: Pour les ancrages éloignés de la portée de chute, conserver un résidu d'effort (plancher 0.10 kN) et jamais 0.00 kN
+                    const minResidualKn = 0.10;
+                    if (tVal < minResidualKn) {
+                        tVal = minResidualKn;
+                        pVal = minResidualKn;
                         dVal = 0.0;
                     }
 
@@ -1949,7 +1951,7 @@ const AnchorEffortDistributionModule = {
         const expL1 = ["1.82", "1.59", "1.59", "1.59"];
         const expL2 = ["0.45", "0.40", "0.40", "0.40"];
         const expL3 = ["0.11", "0.10", "0.10", "0.10"];
-        const expL4 = ["0.00", "0.00", "0.00", "0.00"];
+        const expL4 = ["0.10", "0.10", "0.10", "0.10"];
 
         const gotL0 = r4.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
         const gotL1 = r4.levelsSummary[1].sampleTotals.map(v => v.toFixed(2));
@@ -4810,6 +4812,9 @@ function setUnitSystem(nextSys, skipRender = false) {
     }
 
     updateUnitLabelsInDOM();
+    if (typeof renderDynamicLayoutForm === "function") {
+        renderDynamicLayoutForm();
+    }
 
     if (!skipRender) {
         if (typeof updateCalculationsUI === "function" && state.product) {
@@ -6956,6 +6961,9 @@ function populateConfigModalInputs() {
     validateWwsAgainstRoofHeight();
 
     updateUnitLabelsInDOM();
+    if (typeof renderDynamicLayoutForm === "function") {
+        renderDynamicLayoutForm();
+    }
 
     // Spec V2 — 04: Calculation Inputs
     const devSel = document.getElementById("select-connecting-device");
@@ -7976,7 +7984,7 @@ function renderDynamicLayoutForm() {
                 <div class="warning-alert-box margin-top-sm" style="background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 10px; border-radius: 6px; font-size: 0.85rem; display: flex; gap: 10px; align-items: center;">
                     <i class="fa-solid fa-triangle-exclamation" style="font-size: 1.2rem; color: #dc2626;"></i>
                     <div>
-                        <strong>Erreur de Validation :</strong> Le segment <strong>${failingSegId} (${formatDistance(maxSegVal, 2)})</strong> dépasse la portée maximale admissible du système ${state.product} (${formatDistance(maxSpanLR, 2)}).
+                        <strong>${isEn ? "Validation Error:" : "Erreur de Validation :"}</strong> ${isEn ? `Segment <strong>${failingSegId} (${formatDistance(maxSegVal, 2, 1)})</strong> exceeds maximum allowable span for ${state.product} (${formatDistance(maxSpanLR, 2, 1)}).` : `Le segment <strong>${failingSegId} (${formatDistance(maxSegVal, 2, 0)})</strong> dépasse la portée maximale admissible du système ${state.product} (${formatDistance(maxSpanLR, 2, 0)}).`}
                     </div>
                 </div>
             ` : ''}
@@ -9387,6 +9395,9 @@ function applyLanguage(langIndex) {
     if (selUnitSystem) selUnitSystem.value = isUS ? "imperial" : "metric";
 
     updateUnitLabelsInDOM();
+    if (typeof renderDynamicLayoutForm === "function") {
+        renderDynamicLayoutForm();
+    }
 
     const homeBadge = document.getElementById("home-brand-badge");
     if (homeBadge) {
@@ -9821,6 +9832,15 @@ function applyLanguage(langIndex) {
         }
     }
 
+    const bufferInfo = document.getElementById("lbl-buffer-len-info");
+    if (bufferInfo) {
+        const bufLen = state.bufferLength || (isXtreme(state.product) ? 0.30 : 0.20);
+        const distStr = formatDistance(bufLen, 2, l);
+        bufferInfo.innerHTML = isEn
+            ? `Fixed end buffer: <strong>${distStr}</strong> (not user-editable)`
+            : (l === 2 ? `Búfer de extremo fijo: <strong>${distStr}</strong> (no editable por el usuario)` : `Buffer d'extrémité fixe : <strong>${distStr}</strong> (non modifiable par l'utilisateur)`);
+    }
+
     const lblElevationTb = document.getElementById("lbl-elevation-tb");
     if (lblElevationTb) lblElevationTb.textContent = isEn ? "Elevation:" : "Élévation :";
     if (typeof LayoutEditorModule !== "undefined" && LayoutEditorModule.syncElevationInputsUI) {
@@ -9954,6 +9974,9 @@ function applyLanguage(langIndex) {
     populateConfigModalInputs();
     renderComponentsChecklist();
     updateUnitLabelsInDOM();
+    if (typeof renderDynamicLayoutForm === "function") {
+        renderDynamicLayoutForm();
+    }
 
     if (state.product && typeof updateCalculationsUI === "function") {
         const activePositions = Calculator.calculateAnchorPositions(state.L, state.l, Calculator.getMaxSpan(state.product));
@@ -11624,7 +11647,8 @@ const SystemLabelingModule = {
                     const distManhattan = Math.abs(c - fallCross.x) + Math.abs(r - fallCross.z);
                     const factor = Math.pow(ANCHOR_EFFORT_CONFIG.GRID_LEVEL_FACTOR || 0.25, distManhattan);
                     let effortVal = isFall ? gridRes.level0.totalFall : (gridRes.level0.totalOther * factor);
-                    if (factor < (ANCHOR_EFFORT_CONFIG.GRID_CUTOFF_RATIO || 0.01)) effortVal = 0.0;
+                    const minResidualKn = 0.10;
+                    if (effortVal < minResidualKn) effortVal = minResidualKn;
                     const pos = geomContext?.xMatrixGrid ? geomContext.xMatrixGrid[r]?.[c] : null;
 
                     xMatrixPieces.push({
@@ -11651,7 +11675,8 @@ const SystemLabelingModule = {
             const northAnchors = [];
             for (let c = 0; c < nx; c++) {
                 const id = `A${aIndex++}`;
-                const endForce = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "north" && ep.colIndex === c)?.forceKn || 0) : 0;
+                const endForceRaw = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "north" && ep.colIndex === c)?.forceKn || 0.10) : 0.10;
+                const endForce = Math.max(0.10, endForceRaw);
                 const pos = geomContext?.northAnchors ? geomContext.northAnchors[c] : null;
                 const adjSpan = `S${c + 1}-1`;
                 const isFallA = (adjSpan === activeFallSpanId);
@@ -11659,13 +11684,13 @@ const SystemLabelingModule = {
                     id,
                     edge: "north",
                     colIndex: c,
-                    desc: `${isEn ? "North Edge" : "Bord Nord"} Col ${c + 1}`,
-                    type: isEn ? "Grid End Post (North)" : "Poteau d'extrémité de grille (Nord)",
+                    desc: isEn ? `North Edge Col ${c + 1}` : (isEs ? `Borde Norte Col ${c + 1}` : `Bord Nord Col ${c + 1}`),
+                    type: isEn ? "Grid End Post (North)" : (isEs ? "Poste de extremo de cuadrícula (Norte)" : "Poteau d'extrémité de grille (Nord)"),
                     adjacentSpans: [adjSpan],
                     isFallAnchor: isFallA,
                     effortKn: endForce,
                     effortStr: UnitsModule.formatForce(endForce),
-                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : "Extrémité portée de chute") : "-",
+                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : (isEs ? "Extremo vano de caída" : "Extrémité portée de chute")) : "-",
                     position: pos
                 };
                 anchors.push(anc);
@@ -11677,7 +11702,8 @@ const SystemLabelingModule = {
             for (let r = 0; r < ny; r++) {
                 const id = `A${aIndex++}`;
                 const rowL = rowLetters[r];
-                const endForce = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "east" && ep.rowIndex === r)?.forceKn || 0) : 0;
+                const endForceRaw = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "east" && ep.rowIndex === r)?.forceKn || 0.10) : 0.10;
+                const endForce = Math.max(0.10, endForceRaw);
                 const pos = geomContext?.eastAnchors ? geomContext.eastAnchors[r] : null;
                 const adjSpan = `S${rowL}-${nx + 1}`;
                 const isFallA = (adjSpan === activeFallSpanId);
@@ -11685,13 +11711,13 @@ const SystemLabelingModule = {
                     id,
                     edge: "east",
                     rowIndex: r,
-                    desc: `${isEn ? "East Edge" : "Bord Est"} ${isEn ? "Row" : "Ligne"} ${rowL}`,
-                    type: isEn ? "Grid End Post (East)" : "Poteau d'extrémité de grille (Est)",
+                    desc: isEn ? `East Edge Row ${rowL}` : (isEs ? `Borde Este Fila ${rowL}` : `Bord Est Ligne ${rowL}`),
+                    type: isEn ? "Grid End Post (East)" : (isEs ? "Poste de extremo de cuadrícula (Este)" : "Poteau d'extrémité de grille (Est)"),
                     adjacentSpans: [adjSpan],
                     isFallAnchor: isFallA,
                     effortKn: endForce,
                     effortStr: UnitsModule.formatForce(endForce),
-                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : "Extrémité portée de chute") : "-",
+                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : (isEs ? "Extremo vano de caída" : "Extrémité portée de chute")) : "-",
                     position: pos
                 };
                 anchors.push(anc);
@@ -11702,7 +11728,8 @@ const SystemLabelingModule = {
             const southAnchors = [];
             for (let c = nx - 1; c >= 0; c--) {
                 const id = `A${aIndex++}`;
-                const endForce = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "south" && ep.colIndex === c)?.forceKn || 0) : 0;
+                const endForceRaw = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "south" && ep.colIndex === c)?.forceKn || 0.10) : 0.10;
+                const endForce = Math.max(0.10, endForceRaw);
                 const pos = geomContext?.southAnchors ? geomContext.southAnchors[c] : null;
                 const adjSpan = `S${c + 1}-${ny + 1}`;
                 const isFallA = (adjSpan === activeFallSpanId);
@@ -11710,13 +11737,13 @@ const SystemLabelingModule = {
                     id,
                     edge: "south",
                     colIndex: c,
-                    desc: `${isEn ? "South Edge" : "Bord Sud"} Col ${c + 1}`,
-                    type: isEn ? "Grid End Post (South)" : "Poteau d'extrémité de grille (Sud)",
+                    desc: isEn ? `South Edge Col ${c + 1}` : (isEs ? `Borde Sur Col ${c + 1}` : `Bord Sud Col ${c + 1}`),
+                    type: isEn ? "Grid End Post (South)" : (isEs ? "Poste de extremo de cuadrícula (Sur)" : "Poteau d'extrémité de grille (Sud)"),
                     adjacentSpans: [adjSpan],
                     isFallAnchor: isFallA,
                     effortKn: endForce,
                     effortStr: UnitsModule.formatForce(endForce),
-                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : "Extrémité portée de chute") : "-",
+                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : (isEs ? "Extremo vano de caída" : "Extrémité portée de chute")) : "-",
                     position: pos
                 };
                 anchors.push(anc);
@@ -11728,7 +11755,8 @@ const SystemLabelingModule = {
             for (let r = ny - 1; r >= 0; r--) {
                 const id = `A${aIndex++}`;
                 const rowL = rowLetters[r];
-                const endForce = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "west" && ep.rowIndex === r)?.forceKn || 0) : 0;
+                const endForceRaw = gridRes.endPosts ? (gridRes.endPosts.find(ep => ep.edge === "west" && ep.rowIndex === r)?.forceKn || 0.10) : 0.10;
+                const endForce = Math.max(0.10, endForceRaw);
                 const pos = geomContext?.westAnchors ? geomContext.westAnchors[r] : null;
                 const adjSpan = `S${rowL}-1`;
                 const isFallA = (adjSpan === activeFallSpanId);
@@ -11736,13 +11764,13 @@ const SystemLabelingModule = {
                     id,
                     edge: "west",
                     rowIndex: r,
-                    desc: `${isEn ? "West Edge" : "Bord Ouest"} ${isEn ? "Row" : "Ligne"} ${rowL}`,
-                    type: isEn ? "Grid End Post (West)" : "Poteau d'extrémité de grille (Ouest)",
+                    desc: isEn ? `West Edge Row ${rowL}` : (isEs ? `Borde Oeste Fila ${rowL}` : `Bord Ouest Ligne ${rowL}`),
+                    type: isEn ? "Grid End Post (West)" : (isEs ? "Poste de extremo de cuadrícula (Oeste)" : "Poteau d'extrémité de grille (Ouest)"),
                     adjacentSpans: [adjSpan],
                     isFallAnchor: isFallA,
                     effortKn: endForce,
                     effortStr: UnitsModule.formatForce(endForce),
-                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : "Extrémité portée de chute") : "-",
+                    remarque: isFallA ? (isEn ? "Fall Span Extremity" : (isEs ? "Extremo vano de caída" : "Extrémité portée de chute")) : "-",
                     position: pos
                 };
                 anchors.push(anc);
@@ -13299,7 +13327,7 @@ const SystemLabelingModule = {
 
         const isEn = (parseInt(state.lang) === 1);
         if (badgeAnchors) {
-            const totalA = systemLabels.anchors.length + (systemLabels.xMatrixPieces ? systemLabels.xMatrixPieces.length : 0);
+            const totalA = systemLabels.anchors.length;
             badgeAnchors.textContent = isEn ? `${totalA} ${totalA > 1 ? "anchors" : "anchor"}` : `${totalA} ${totalA > 1 ? "ancrages" : "ancrage"}`;
         }
         if (badgeSpans) {
@@ -13341,7 +13369,7 @@ const SystemLabelingModule = {
 
         if (tbodyAnchors) {
             let aHtml = "";
-            const allItems = [...systemLabels.anchors, ...(systemLabels.xMatrixPieces || [])];
+            const allItems = systemLabels.anchors;
             allItems.forEach((a, aIdx) => {
                 const rowCls = a.isFallAnchor ? "active-fall-row" : "";
                 let badgeCls = "anchor-badge";
@@ -18517,7 +18545,7 @@ function updateCalculationsUI(layout, maxSpan) {
             crossRes.branches.forEach(b => {
                 const bLabel = b.label[l] || b.label[0];
                 const activeCls = b.isFallBranch ? " active-fall" : "";
-                const tag = b.isFallBranch ? " (Chute 100%)" : " (50%)";
+                const tag = b.isFallBranch ? (l === 1 ? " (Fall 100%)" : (l === 2 ? " (Caída 100%)" : " (Chute 100%)")) : " (50%)";
                 cHtml += `
                     <div class="readout-row anchor-point${activeCls}">
                         <span class="row-label">${bLabel}${tag} :</span>
@@ -18575,27 +18603,11 @@ function updateCalculationsUI(layout, maxSpan) {
             sysLabels.anchors.forEach(anc => {
                 const isFallA = anc.isFallAnchor;
                 const actCls = isFallA ? " active-fall" : "";
-                const tag = isFallA ? ` (${l === 1 ? 'Fall Ext.' : 'Ext. Chute'})` : "";
+                const tag = isFallA ? ` (${l === 1 ? 'Fall Ext.' : (l === 2 ? 'Ext. Caída' : 'Ext. Chute')})` : "";
                 gHtml += `
                     <div class="readout-row anchor-point${actCls}">
                         <span class="row-label">${anc.id} (${anc.desc || anc.edge})${tag} :</span>
                         <span class="row-val">${UnitsModule.formatForce(anc.effortKn)}</span>
-                    </div>
-                `;
-            });
-
-            gHtml += `
-                <div class="readout-subtitle margin-top-sm"><i class="fa-solid fa-diagram-project"></i> ${l === 1 ? "X-Matrix Intersections:" : (l === 2 ? "Intersecciones X-Matrix:" : "Intersections X-Matrix :")}</div>
-            `;
-
-            sysLabels.xMatrixPieces.forEach(xm => {
-                const isFallX = xm.isFallAnchor;
-                const actCls = isFallX ? " active-fall" : "";
-                const lvlTag = isFallX ? ` (${l === 1 ? 'Fall Cross' : (l === 2 ? 'Cruz Caída' : 'Croix Chute')})` : "";
-                gHtml += `
-                    <div class="readout-row anchor-point${actCls}">
-                        <span class="row-label">${xm.id}${lvlTag} :</span>
-                        <span class="row-val">${UnitsModule.formatForce(xm.effortKn)}</span>
                     </div>
                 `;
             });
@@ -18714,7 +18726,7 @@ function updateCalculationsUI(layout, maxSpan) {
                             loads.forEach((loadVal, sIdx) => {
                                 const aId = `X${xMatCount}-B${bIdx + 1}-A${sIdx + 1}`;
                                 const isFallA = isThisFall && (sIdx === fallSubIdx || sIdx === fallSubIdx + 1);
-                                const aTag = isFallA ? " (Chute 100%)" : (sIdx === 0 ? " (50%)" : " (Atténué)");
+                                const aTag = isFallA ? (l === 1 ? " (Fall 100%)" : (l === 2 ? " (Caída 100%)" : " (Chute 100%)")) : (sIdx === 0 ? " (50%)" : (l === 1 ? " (Attenuated)" : (l === 2 ? " (Atenuado)" : " (Atténué)")));
                                 const attCls = isFallA ? " active-fall" : "";
                                 mHtml += `
                                     <div class="readout-row anchor-point${attCls}">
@@ -19239,7 +19251,11 @@ function setupUIEventListeners() {
                 }
                 const bufferInfo = document.getElementById("lbl-buffer-len-info");
                 if (bufferInfo) {
-                    bufferInfo.innerHTML = `Buffer d'extrémité fixe : <strong>${formatDistance(0.30, 2, state.lang)}</strong> (non modifiable par l'utilisateur)`;
+                    const l = parseInt(state.lang) || 0;
+                    const distStr = formatDistance(0.30, 2, l);
+                    bufferInfo.innerHTML = (l === 1)
+                        ? `Fixed end buffer: <strong>${distStr}</strong> (not user-editable)`
+                        : ((l === 2) ? `Búfer de extremo fijo: <strong>${distStr}</strong> (no editable por el usuario)` : `Buffer d'extrémité fixe : <strong>${distStr}</strong> (non modifiable par l'utilisateur)`);
                 }
                 if (typeof syncElevationInputsUI === "function") {
                     syncElevationInputsUI();
@@ -19255,7 +19271,11 @@ function setupUIEventListeners() {
                 if (uInp) uInp.max = 5;
                 const bufferInfo = document.getElementById("lbl-buffer-len-info");
                 if (bufferInfo) {
-                    bufferInfo.innerHTML = `Buffer d'extrémité fixe : <strong>${formatDistance(0.20, 2, state.lang)}</strong> (non modifiable par l'utilisateur)`;
+                    const l = parseInt(state.lang) || 0;
+                    const distStr = formatDistance(0.20, 2, l);
+                    bufferInfo.innerHTML = (l === 1)
+                        ? `Fixed end buffer: <strong>${distStr}</strong> (not user-editable)`
+                        : ((l === 2) ? `Búfer de extremo fijo: <strong>${distStr}</strong> (no editable por el usuario)` : `Buffer d'extrémité fixe : <strong>${distStr}</strong> (non modifiable par l'utilisateur)`);
                 }
             } else if (state.layoutType === "multi_bend_circle") {
                 recalculateConfig6Spans();
@@ -19323,7 +19343,11 @@ function setupUIEventListeners() {
 
             const bufferInfo = document.getElementById("lbl-buffer-len-info");
             if (bufferInfo) {
-                bufferInfo.innerHTML = `Buffer d'extrémité fixe : <strong>${formatDistance(state.bufferLength, 2, state.lang)}</strong> (non modifiable par l'utilisateur)`;
+                const l = parseInt(state.lang) || 0;
+                const distStr = formatDistance(state.bufferLength, 2, l);
+                bufferInfo.innerHTML = (l === 1)
+                    ? `Fixed end buffer: <strong>${distStr}</strong> (not user-editable)`
+                    : ((l === 2) ? `Búfer de extremo fijo: <strong>${distStr}</strong> (no editable por el usuario)` : `Buffer d'extrémité fixe : <strong>${distStr}</strong> (non modifiable par l'utilisateur)`);
             }
 
             const uInput = document.getElementById("input-users");
@@ -19851,6 +19875,9 @@ function setupUIEventListeners() {
                 initThreeEngine();
                 renderComponentsChecklist();
                 updateUnitLabelsInDOM();
+    if (typeof renderDynamicLayoutForm === "function") {
+        renderDynamicLayoutForm();
+    }
                 requestAnimationFrame(() => {
                     onWindowResize();
                     update3DScene();
@@ -19861,6 +19888,9 @@ function setupUIEventListeners() {
                 update3DScene();
                 onWindowResize();
                 updateUnitLabelsInDOM();
+    if (typeof renderDynamicLayoutForm === "function") {
+        renderDynamicLayoutForm();
+    }
             }
         } catch (err) {
             console.error("Erreur lors de la validation du formulaire :", err);
@@ -19914,7 +19944,11 @@ function setupUIEventListeners() {
             if (prodSel) prodSel.value = chosenSystem;
             const bufferInfo = document.getElementById("lbl-buffer-len-info");
             if (bufferInfo) {
-                bufferInfo.innerHTML = `Buffer d'extrémité fixe : <strong>${formatDistance(state.bufferLength, 2, state.lang)}</strong> (non modifiable par l'utilisateur)`;
+                const l = parseInt(state.lang) || 0;
+                const distStr = formatDistance(state.bufferLength, 2, l);
+                bufferInfo.innerHTML = (l === 1)
+                    ? `Fixed end buffer: <strong>${distStr}</strong> (not user-editable)`
+                    : ((l === 2) ? `Búfer de extremo fijo: <strong>${distStr}</strong> (no editable por el usuario)` : `Buffer d'extrémité fixe : <strong>${distStr}</strong> (non modifiable par l'utilisateur)`);
             }
 
             // Compatibility Check: Mono-slope (sloped) is reserved strictly for PRO
@@ -21559,11 +21593,12 @@ function generatePDFReport() {
                     const factor = Math.pow(ANCHOR_EFFORT_CONFIG.GRID_LEVEL_FACTOR, lvl);
                     let pChute = factor * (gridRes.prechargeFall + gridRes.dynFall);
                     let pOther = factor * (gridRes.prechargeOther + gridRes.dynOther);
-                    let isCutoff = false;
-                    if (pChute < gridRes.cutoff) { pChute = 0; isCutoff = true; }
-                    if (pOther < gridRes.cutoff) { pOther = 0; }
-                    const statusStr = isCutoff
-                        ? ["Coupure <1%", "Cutoff <1%", "Corte <1%"][l]
+                    let isResidual = false;
+                    const minResidual = 0.10;
+                    if (pChute < minResidual) { pChute = minResidual; isResidual = true; }
+                    if (pOther < minResidual) { pOther = minResidual; isResidual = true; }
+                    const statusStr = isResidual
+                        ? ["Résiduel", "Residual", "Residual"][l]
                         : ["Actif", "Active", "Activo"][l];
 
                     gridRows.push([
@@ -22009,24 +22044,30 @@ function generatePDFReport() {
         const anchorHeaders = isAdjustedFF
             ? (isEn
                 ? [["Tag", "Type", "Spans", "Test Result", `Adjusted (FF ${fallFactorVal.toFixed(2)})`, "Remark"]]
-                : [["Étiquette", "Type", "Portées", "Résultat essai", `Résultat ajusté (FF ${formatLocalizedNumber(fallFactorVal, 2, l)})`, "Remarque"]])
+                : (isEs
+                    ? [["Etiqueta", "Tipo", "Vanos", "Resultado ensayo", `Resultado ajustado (FF ${formatLocalizedNumber(fallFactorVal, 2, l)})`, "Observación"]]
+                    : [["Étiquette", "Type", "Portées", "Résultat essai", `Résultat ajusté (FF ${formatLocalizedNumber(fallFactorVal, 2, l)})`, "Remarque"]]))
             : (isEn
                 ? [["Tag", "Type", "Spans", "Load (kN)", "Remark"]]
-                : [["Étiquette", "Type", "Portées", "Effort (kN)", "Remarque"]]);
+                : (isEs
+                    ? [["Etiqueta", "Tipo", "Vanos", "Esfuerzo (kN)", "Observación"]]
+                    : [["Étiquette", "Type", "Portées", "Effort (kN)", "Remarque"]]));
 
-        const allAnchorItems = [...(pdfSystemLabels.anchors || []), ...(pdfSystemLabels.xMatrixPieces || [])];
+        // Spec 2026: Exclusivement les ancrages réels du pourtour (les pièces X-Matrix ne figurent pas dans le tableau d'efforts)
+        const allAnchorItems = pdfSystemLabels.anchors || [];
         const anchorTableRows = allAnchorItems.map((a, aIdx) => {
             const rawEffort = parseFloat(a.effortKn) || 0;
             const effortStr = `${formatLocalizedNumber(rawEffort, 2, l)} kN`;
-            const typeStr = a.isCorner ? (isEn ? "Corner" : "Angle / Coude") : (a.isIntermediate ? (isEn ? "Intermediate" : "Intermédiaire") : (isEn ? "End Extremity" : "Extrémité"));
-            const spansStr = (a.spans && a.spans.length > 0) ? a.spans.join(", ") : "-";
+            const typeStr = a.type || (a.isCorner ? (isEn ? "Corner" : (isEs ? "Esquina" : "Angle / Coude")) : (a.isIntermediate ? (isEn ? "Intermediate" : (isEs ? "Intermedio" : "Intermédiaire")) : (isEn ? "End Extremity" : (isEs ? "Extremo" : "Extrémité"))));
+            const spansStr = (a.adjacentSpans && a.adjacentSpans.length > 0) ? a.adjacentSpans.join(", ") : ((a.spans && a.spans.length > 0) ? a.spans.join(", ") : "-");
+            const remStr = a.remark || a.remarque || "";
 
             if (isAdjustedFF) {
                 const adjEffort = rawEffort * fallFactorVal;
                 const adjEffortStr = `${formatLocalizedNumber(adjEffort, 2, l)} kN`;
-                return [a.id || `A${aIdx + 1}`, typeStr, spansStr, effortStr, adjEffortStr, a.remark || ""];
+                return [a.id || `A${aIdx + 1}`, typeStr, spansStr, effortStr, adjEffortStr, remStr];
             }
-            return [a.id || `A${aIdx + 1}`, typeStr, spansStr, effortStr, a.remark || ""];
+            return [a.id || `A${aIdx + 1}`, typeStr, spansStr, effortStr, remStr];
         });
 
         doc.autoTable({
