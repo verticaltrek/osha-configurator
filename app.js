@@ -3651,12 +3651,11 @@ function isGridOverheadValid(st = (typeof state !== "undefined" ? state : null))
     if (!st || st.layoutType !== "grid_system") return true;
     const preset = st.hllElevationPreset;
     if (preset === "knee" || preset === "d_ring") return false;
-    if (preset === "overhead") return true;
     const elev = (typeof st.hllElevation === "number" && !isNaN(st.hllElevation)) ? st.hllElevation : 0.45;
     const isRange = (typeof isXtreme === "function") ? isXtreme(st.product) : (st.product === "XTREME");
-    const minOverhead = isRange ? 2.50 : 1.80;
-    if (elev < minOverhead && st.mountingType !== "overhead") return false;
-    return (elev >= minOverhead || st.mountingType === "overhead" || st.roofShape === "flat_overhead");
+    const minOverhead = isRange ? 2.50 : 1.80; // 1.80m pour PRO, 2.50m pour XTREME
+    if (preset === "overhead") return true;
+    return (elev >= minOverhead);
 }
 
 const LayoutEditorModule = (function () {
@@ -19233,26 +19232,29 @@ function setupUIEventListeners() {
         layoutTypeSelect.addEventListener("change", (e) => {
             state.layoutType = e.target.value;
             if (state.layoutType === "grid_system") {
-                state.product = "XTREME";
+                const currentProd = normalizeProduct(state.product || "PRO");
+                const keepPro = isPro(currentProd);
+                state.product = keepPro ? "PRO" : "XTREME";
                 state.roofShape = "flat_overhead";
                 state.mountingType = "overhead";
                 state.hllElevationPreset = "overhead";
-                state.hllElevation = 3.00;
-                state.bufferLength = 0.30;
+                state.hllElevation = keepPro ? 1.80 : 3.00;
+                state.bufferLength = keepPro ? 0.20 : 0.30;
                 if (state.gridSystem) {
-                    state.gridSystem.cable_height = 3.00;
+                    state.gridSystem.cable_height = state.hllElevation;
                 }
                 const prodSel = document.getElementById("select-product");
-                if (prodSel) prodSel.value = "XTREME";
+                if (prodSel) prodSel.value = state.product;
                 const uInp = document.getElementById("input-users");
                 if (uInp) {
-                    uInp.max = 3;
-                    if (parseInt(uInp.value) > 3) uInp.value = 3;
+                    const maxU = keepPro ? 5 : 3;
+                    uInp.max = maxU;
+                    if (parseInt(uInp.value) > maxU) uInp.value = maxU;
                 }
                 const bufferInfo = document.getElementById("lbl-buffer-len-info");
                 if (bufferInfo) {
                     const l = parseInt(state.lang) || 0;
-                    const distStr = formatDistance(0.30, 2, l);
+                    const distStr = formatDistance(state.bufferLength, 2, l);
                     bufferInfo.innerHTML = (l === 1)
                         ? `Fixed end buffer: <strong>${distStr}</strong> (not user-editable)`
                         : ((l === 2) ? `Búfer de extremo fijo: <strong>${distStr}</strong> (no editable por el usuario)` : `Buffer d'extrémité fixe : <strong>${distStr}</strong> (non modifiable par l'utilisateur)`);
@@ -19324,12 +19326,25 @@ function setupUIEventListeners() {
                     state.hllElevation = 3.00;
                 }
             } else {
-                if (state.roofShape === "flat_overhead") state.roofShape = "flat";
-                state.mountingType = "standard";
-                state.bufferLength = 0.20;
-                if (state.hllElevation === 3.00 && state.hllElevationPreset === "overhead") {
-                    state.hllElevationPreset = "knee";
-                    state.hllElevation = 0.45;
+                if (state.layoutType === "grid_system") {
+                    state.roofShape = "flat_overhead";
+                    state.mountingType = "overhead";
+                    state.bufferLength = 0.20;
+                    if (state.hllElevationPreset === "overhead" || state.hllElevation === 3.00) {
+                        state.hllElevationPreset = "overhead";
+                        state.hllElevation = 1.80;
+                    }
+                    if (state.gridSystem) {
+                        state.gridSystem.cable_height = state.hllElevation;
+                    }
+                } else {
+                    if (state.roofShape === "flat_overhead") state.roofShape = "flat";
+                    state.mountingType = "standard";
+                    state.bufferLength = 0.20;
+                    if (state.hllElevation === 3.00 && state.hllElevationPreset === "overhead") {
+                        state.hllElevationPreset = "knee";
+                        state.hllElevation = 0.45;
+                    }
                 }
                 if (state.layoutType === "grid_system" && !isPro(chosenProduct)) {
                     state.layoutType = "single_span";
@@ -19441,11 +19456,29 @@ function setupUIEventListeners() {
 
         try {
             const isEn = (parseInt(state.lang) === 1);
-            if (state.layoutType === "grid_system" && !isGridOverheadValid(state)) {
-                const prodName = normalizeProduct(state.product || "XTREME");
+            const checkLayoutSel = document.getElementById("select-layout-type");
+            const checkProdSel = document.getElementById("select-product");
+            const checkElevSel = document.getElementById("select-hll-elevation-preset");
+            const checkElevInp = document.getElementById("input-hll-elevation-val");
+            const checkLayout = checkLayoutSel ? checkLayoutSel.value : state.layoutType;
+            const checkProd = checkProdSel ? normalizeProduct(checkProdSel.value) : state.product;
+            const checkPreset = checkElevSel ? checkElevSel.value : state.hllElevationPreset;
+            const isRange = isXtreme(checkProd);
+            const minOverhead = isRange ? 2.50 : 1.80;
+            const isImperialSys = (state.unitSystem === "imperial" || state.unitSystem === "us");
+            const rawCheckElev = checkElevInp ? parseFloat(String(checkElevInp.value).replace(/,/g, '.')) : null;
+            const checkElevM = (rawCheckElev !== null && !isNaN(rawCheckElev)) ? (isImperialSys ? (rawCheckElev / METERS_TO_FEET) : rawCheckElev) : state.hllElevation;
+
+            const isGridInvalid = (checkLayout === "grid_system") && (
+                checkPreset === "knee" || checkPreset === "d_ring" || (checkPreset !== "overhead" && checkElevM < minOverhead)
+            );
+
+            if (isGridInvalid || (state.layoutType === "grid_system" && !isGridOverheadValid(state))) {
+                const prodName = normalizeProduct(checkProd || state.product || "PRO");
+                const targetHStr = formatDistance(minOverhead, 2, state.lang);
                 alert(isEn
-                    ? `⚠️ Action Blocked:\nGrid Systems (Config 12) strictly requires Overhead installation (on ${prodName} as well as XTREME).\nYou must switch elevation to Overhead before validating.`
-                    : `⚠️ Action Bloquée :\nLa configuration en Grille (Config 12) s'applique exclusivement en pose Overhead (sur ${prodName} comme sur XTREME).\nVous devez basculer l'élévation sur Overhead avant de pouvoir valider.`);
+                    ? `⚠️ Action Blocked:\nGrid Systems (Config 12) strictly requires Overhead installation (on ${prodName} as well as XTREME).\nYou must switch elevation to Overhead (≥ ${targetHStr}) before validating.`
+                    : `⚠️ Action Bloquée :\nLa configuration en Grille (Config 12) s'applique exclusivement en pose Overhead (sur ${prodName} comme sur XTREME).\nVous devez basculer l'élévation sur Overhead (≥ ${targetHStr}) avant de pouvoir valider.`);
                 return;
             }
 
@@ -19624,7 +19657,11 @@ function setupUIEventListeners() {
             if (state.layoutType === "grid_system" && !isPro(state.product) && !isXtreme(state.product)) {
                 state.product = "PRO";
             }
-            if (isXtreme(state.product)) {
+            if (state.layoutType === "grid_system") {
+                state.roofShape = "flat_overhead";
+                state.mountingType = "overhead";
+                state.bufferLength = isXtreme(state.product) ? 0.30 : 0.20;
+            } else if (isXtreme(state.product)) {
                 state.roofShape = "flat_overhead";
                 state.mountingType = "overhead";
                 state.bufferLength = 0.30;
@@ -19925,14 +19962,24 @@ function setupUIEventListeners() {
                     state.hllElevation = 3.00;
                 }
             } else {
-                if (state.roofShape === "flat_overhead") {
-                    state.roofShape = "flat";
-                    state.mountingType = "standard";
-                }
-                state.bufferLength = 0.20;
-                if (state.hllElevation === 3.00 && state.hllElevationPreset === "overhead") {
-                    state.hllElevationPreset = "knee";
-                    state.hllElevation = 0.45;
+                if (state.layoutType === "grid_system") {
+                    state.roofShape = "flat_overhead";
+                    state.mountingType = "overhead";
+                    state.bufferLength = 0.20;
+                    if (state.hllElevationPreset === "overhead" || state.hllElevation === 3.00) {
+                        state.hllElevationPreset = "overhead";
+                        state.hllElevation = 1.80;
+                    }
+                } else {
+                    if (state.roofShape === "flat_overhead") {
+                        state.roofShape = "flat";
+                        state.mountingType = "standard";
+                    }
+                    state.bufferLength = 0.20;
+                    if (state.hllElevation === 3.00 && state.hllElevationPreset === "overhead") {
+                        state.hllElevationPreset = "knee";
+                        state.hllElevation = 0.45;
+                    }
                 }
                 if (state.layoutType === "grid_system" && !isPro(chosenSystem)) {
                     state.layoutType = "single_span";
