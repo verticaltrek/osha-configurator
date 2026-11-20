@@ -3651,7 +3651,10 @@ function isGridOverheadValid(st = (typeof state !== "undefined" ? state : null))
     if (preset === "knee" || preset === "d_ring") return false;
     if (preset === "overhead") return true;
     const elev = (typeof st.hllElevation === "number" && !isNaN(st.hllElevation)) ? st.hllElevation : 0.45;
-    return (elev >= 1.80 || st.mountingType === "overhead" || st.roofShape === "flat_overhead");
+    const isRange = (typeof isXtreme === "function") ? isXtreme(st.product) : (st.product === "XTREME");
+    const minOverhead = isRange ? 2.50 : 1.80;
+    if (elev < minOverhead && st.mountingType !== "overhead") return false;
+    return (elev >= minOverhead || st.mountingType === "overhead" || st.roofShape === "flat_overhead");
 }
 
 const LayoutEditorModule = (function () {
@@ -3968,10 +3971,11 @@ const LayoutEditorModule = (function () {
         if (state.layoutType === "grid_system") {
             const isGridOverhead = isGridOverheadValid(state);
             if (!isGridOverhead) {
+                const prodName = normalizeProduct(state.product || "XTREME");
                 if (warnEl && warnTxt) {
                     warnTxt.innerHTML = isEn
-                        ? `⚠️ <strong>Overhead Required:</strong> Grid Systems (Config 12) strictly requires Overhead installation.`
-                        : `⚠️ <strong>Overhead Requis :</strong> Le système en Grille (Config 12) s'applique exclusivement en configuration Overhead.`;
+                        ? `⚠️ <strong>Action Blocked — Overhead Required (${prodName}):</strong> Grid Systems (Config 12) strictly requires Overhead installation.`
+                        : `⚠️ <strong>Action Bloquée — Pose Overhead Requise (${prodName}) :</strong> Le système en Grille (Config 12) s'applique exclusivement en configuration Overhead.`;
                     warnEl.classList.remove("hidden");
                     warnEl.style.display = "flex";
                 }
@@ -4157,17 +4161,40 @@ const LayoutEditorModule = (function () {
         const warnContainer = document.getElementById("hll-elevation-warning");
         if (warnContainer && state.layoutType === "grid_system") {
             const isGridOverhead = isGridOverheadValid(state);
+            const prodName = normalizeProduct(state.product || "XTREME");
             if (!isGridOverhead) {
                 warnContainer.innerHTML = `
-                    <div class="warning-alert-box" style="background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; display: flex; gap: 8px; align-items: center; margin-top: 6px;">
-                        <i class="fa-solid fa-triangle-exclamation" style="color: #d97706; font-size: 1.1rem; flex-shrink: 0;"></i>
+                    <div class="warning-alert-box" style="background: #fef2f2; border: 1px solid #ef4444; color: #991b1b; padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; display: flex; gap: 8px; align-items: center; margin-top: 6px;">
+                        <i class="fa-solid fa-ban" style="color: #dc2626; font-size: 1.1rem; flex-shrink: 0;"></i>
                         <div>
-                            <strong>${isEn ? "Overhead Required:" : "Pose Overhead Obligatoire :"}</strong> ${isEn ? "Grid systems (Config 12) apply exclusively to Overhead installations. Please set elevation to Overhead." : "Cette configuration de grille s'applique uniquement en pose Overhead. Veuillez basculer l'élévation sur Overhead."}
+                            <strong>${isEn ? `Action Blocked — Overhead Required (${prodName}):` : `Action Bloquée — Pose Overhead Requise (${prodName}) :`}</strong> ${isEn ? `Grid systems (Config 12) strictly requires Overhead installations (PRO & XTREME). Validation is blocked.` : `Le système en grille (Config 12) s'applique exclusivement en pose Overhead (PRO & XTREME). La validation est bloquée tant que vous n'êtes pas en Overhead.`}
                         </div>
                     </div>
                 `;
             } else if (!warnContainer.innerHTML.includes("exceeds the maximum") && !warnContainer.innerHTML.includes("dépasse le maximum") && !warnContainer.innerHTML.includes("negative")) {
                 warnContainer.innerHTML = "";
+            }
+        }
+
+        // Also block/unblock modal submit button
+        const configSubmitBtn = document.getElementById("config-submit-btn");
+        if (configSubmitBtn) {
+            if (state.layoutType === "grid_system" && !isGridOverheadValid(state)) {
+                configSubmitBtn.disabled = true;
+                configSubmitBtn.setAttribute("disabled", "disabled");
+                configSubmitBtn.style.opacity = "0.45";
+                configSubmitBtn.style.cursor = "not-allowed";
+                configSubmitBtn.style.pointerEvents = "none";
+                configSubmitBtn.title = isEn
+                    ? "⚠️ Validation blocked: Overhead configuration is mandatory for Grid Systems (PRO & XTREME)."
+                    : "⚠️ Validation bloquée : La pose Overhead est obligatoire pour la configuration Grille (PRO & XTREME).";
+            } else {
+                configSubmitBtn.disabled = false;
+                configSubmitBtn.removeAttribute("disabled");
+                configSubmitBtn.style.opacity = "1";
+                configSubmitBtn.style.cursor = "pointer";
+                configSubmitBtn.style.pointerEvents = "auto";
+                configSubmitBtn.removeAttribute("title");
             }
         }
 
@@ -7818,6 +7845,9 @@ function renderDynamicLayoutForm() {
 
         const isSegmentExceeding = maxSegVal > maxSpanLR;
         const isGridOverhead = isGridOverheadValid(state);
+        const prodName = normalizeProduct(state.product || "XTREME");
+        const targetOverheadH = isXtreme(state.product) ? 3.00 : 1.80;
+        const targetOverheadHStr = formatDistance(targetOverheadH, 2, state.lang);
 
         html = `
             <div class="info-readout-box margin-bottom-sm" style="background: rgba(241,245,249,0.9); border-left: 4px solid #3b82f6;">
@@ -7828,17 +7858,21 @@ function renderDynamicLayoutForm() {
             </div>
 
             ${!isGridOverhead ? `
-                <div class="warning-alert-box margin-bottom-sm" style="background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 8px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <i class="fa-solid fa-triangle-exclamation" style="font-size: 1.25rem; color: #d97706; flex-shrink: 0;"></i>
+                <div class="warning-alert-box margin-bottom-sm" style="background: #fef2f2; border: 2px solid #ef4444; color: #991b1b; padding: 12px 14px; border-radius: 8px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display:flex; align-items:flex-start; gap:10px;">
+                        <i class="fa-solid fa-ban" style="font-size: 1.4rem; color: #dc2626; flex-shrink: 0; margin-top: 2px;"></i>
                         <div>
-                            <strong>${isEn ? "Warning — Overhead Installation Mandatory:" : "Attention — Pose Overhead Obligatoire :"}</strong>
-                            ${isEn ? "Grid Systems (Config 12) strictly applies to Overhead installations. Current elevation is not set to Overhead." : "La configuration Grille (Config 12) s'applique exclusivement en pose Overhead. Votre réglage actuel n'est pas en Overhead."}
+                            <strong style="color: #991b1b; font-size: 0.9rem;">
+                                ${isEn ? `Action Blocked — Overhead Installation Mandatory (${prodName} & XTREME):` : `Action Bloquée — Pose Overhead Obligatoire (${prodName} & XTREME) :`}
+                            </strong>
+                            <p style="margin: 4px 0 0 0; line-height: 1.4;">
+                                ${isEn ? `Grid Systems (Config 12) strictly operates in Overhead mounting on ${prodName}. Validation, 3D generation, and calculation actions are blocked until you switch to Overhead.` : `Le système en Grille (Config 12) s'applique exclusivement en pose Overhead (suspendue sur ${prodName} comme sur XTREME). La validation, la génération 3D et les calculs sont bloqués tant que vous n'êtes pas en Overhead.`}
+                            </p>
                         </div>
                     </div>
-                    <div style="margin-left: 28px;">
-                        <button type="button" id="btn-grid-fix-overhead" style="background: #d97706; color: #ffffff; border: none; padding: 5px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
-                            <i class="fa-solid fa-arrows-up-to-line"></i> ${isEn ? "Switch to Overhead (3.00 m)" : "Basculer en Overhead (3,00 m)"}
+                    <div style="margin-left: 32px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <button type="button" id="btn-grid-fix-overhead" style="background: #dc2626; color: #ffffff; border: none; padding: 6px 14px; border-radius: 5px; font-size: 0.82rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.2);">
+                            <i class="fa-solid fa-arrows-up-to-line"></i> ${isEn ? `Switch to Overhead (${targetOverheadHStr}) & Unlock` : `Basculer en Overhead (${targetOverheadHStr}) et Débloquer`}
                         </button>
                     </div>
                 </div>
@@ -7952,6 +7986,26 @@ function renderDynamicLayoutForm() {
     container.innerHTML = html;
     if (layout === "slope_single" || layout === "slope_multi") {
         updateSlopeLiveStatsUI();
+    }
+    const configSubmitBtn = document.getElementById("config-submit-btn");
+    if (configSubmitBtn) {
+        if (layout === "grid_system" && !isGridOverheadValid(state)) {
+            configSubmitBtn.disabled = true;
+            configSubmitBtn.setAttribute("disabled", "disabled");
+            configSubmitBtn.style.opacity = "0.45";
+            configSubmitBtn.style.cursor = "not-allowed";
+            configSubmitBtn.style.pointerEvents = "none";
+            configSubmitBtn.title = isEn
+                ? "⚠️ Validation blocked: Overhead configuration is mandatory for Grid Systems (PRO & XTREME)."
+                : "⚠️ Validation bloquée : La pose Overhead est obligatoire pour la configuration Grille (PRO & XTREME).";
+        } else {
+            configSubmitBtn.disabled = false;
+            configSubmitBtn.removeAttribute("disabled");
+            configSubmitBtn.style.opacity = "1";
+            configSubmitBtn.style.cursor = "pointer";
+            configSubmitBtn.style.pointerEvents = "auto";
+            configSubmitBtn.removeAttribute("title");
+        }
     }
     attachDynamicFormListeners();
     syncRoofLengthWithLifelineUI();
@@ -8495,18 +8549,19 @@ function attachDynamicFormListeners() {
     const btnGridFixOverhead = document.getElementById("btn-grid-fix-overhead");
     if (btnGridFixOverhead) {
         btnGridFixOverhead.addEventListener("click", () => {
-            if (typeof LayoutEditorModule !== "undefined" && LayoutEditorModule.setHllElevation) {
-                LayoutEditorModule.setHllElevation("overhead");
-            } else if (typeof setHllElevation === "function") {
-                setHllElevation("overhead");
-            } else {
-                state.hllElevationPreset = "overhead";
-                state.hllElevation = 3.00;
-                state.mountingType = "overhead";
-                state.roofShape = "flat_overhead";
-            }
+            const isRange = isXtreme(state.product);
+            const targetH = isRange ? 3.00 : 1.80;
+            state.roofShape = "flat_overhead";
+            state.mountingType = "overhead";
+            state.hllElevationPreset = "overhead";
+            state.hllElevation = targetH;
             if (state.gridSystem) {
-                state.gridSystem.cable_height = 3.00;
+                state.gridSystem.cable_height = targetH;
+            }
+            if (typeof LayoutEditorModule !== "undefined" && LayoutEditorModule.setHllElevation) {
+                LayoutEditorModule.setHllElevation("overhead", targetH);
+            } else if (typeof setHllElevation === "function") {
+                setHllElevation("overhead", targetH);
             }
             renderDynamicLayoutForm();
             if (typeof syncElevationInputsUI === "function") syncElevationInputsUI();
@@ -18493,12 +18548,13 @@ function updateCalculationsUI(layout, maxSpan) {
             const subTitle = TRANSLATIONS.lblGridDistribution[l] || "Répartition Grille Overhead (Précharge P0 + Poids W) :";
             let gHtml = "";
             if (!isGridOverhead) {
+                const prodName = normalizeProduct(state.product || "XTREME");
                 gHtml += `
-                    <div class="warning-alert-box margin-bottom-sm" style="background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 8px 12px; border-radius: 6px; font-size: 0.82rem; display: flex; align-items: center; gap: 8px;">
-                        <i class="fa-solid fa-triangle-exclamation" style="color: #d97706; font-size: 1.1rem; flex-shrink: 0;"></i>
+                    <div class="warning-alert-box margin-bottom-sm" style="background: #fef2f2; border: 2px solid #ef4444; color: #991b1b; padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 10px;">
+                        <i class="fa-solid fa-ban" style="color: #dc2626; font-size: 1.3rem; flex-shrink: 0;"></i>
                         <div>
-                            <strong>${l === 1 ? "Overhead Warning:" : (l === 2 ? "Advertencia Overhead:" : "Avertissement Overhead :")}</strong>
-                            ${l === 1 ? "This grid system is designed exclusively for overhead mounting. Displayed loads assume overhead elevation." : (l === 2 ? "Este sistema en rejilla está diseñado exclusivamente para instalación suspendida (overhead)." : "Cette configuration s'applique uniquement en overhead. Les efforts affichés sont calculés pour une pose suspendue.")}
+                            <strong>${l === 1 ? `ACTION BLOCKED — Overhead Required (${prodName} & XTREME):` : (l === 2 ? `ACCIÓN BLOQUEADA — Overhead Requerido (${prodName} & XTREME):` : `ACTION BLOQUÉE — Pose Overhead Obligatoire (${prodName} & XTREME) :`)}</strong>
+                            ${l === 1 ? `Grid Systems (Config 12) strictly requires Overhead installation on ${prodName}. Actions and calculation reports are blocked until Overhead elevation is selected.` : (l === 2 ? `La cuadrícula requiere instalación Overhead en ${prodName}. Acciones bloqueadas.` : `Le système en grille (Config 12) exige obligatoirement une pose en Overhead sur ${prodName} comme sur XTREME. Les actions et exports sont bloqués tant que vous n'êtes pas en Overhead.`)}
                         </div>
                     </div>
                 `;
@@ -19361,6 +19417,14 @@ function setupUIEventListeners() {
 
         try {
             const isEn = (parseInt(state.lang) === 1);
+            if (state.layoutType === "grid_system" && !isGridOverheadValid(state)) {
+                const prodName = normalizeProduct(state.product || "XTREME");
+                alert(isEn
+                    ? `⚠️ Action Blocked:\nGrid Systems (Config 12) strictly requires Overhead installation (on ${prodName} as well as XTREME).\nYou must switch elevation to Overhead before validating.`
+                    : `⚠️ Action Bloquée :\nLa configuration en Grille (Config 12) s'applique exclusivement en pose Overhead (sur ${prodName} comme sur XTREME).\nVous devez basculer l'élévation sur Overhead avant de pouvoir valider.`);
+                return;
+            }
+
             // Spec V2 — 04 / Prompt 13: Arrest load validation (1 lbf to 5000 lbf for direct entry)
             const currentKn = state.arrestLoadValue || state.arrestLoadKn || 6.0;
             const arrestCheck = validateArrestLoad(currentKn, state.arrestLoadMode === "custom");
@@ -21019,6 +21083,15 @@ function generatePDFReport() {
         }
 
         if (!validateProductAssociations()) return;
+
+        if (state.layoutType === "grid_system" && !isGridOverheadValid(state)) {
+            const isEn = (parseInt(state.lang) === 1);
+            const prodName = normalizeProduct(state.product || "XTREME");
+            alert(isEn
+                ? `⚠️ Export Blocked:\nGrid Systems (Config 12) strictly requires Overhead installation (on ${prodName} as well as XTREME).\nPlease configure Overhead elevation before exporting.`
+                : `⚠️ Export Bloqué :\nLa configuration en Grille (Config 12) exige obligatoirement une pose en Overhead (sur ${prodName} comme sur XTREME).\nVeuillez configurer l'élévation en Overhead avant d'exporter.`);
+            return;
+        }
 
         const l = state.lang || 0;
         const isEn = (parseInt(l) === 1);
