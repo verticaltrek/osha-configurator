@@ -10421,8 +10421,12 @@ const Calculator = {
                 const setback = Math.max(0, state.config6Setback !== undefined ? state.config6Setback : 0.5);
                 const R_pose = Math.max(0.5, (D / 2) - setback);
 
-                const centerX = 15.0;
-                const centerZ = 15.0;
+                const centerX = D / 2;
+                const centerZ = D / 2;
+                state.L = D;
+                state.l = D;
+                state.roof_length = D;
+                state.roof_width = D;
 
                 line1Nodes = [];
                 for (let i = 0; i < N; i++) {
@@ -13247,6 +13251,61 @@ const Dimensions3DModule = {
         }
         grp.visible = true;
 
+        if (state.layoutType === "multi_bend_circle") {
+            const D = Math.max(1.0, state.config6Diameter || 30.0);
+            const setback = Math.max(0, state.config6Setback !== undefined ? state.config6Setback : 0.5);
+            const H_val = parseFloat(state.roof_height_above_ground || state.roofHeightAboveGround || state.config6Height || 8.0);
+            const centerX = D / 2;
+            const centerZ = D / 2;
+
+            // 1. Reservoir Diameter Dimension (tangent to top edge at Z = 0, along X)
+            const rDiamText = `Ø: ${UnitsModule.formatLength(D)}`;
+            const pD1 = new THREE.Vector3(0, 0, 0);
+            const pD2 = new THREE.Vector3(D, 0, 0);
+            grp.add(this.createDimensionLine(pD1, pD2, new THREE.Vector3(0, 0, -1.2), rDiamText, 0x0284c7));
+
+            // 2. Reservoir Height Above Ground (H)
+            const rHText = `H: ${UnitsModule.formatLength(H_val)}`;
+            const pH1 = new THREE.Vector3(0, -H_val, centerZ);
+            const pH2 = new THREE.Vector3(0, 0, centerZ);
+            grp.add(this.createDimensionLine(pH1, pH2, new THREE.Vector3(-1.5, 0, 0), rHText, 0x0284c7));
+
+            const wwsLabel = `Fall Clearance: ${UnitsModule.formatLength(H_val)}`;
+            const pWws1 = new THREE.Vector3(0, -H_val, centerZ - 0.6);
+            const pWws2 = new THREE.Vector3(0, 0, centerZ - 0.6);
+            grp.add(this.createDimensionLine(pWws1, pWws2, new THREE.Vector3(-1.2, 0, 0), wwsLabel, 0x10b981));
+
+            // 3. Setback (distance de pose au bord du réservoir)
+            const lEdgeText = `d: ${UnitsModule.formatLength(setback)}`;
+            const pE1 = new THREE.Vector3(centerX, 0.15, setback);
+            const pE2 = new THREE.Vector3(centerX, 0.15, 0);
+            grp.add(this.createDimensionLine(pE1, pE2, new THREE.Vector3(0, 0.1, 0), lEdgeText, 0xf59e0b));
+
+            // 4. Real Lifeline Elevation on Post A1
+            const realElevM = (typeof state.hllElevation === "number" && !isNaN(state.hllElevation)) ? state.hllElevation : 0.45;
+            const samplePost = (typeof createAnchorMesh === "function") ? createAnchorMesh(state.colors?.anchors, "extremite", null, 0) : null;
+            const visualPostH = (samplePost && samplePost.userData && samplePost.userData.height > 0.05) ? samplePost.userData.height : 0.45;
+            const isEn = (parseInt(state.lang) === 1);
+            const elevText = `${isEn ? "Elev:" : "Élév:"} ${UnitsModule.formatLength(realElevM)}`;
+            const a1X = centerX + (D / 2 - setback);
+            const a1Z = centerZ;
+            const pP1 = new THREE.Vector3(a1X, 0, a1Z);
+            const pP2 = new THREE.Vector3(a1X, visualPostH, a1Z);
+            grp.add(this.createDimensionLine(pP1, pP2, new THREE.Vector3(0.9, 0, 0), elevText, 0x10b981));
+
+            // 5. WWS Surface badge at center of tank
+            const isLangEn = (parseInt(state.lang) === 1);
+            const isLangEs = (parseInt(state.lang) === 2);
+            const wwsSurfaceLabel = (isLangEn || state.norm === "OSHA")
+                ? "WWS (Walking-Working Surface)"
+                : (isLangEs ? "WWS (Superficie de trabajo)" : "WWS (Surface de travail)");
+            const wwsSpr = this.createDimensionSprite(wwsSurfaceLabel);
+            wwsSpr.position.set(centerX, 0.55, centerZ);
+            grp.add(wwsSpr);
+
+            return;
+        }
+
         const L = parseFloat(state.L || state.roof_length || 25.0);
         const l = parseFloat(state.l || state.roof_width || 15.0);
         const H_ground = parseFloat(state.roof_height_above_ground || 6.0);
@@ -15048,8 +15107,8 @@ function createConfig6Structures3D() {
     const D = state.config6Diameter || 30.0;
     const H = parseFloat(state.roof_height_above_ground || state.roofHeightAboveGround || state.config6Height || 8.0);
     const R = D / 2;
-    const centerX = 15.0;
-    const centerZ = 15.0;
+    const centerX = D / 2;
+    const centerZ = D / 2;
     const structType = state.config6StructureType || (state.config6Mode === "stadium" ? "stadium" : "reservoir");
 
     const tankMat = new THREE.MeshStandardMaterial({
@@ -16616,7 +16675,9 @@ function update3DScene() {
     if (state.gridVisible) {
         const gridDim = Math.max(L, l) + 12;
         gridHelper = new THREE.GridHelper(gridDim, Math.round(gridDim), 0x3b82f6, 0x94a3b8);
-        gridHelper.position.set(L / 2, 0.001, l / 2);
+        const H = parseFloat(state.roof_height_above_ground || state.roofHeightAboveGround || state.config6Height || 6.0);
+        const gridY = (state.layoutType === "multi_bend_circle") ? -H : 0.001;
+        gridHelper.position.set(L / 2, gridY, l / 2);
         scene.add(gridHelper);
     }
 
@@ -17086,8 +17147,22 @@ function update3DScene() {
     const centerX = L / 2;
     const centerZ = l / 2;
     if (controls) {
-        controls.target.set(centerX, 0.2, centerZ);
+        controls.target.set(centerX, state.viewMode === "2d" ? 0 : 0.2, centerZ);
         controls.update();
+    }
+    if (orthographicCam && state.viewMode === "2d") {
+        orthographicCam.position.set(centerX, 40, centerZ);
+        orthographicCam.lookAt(centerX, 0, centerZ);
+        const container = document.getElementById("canvas3d");
+        const w = container ? container.clientWidth : 800;
+        const h = container ? container.clientHeight : 600;
+        const aspect = (w > 0 && h > 0) ? (w / h) : 1.5;
+        const d = Math.max((L / 2) / aspect, l / 2, 10) + 3.0;
+        orthographicCam.left = -d * aspect;
+        orthographicCam.right = d * aspect;
+        orthographicCam.top = d;
+        orthographicCam.bottom = -d;
+        orthographicCam.updateProjectionMatrix();
     }
 
     window.activeLifelinePoints = line1TopPts;
