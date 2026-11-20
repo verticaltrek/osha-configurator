@@ -1780,10 +1780,10 @@ const AnchorEffortDistributionModule = {
     },
 
     // RÈGLE 4 — Grid (Config 12, Long/Super/Ultra Range, overhead)
-    // Précharge à chaque croix (P0 + W sur branche chute, P0 + W/3 sur les 3 autres)
-    // + Effort dynamique (F_chute sur branche chute, 25% sur 3 autres)
+    // En configuration overhead (pose suspendue), aucune force de chute dynamique ne s'applique (facteur de chute libre = 0).
+    // Les efforts résultent uniquement de la précharge à chaque croix (P0 + W sur branche suspendue, P0 + W/3 sur les 3 autres)
     // + Propagation de croix en croix (facteur 0.25 par niveau Manhattan, coupure < 1% à 0)
-    calculateRule4_Grid(fChute, nx = 3, ny = 3, userMassKg = ANCHOR_EFFORT_CONFIG.GRID_USER_MASS_KG, pretensionKg = ANCHOR_EFFORT_CONFIG.GRID_PRETENSION_KG, fallCross = { x: 0, z: 0 }, fallBranch = "X+") {
+    calculateRule4_Grid(fChute = 0, nx = 3, ny = 3, userMassKg = ANCHOR_EFFORT_CONFIG.GRID_USER_MASS_KG, pretensionKg = ANCHOR_EFFORT_CONFIG.GRID_PRETENSION_KG, fallCross = { x: 0, z: 0 }, fallBranch = "X+") {
         const uMass = (userMassKg !== undefined && userMassKg !== null) ? userMassKg : this.config.GRID_USER_MASS_KG;
         const pKg = (pretensionKg !== undefined && pretensionKg !== null) ? pretensionKg : this.config.GRID_PRETENSION_KG;
         const g = this.config.G_ACCEL;
@@ -1794,8 +1794,9 @@ const AnchorEffortDistributionModule = {
         const prechargeFall = P0 + W;
         const prechargeOther = P0 + W / 3;
 
-        const dynFall = fChute;
-        const dynOther = (this.config.GRID_OTHER_FACTOR !== undefined ? this.config.GRID_OTHER_FACTOR : 0.25) * fChute;
+        // Configuration overhead : pas de force de chute dynamique
+        const dynFall = 0.0;
+        const dynOther = 0.0;
 
         const totalFall0 = prechargeFall + dynFall;
         const totalOther0 = prechargeOther + dynOther;
@@ -1942,12 +1943,12 @@ const AnchorEffortDistributionModule = {
         const pass5b = r3b.map(v => v.toFixed(2)).every((v, i) => v === exp5b[i]);
         tests.push({ name: "Règle 3b (Multi-portée branche)", pass: pass5b, got: r3b.map(v => v.toFixed(2)), exp: exp5b });
 
-        // Test 6: Grid F_chute = 10.00
-        const r4 = this.calculateRule4_Grid(10.00, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
-        const expL0 = ["17.27", "8.85", "8.85", "8.85"];
-        const expL1 = ["4.32", "2.21", "2.21", "2.21"];
-        const expL2 = ["1.08", "0.55", "0.55", "0.55"];
-        const expL3 = ["0.27", "0.14", "0.14", "0.14"];
+        // Test 6: Grid Overhead (sans force de chute, P0=5.89 kN, W=1.38 kN)
+        const r4 = this.calculateRule4_Grid(0, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
+        const expL0 = ["7.27", "6.35", "6.35", "6.35"];
+        const expL1 = ["1.82", "1.59", "1.59", "1.59"];
+        const expL2 = ["0.45", "0.40", "0.40", "0.40"];
+        const expL3 = ["0.11", "0.10", "0.10", "0.10"];
         const expL4 = ["0.00", "0.00", "0.00", "0.00"];
 
         const gotL0 = r4.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
@@ -8928,7 +8929,7 @@ const TRANSLATIONS = {
     lblExt4LRow: ["Force Ancrage 4 :", "Anchor Force 4:", "Fuerza Anclaje 4:"],
     lblMultiSpanDistribution: ["Répartition des efforts aux ancrages :", "Anchor Load Distribution:", "Distribución de Cargas a los Anclajes:"],
     lblCrossDistribution: ["Répartition en Croix (4 branches) :", "Cross Distribution (4 branches):", "Distribución en Cruz (4 ramas):"],
-    lblGridDistribution: ["Répartition Grille (Précharge + Dynamique) :", "Grid Distribution (Preload + Dynamic):", "Distribución en Cuadrícula (Precarga + Dinámica):"],
+    lblGridDistribution: ["Répartition Grille Overhead (Précharge P0 + Poids W) :", "Overhead Grid Distribution (Preload P0 + User W):", "Distribución en Cuadrícula Overhead (Precarga P0 + Peso W):"],
     lblAnchorA0: ["Force Ancrage A0 (Ext. Gauche)", "Anchor Force A0 (Left Ext.)", "Fuerza Anclaje A0 (Ext. Izq.)"],
     lblAnchorA1: ["Force Ancrage A1", "Anchor Force A1", "Fuerza Anclaje A1"],
     lblAnchorA2: ["Force Ancrage A2", "Anchor Force A2", "Fuerza Anclaje A2"],
@@ -21166,8 +21167,8 @@ function generatePDFReport() {
                 gridRows.push([
                     ["Croix Chute - Niv. 0", "Fall Cross - Level 0", "Cruz Caída - Nivel 0"][l],
                     "100%",
-                    `${formatLocalizedNumber(gridRes.level0.totalFall, 2, l)} kN - P0+W: ${formatLocalizedNumber(gridRes.prechargeFall, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynFall, 2, l)}`,
-                    `${formatLocalizedNumber(gridRes.level0.totalOther, 2, l)} kN - P0+W/3: ${formatLocalizedNumber(gridRes.prechargeOther, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynOther, 2, l)}`,
+                    `${formatLocalizedNumber(gridRes.level0.totalFall, 2, l)} kN (P0+W)`,
+                    `${formatLocalizedNumber(gridRes.level0.totalOther, 2, l)} kN (P0+W/3)`,
                     ["Actif", "Active", "Activo"][l]
                 ]);
 
