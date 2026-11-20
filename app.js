@@ -1780,10 +1780,10 @@ const AnchorEffortDistributionModule = {
     },
 
     // RÈGLE 4 — Grid (Config 12, Long/Super/Ultra Range, overhead)
-    // Précharge à chaque croix (P0 + W sur branche chute, P0 + W/3 sur les 3 autres)
-    // + Effort dynamique (F_chute sur branche chute, 25% sur 3 autres)
+    // En configuration overhead (pose suspendue), aucune force de chute dynamique ne s'applique (facteur de chute libre = 0).
+    // Les efforts résultent uniquement de la précharge à chaque croix (P0 + W sur branche suspendue, P0 + W/3 sur les 3 autres)
     // + Propagation de croix en croix (facteur 0.25 par niveau Manhattan, coupure < 1% à 0)
-    calculateRule4_Grid(fChute, nx = 3, ny = 3, userMassKg = ANCHOR_EFFORT_CONFIG.GRID_USER_MASS_KG, pretensionKg = ANCHOR_EFFORT_CONFIG.GRID_PRETENSION_KG, fallCross = { x: 0, z: 0 }, fallBranch = "X+") {
+    calculateRule4_Grid(fChute = 0, nx = 3, ny = 3, userMassKg = ANCHOR_EFFORT_CONFIG.GRID_USER_MASS_KG, pretensionKg = ANCHOR_EFFORT_CONFIG.GRID_PRETENSION_KG, fallCross = { x: 0, z: 0 }, fallBranch = "X+") {
         const uMass = (userMassKg !== undefined && userMassKg !== null) ? userMassKg : this.config.GRID_USER_MASS_KG;
         const pKg = (pretensionKg !== undefined && pretensionKg !== null) ? pretensionKg : this.config.GRID_PRETENSION_KG;
         const g = this.config.G_ACCEL;
@@ -7773,63 +7773,6 @@ function renderDynamicLayoutForm() {
 
         const isSegmentExceeding = maxSegVal > maxSpanLR;
 
-        const rowLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        const activeFallSpanId = state.selectedFallSpanId || (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(state.fallPosition?.gridCrossX || 0, state.fallPosition?.gridCrossZ || 0, state.fallPosition?.gridBranch || "X+", nx, ny) : "SA-1");
-
-        const gridSpansList = [];
-        // Lignes X (rangées A..ny)
-        for (let r = 0; r < ny; r++) {
-            const rowL = rowLetters[r] || `R${r + 1}`;
-            gridSpansList.push({
-                id: `S${rowL}-1`,
-                from: `${isEn ? 'West Post' : 'Poteau Ouest'} (${rowL})`,
-                to: `X-${rowL}1`,
-                lenDisp: endMarginVal
-            });
-            for (let c = 0; c < nx - 1; c++) {
-                const spVal = gs.xSpacings[c] || 5.0;
-                const spDisp = isUS ? (spVal * METERS_TO_FEET).toFixed(2) : (typeof spVal === "number" ? spVal.toFixed(2) : spVal);
-                gridSpansList.push({
-                    id: `S${rowL}-${c + 2}`,
-                    from: `X-${rowL}${c + 1}`,
-                    to: `X-${rowL}${c + 2}`,
-                    lenDisp: spDisp
-                });
-            }
-            gridSpansList.push({
-                id: `S${rowL}-${nx + 1}`,
-                from: `X-${rowL}${nx}`,
-                to: `${isEn ? 'East Post' : 'Poteau Est'} (${rowL})`,
-                lenDisp: endMarginVal
-            });
-        }
-        // Lignes Z (colonnes 1..nx)
-        for (let c = 0; c < nx; c++) {
-            const colN = c + 1;
-            gridSpansList.push({
-                id: `S${colN}-1`,
-                from: `${isEn ? 'North Post' : 'Poteau Nord'} (${colN})`,
-                to: `X-${rowLetters[0]}${colN}`,
-                lenDisp: endMarginVal
-            });
-            for (let r = 0; r < ny - 1; r++) {
-                const spVal = gs.zSpacings[r] || 5.0;
-                const spDisp = isUS ? (spVal * METERS_TO_FEET).toFixed(2) : (typeof spVal === "number" ? spVal.toFixed(2) : spVal);
-                gridSpansList.push({
-                    id: `S${colN}-${r + 2}`,
-                    from: `X-${rowLetters[r]}${colN}`,
-                    to: `X-${rowLetters[r + 1]}${colN}`,
-                    lenDisp: spDisp
-                });
-            }
-            gridSpansList.push({
-                id: `S${colN}-${ny + 1}`,
-                from: `X-${rowLetters[ny - 1]}${colN}`,
-                to: `${isEn ? 'South Post' : 'Poteau Sud'} (${colN})`,
-                lenDisp: endMarginVal
-            });
-        }
-
         html = `
             <div class="info-readout-box margin-bottom-sm" style="background: rgba(241,245,249,0.9); border-left: 4px solid #3b82f6;">
                 <div style="display:flex; justify-content: space-between; flex-wrap: wrap; width:100%; gap: 10px;">
@@ -7881,21 +7824,6 @@ function renderDynamicLayoutForm() {
                         <span class="unit">kg (${((state.gridPretensionKg || 600) * 9.81 / 1000).toFixed(3)} kN)</span>
                     </div>
                 </div>
-                <div class="form-group full-width" style="background:#fff7ed; border:1px solid #fed7aa; border-radius:6px; padding:10px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <label style="margin:0; font-weight:700; color:#c2410c;">
-                            <i class="fa-solid fa-person-falling" style="color:#ea580c;"></i> ${isEn ? "Fall Span Selection (Grid Line & Span):" : "Sélection de la portée de chute (Ligne & Portée) :"}
-                        </label>
-                        <span class="badge" style="background:#ea580c; color:#fff; font-size:0.75rem; padding:2px 8px; border-radius:4px; font-weight:700;">${activeFallSpanId}</span>
-                    </div>
-                    <select id="select-grid-fall-span" class="select-custom" style="width:100%; font-weight:600; color:#1e293b; border-color:#fdba74;">
-                        ${gridSpansList.map(s => `
-                            <option value="${s.id}" ${s.id === activeFallSpanId ? 'selected' : ''}>
-                                ${s.id} (${s.from} → ${s.to}) — ${s.lenDisp} ${distUnit}
-                            </option>
-                        `).join('')}
-                    </select>
-                </div>
                 <div class="form-group">
                     <label><i class="fa-solid fa-crosshairs"></i> ${isEn ? "Cross Junction of Fall (Level 0):" : "Croix où a lieu la chute (Niveau 0) :"}</label>
                     <select id="select-grid-fall-cross" class="select-custom">
@@ -7915,43 +7843,6 @@ function renderDynamicLayoutForm() {
                         <option value="Z+" ${(state.fallPosition?.gridBranch) === "Z+" ? 'selected' : ''}>${isEn ? "Branch" : "Branche"} +Z</option>
                         <option value="Z-" ${(state.fallPosition?.gridBranch) === "Z-" ? 'selected' : ''}>${isEn ? "Branch" : "Branche"} -Z</option>
                     </select>
-                </div>
-            </div>
-
-            <div class="form-group full-width margin-top-sm">
-                <label><i class="fa-solid fa-list-check" style="color:#2563eb;"></i> ${isEn ? "Grid Spans Table & Fall Span Radio:" : "Tableau des portées de la grille & Sélection Chute :"} (${gridSpansList.length} ${isEn ? "spans" : "portées"})</label>
-                <div style="max-height: 220px; overflow-y: auto; border: 1px solid #cbd5e1; border-radius: 6px; background: #ffffff;">
-                    <table class="spans-table" style="width: 100%; border-collapse: collapse; font-size: 0.78rem;">
-                        <thead style="position: sticky; top: 0; background: #f8fafc; border-bottom: 2px solid #e2e8f0; z-index: 1;">
-                            <tr>
-                                <th style="padding: 6px 8px; text-align: left;">${isEn ? "Span" : "Portée"}</th>
-                                <th style="padding: 6px 8px; text-align: left;">${isEn ? "Ends" : "Extrémités"}</th>
-                                <th style="padding: 6px 8px; text-align: right;">${isEn ? "Length" : "Longueur"}</th>
-                                <th style="padding: 6px 8px; text-align: center;">${isEn ? "Fall" : "Chute"}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${gridSpansList.map(s => {
-            const isF = (s.id === activeFallSpanId);
-            return `
-                                    <tr style="${isF ? 'background: rgba(234, 88, 12, 0.12); font-weight: 700;' : ''}">
-                                        <td style="padding: 5px 8px; border-bottom: 1px solid #f1f5f9;">
-                                            <strong style="color: ${isF ? '#ea580c' : '#1e3a8a'};">${s.id}</strong>
-                                        </td>
-                                        <td style="padding: 5px 8px; border-bottom: 1px solid #f1f5f9; color: #475569;">
-                                            ${s.from} → ${s.to}
-                                        </td>
-                                        <td style="padding: 5px 8px; border-bottom: 1px solid #f1f5f9; text-align: right;">
-                                            ${s.lenDisp} ${distUnit}
-                                        </td>
-                                        <td style="padding: 5px 8px; border-bottom: 1px solid #f1f5f9; text-align: center;">
-                                            <input type="radio" name="grid-radio-fall-span" class="grid-span-fall-radio" data-span-id="${s.id}" ${isF ? 'checked' : ''} style="cursor: pointer; accent-color: #ea580c;">
-                                        </td>
-                                    </tr>
-                                `;
-        }).join('')}
-                        </tbody>
-                    </table>
                 </div>
             </div>
 
@@ -8607,23 +8498,6 @@ function attachDynamicFormListeners() {
         });
     }
 
-    const gridFallSpanSelect = document.getElementById("select-grid-fall-span");
-    if (gridFallSpanSelect) {
-        gridFallSpanSelect.addEventListener("change", (e) => {
-            if (typeof selectGridFallSpan === "function") {
-                selectGridFallSpan(e.target.value);
-            }
-        });
-    }
-
-    document.querySelectorAll(".grid-span-fall-radio").forEach(r => {
-        r.addEventListener("change", (e) => {
-            if (e.target.checked && typeof selectGridFallSpan === "function") {
-                selectGridFallSpan(e.target.dataset.spanId);
-            }
-        });
-    });
-
     const gridFallCrossSelect = document.getElementById("select-grid-fall-cross");
     if (gridFallCrossSelect) {
         gridFallCrossSelect.addEventListener("change", (e) => {
@@ -8631,15 +8505,7 @@ function attachDynamicFormListeners() {
             const parts = (e.target.value || "0_0").split("_");
             state.fallPosition.gridCrossX = parseInt(parts[0]) || 0;
             state.fallPosition.gridCrossZ = parseInt(parts[1]) || 0;
-            const gs = state.gridSystem || { nx: 3, ny: 3 };
-            const sId = (typeof getGridSpanFromCrossBranch === "function")
-                ? getGridSpanFromCrossBranch(state.fallPosition.gridCrossX, state.fallPosition.gridCrossZ, state.fallPosition.gridBranch || "X+", gs.nx, gs.ny)
-                : null;
-            if (sId && typeof selectGridFallSpan === "function") {
-                selectGridFallSpan(sId);
-            } else {
-                if (typeof update3DScene === "function") update3DScene();
-            }
+            if (typeof update3DScene === "function") update3DScene();
         });
     }
 
@@ -8648,15 +8514,7 @@ function attachDynamicFormListeners() {
         gridFallBranchSelect.addEventListener("change", (e) => {
             if (!state.fallPosition) state.fallPosition = {};
             state.fallPosition.gridBranch = e.target.value || "X+";
-            const gs = state.gridSystem || { nx: 3, ny: 3 };
-            const sId = (typeof getGridSpanFromCrossBranch === "function")
-                ? getGridSpanFromCrossBranch(state.fallPosition.gridCrossX || 0, state.fallPosition.gridCrossZ || 0, state.fallPosition.gridBranch, gs.nx, gs.ny)
-                : null;
-            if (sId && typeof selectGridFallSpan === "function") {
-                selectGridFallSpan(sId);
-            } else {
-                if (typeof update3DScene === "function") update3DScene();
-            }
+            if (typeof update3DScene === "function") update3DScene();
         });
     }
 
@@ -9071,7 +8929,7 @@ const TRANSLATIONS = {
     lblExt4LRow: ["Force Ancrage 4 :", "Anchor Force 4:", "Fuerza Anclaje 4:"],
     lblMultiSpanDistribution: ["Répartition des efforts aux ancrages :", "Anchor Load Distribution:", "Distribución de Cargas a los Anclajes:"],
     lblCrossDistribution: ["Répartition en Croix (4 branches) :", "Cross Distribution (4 branches):", "Distribución en Cruz (4 ramas):"],
-    lblGridDistribution: ["Répartition Grille (Précharge + Dynamique) :", "Grid Distribution (Preload + Dynamic):", "Distribución en Cuadrícula (Precarga + Dinámica):"],
+    lblGridDistribution: ["Répartition Grille Overhead (Précharge P0 + Poids W) :", "Overhead Grid Distribution (Preload P0 + User W):", "Distribución en Cuadrícula Overhead (Precarga P0 + Peso W):"],
     lblAnchorA0: ["Force Ancrage A0 (Ext. Gauche)", "Anchor Force A0 (Left Ext.)", "Fuerza Anclaje A0 (Ext. Izq.)"],
     lblAnchorA1: ["Force Ancrage A1", "Anchor Force A1", "Fuerza Anclaje A1"],
     lblAnchorA2: ["Force Ancrage A2", "Anchor Force A2", "Fuerza Anclaje A2"],
@@ -21522,8 +21380,8 @@ function generatePDFReport() {
                 gridRows.push([
                     ["Croix Chute - Niv. 0", "Fall Cross - Level 0", "Cruz Caída - Nivel 0"][l],
                     "100%",
-                    `${formatLocalizedNumber(gridRes.level0.totalFall, 2, l)} kN - P0+W: ${formatLocalizedNumber(gridRes.prechargeFall, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynFall, 2, l)}`,
-                    `${formatLocalizedNumber(gridRes.level0.totalOther, 2, l)} kN - P0+W/3: ${formatLocalizedNumber(gridRes.prechargeOther, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynOther, 2, l)}`,
+                    `${formatLocalizedNumber(gridRes.level0.totalFall, 2, l)} kN (P0+W)`,
+                    `${formatLocalizedNumber(gridRes.level0.totalOther, 2, l)} kN (P0+W/3)`,
                     ["Actif", "Active", "Activo"][l]
                 ]);
 
