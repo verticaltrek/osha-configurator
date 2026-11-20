@@ -506,7 +506,8 @@ const ANCHOR_EFFORT_CONFIG = {
     K_ATTENUATION_DEFAULT: 0.495,
     BEND_THRESHOLD_DEG: 40,
     BEND_FACTOR_AFTER: 0.50,
-    CROSS_OTHER_FACTOR: 0.25,
+    CROSS_OTHER_FACTOR: 0.50, // Spec 2026: 1/2 (50%) au lieu de 1/4 (25%) pour l'atténuation transverse à la croix
+    GRID_OTHER_FACTOR: 0.25,  // Pour la grille matricielle (Config 12)
     GRID_PRETENSION_KG: 600,
     GRID_USER_MASS_KG: 141,
     GRID_LEVEL_FACTOR: 0.25,
@@ -1716,10 +1717,10 @@ const AnchorEffortDistributionModule = {
         };
     },
 
-    // RÈGLE 3 — Cross (Config 11, NewPRO)
-    // 4 ancrages au bout de chaque branche : F_chute sur la branche de chute, 25% sur les 3 autres
+    // RÈGLE 3 — Cross (Config 11, NewPRO / Spec 2026)
+    // 4 ancrages au bout de chaque branche : F_chute sur la branche de chute, 50% (1/2) sur les 3 autres
     calculateRule3_Cross(fChute, activeBranch = "north") {
-        const otherVal = this.config.CROSS_OTHER_FACTOR * fChute;
+        const otherVal = this.config.CROSS_OTHER_FACTOR * fChute; // 0.50 * fChute
         const branchIds = ["north", "east", "south", "west"];
         const branchLabels = {
             north: ["Branche 1 (Nord)", "Branch 1 (North)", "Rama 1 (Norte)"],
@@ -1746,6 +1747,38 @@ const AnchorEffortDistributionModule = {
         };
     },
 
+    // Spec 2026: Calcul de la propagation multi-portée le long d'une branche après la croix X-Matrix
+    // - L'effort à l'intersection est 100% sur l'axe de chute, et 50% (1/2) sur l'axe transversal
+    // - Le long de chaque branche (vers l'extérieur), l'effort s'atténue de portée en portée :
+    //   A_{s+1} = max(P0, A_s * K) avec K = 0.495
+    calculateBranchMultiSpanLoads(fEntryKn, numAnchors, isFallBranch = false, fallAnchorIdx = 0, p0Kn = 1.0) {
+        const K = this.config.K_ATTENUATION_DEFAULT || 0.495;
+        const p0 = (p0Kn !== undefined && p0Kn !== null) ? p0Kn : (this.config.CABLE_PRETENSION_P0 || 1.0);
+        const loads = [];
+        if (numAnchors <= 0) return loads;
+        if (numAnchors === 1) {
+            return [Math.max(p0, parseFloat(fEntryKn.toFixed(2)))];
+        }
+
+        if (!isFallBranch) {
+            // Branche secondaire : reçoit fEntryKn (50% de la chute) au 1er ancrage (proche croix),
+            // puis atténuation multi-portée de portée en portée vers l'extrémité
+            let cur = fEntryKn;
+            for (let a = 0; a < numAnchors; a++) {
+                loads.push(Math.max(p0, parseFloat(cur.toFixed(2))));
+                cur = cur * K;
+            }
+        } else {
+            // Branche de chute : l'ancrage de chute reçoit 100%, et atténuation multi-portée K de part et d'autre
+            for (let a = 0; a < numAnchors; a++) {
+                const dist = Math.abs(a - fallAnchorIdx);
+                const val = fEntryKn * Math.pow(K, dist);
+                loads.push(Math.max(p0, parseFloat(val.toFixed(2))));
+            }
+        }
+        return loads;
+    },
+
     // RÈGLE 4 — Grid (Config 12, Long/Super/Ultra Range, overhead)
     // Précharge à chaque croix (P0 + W sur branche chute, P0 + W/3 sur les 3 autres)
     // + Effort dynamique (F_chute sur branche chute, 25% sur 3 autres)
@@ -1762,7 +1795,7 @@ const AnchorEffortDistributionModule = {
         const prechargeOther = P0 + W / 3;
 
         const dynFall = fChute;
-        const dynOther = this.config.CROSS_OTHER_FACTOR * fChute;
+        const dynOther = (this.config.GRID_OTHER_FACTOR !== undefined ? this.config.GRID_OTHER_FACTOR : 0.25) * fChute;
 
         const totalFall0 = prechargeFall + dynFall;
         const totalOther0 = prechargeOther + dynOther;
@@ -1897,11 +1930,17 @@ const AnchorEffortDistributionModule = {
         const pass4 = r2_35.map(v => v.toFixed(2)).every((v, i) => v === exp4[i]);
         tests.push({ name: "Règle 2 (Coude 35°)", pass: pass4, got: r2_35.map(v => v.toFixed(2)), exp: exp4 });
 
-        // Test 5: Cross F_chute = 12.00 -> [12.00, 3.00, 3.00, 3.00]
+        // Test 5: Cross F_chute = 12.00 -> [12.00, 6.00, 6.00, 6.00] (Facteur 1/2 Spec 2026)
         const r3 = this.calculateRule3_Cross(12.00, "north");
-        const exp5 = ["12.00", "3.00", "3.00", "3.00"];
+        const exp5 = ["12.00", "6.00", "6.00", "6.00"];
         const pass5 = r3.values.map(v => v.toFixed(2)).every((v, i) => v === exp5[i]);
-        tests.push({ name: "Règle 3 (Cross)", pass: pass5, got: r3.values.map(v => v.toFixed(2)), exp: exp5 });
+        tests.push({ name: "Règle 3 (Cross 1/2)", pass: pass5, got: r3.values.map(v => v.toFixed(2)), exp: exp5 });
+
+        // Test 5b: Multi-portée le long d'une branche (F_entry = 6.00, 3 ancrages, K = 0.495)
+        const r3b = this.calculateBranchMultiSpanLoads(6.00, 3, false, 0, 1.0);
+        const exp5b = ["6.00", "2.97", "1.47"];
+        const pass5b = r3b.map(v => v.toFixed(2)).every((v, i) => v === exp5b[i]);
+        tests.push({ name: "Règle 3b (Multi-portée branche)", pass: pass5b, got: r3b.map(v => v.toFixed(2)), exp: exp5b });
 
         // Test 6: Grid F_chute = 10.00
         const r4 = this.calculateRule4_Grid(10.00, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
@@ -7687,7 +7726,7 @@ function renderDynamicLayoutForm() {
             <!-- Sélection de la branche où a lieu la chute -->
             <div class="form-group full-width margin-top-sm" style="background: rgba(241, 245, 249, 0.6); padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1;">
                 <label for="select-cross-fall-branch" style="font-weight: 600; color: #1e293b;">
-                    <i class="fa-solid fa-crosshairs" style="color: #3b82f6;"></i> ${isEn ? "Branch where fall occurs (100% load, 25% on other 3 branches):" : "Branche où a lieu la chute (100% de l'effort, 25% sur les 3 autres) :"}
+                    <i class="fa-solid fa-crosshairs" style="color: #3b82f6;"></i> ${isEn ? "Branch where fall occurs (100% load, 50% on other 3 branches):" : "Branche où a lieu la chute (100% de l'effort, 50% sur les 3 autres) :"}
                 </label>
                 <select id="select-cross-fall-branch" class="select-custom" style="margin-top: 4px;">
                     <option value="north" ${(state.fallPosition?.branch || "north") === "north" ? 'selected' : ''}>${isEn ? "Branch 1 — North (Span 1)" : "Branche 1 — Nord (Span 1)"}</option>
@@ -11277,7 +11316,7 @@ const SystemLabelingModule = {
                     isXMatrix: false,
                     effortKn: effortVal,
                     effortStr: UnitsModule.formatForce(effortVal),
-                    remarque: isFall ? (isEn ? "Fall Anchor (100%)" : "Ancrage de chute (100%)") : (isEn ? "Secondary (25%)" : "Secondaire (25%)"),
+                    remarque: isFall ? (isEn ? "Fall Anchor (100%)" : "Ancrage de chute (100%)") : (isEn ? "Secondary (50%)" : "Secondaire (50%)"),
                     position: ancPos
                 });
 
@@ -12254,11 +12293,32 @@ const SystemLabelingModule = {
                                 state.selectedFallSpanId === "X1-S1"
                             ));
 
+                            const isFallOnAnyBranch = Boolean(state.fallPosition?.isBranch);
+                            const fallBranchIdx = (state.fallPosition?.branchIndex !== undefined) ? state.fallPosition.branchIndex : -1;
+                            const fallSubSpanIdx = (state.fallPosition?.subSpanIndex !== undefined) ? state.fallPosition.subSpanIndex : 0;
+                            const refFallForce = (effortContext && effortContext.ext1L) ? effortContext.ext1L : (ext1L || 10.0);
+
                             validBranches.forEach((br, bIdx) => {
                                 const rawAng = (br.angleDeg !== undefined) ? parseFloat(br.angleDeg) : (bIdx === 0 ? 90 : -90);
                                 const bSpans = (bIdx === 0) ? br1Spans : br2Spans;
                                 let prevAId = `${xMatId}-B${bIdx + 1}-A1`;
                                 let cumulativeDist = 0;
+
+                                // Spec 2026: Calcul des efforts de branche avec règle 1/2 à la croix et multi-portée
+                                let branchLoads = [];
+                                const isThisFallBranch = isFallOnAnyBranch && (bIdx === fallBranchIdx);
+                                if (!isFallOnAnyBranch) {
+                                    // Chute sur la ligne principale : les branches reçoivent 50% (1/2) au premier point, puis atténuation multi-portée vers l'extrémité
+                                    const fBranchEntry = 0.50 * refFallForce;
+                                    branchLoads = AnchorEffortDistributionModule.calculateBranchMultiSpanLoads(fBranchEntry, bSpans.length, false, 0, p0Kn);
+                                } else if (isThisFallBranch) {
+                                    // Chute sur cette branche : 100% sur la sous-portée de chute, atténuation multi-portée de part et d'autre
+                                    branchLoads = AnchorEffortDistributionModule.calculateBranchMultiSpanLoads(refFallForce, bSpans.length, true, fallSubSpanIdx, p0Kn);
+                                } else {
+                                    // Chute sur l'autre branche transversale : reçoit 50% (1/2) à la croix, puis atténuation multi-portée
+                                    const fBranchEntry = 0.50 * refFallForce;
+                                    branchLoads = AnchorEffortDistributionModule.calculateBranchMultiSpanLoads(fBranchEntry, bSpans.length, false, 0, p0Kn);
+                                }
 
                                 bSpans.forEach((subSp, sIdx) => {
                                     const isLastSpan = (sIdx === bSpans.length - 1);
@@ -12313,13 +12373,21 @@ const SystemLabelingModule = {
                                         ancPos = new THREE.Vector3(cx, (pos.y || 0) + ry, cz);
                                     }
 
-                                    let brAnchorEffort = isCentralCrossSpan ? (bIdx === 0 ? (branchExt1 || branchExt2 || 1.0) : (branchExt2 || branchExt1 || 1.0)) : (branchExt2 || 1.0);
+                                    // Effort précis selon la formule multi-portée de branche
+                                    const calcEffortFromRule = (branchLoads && branchLoads[sIdx] !== undefined) ? branchLoads[sIdx] : (branchExt2 || p0Kn);
+                                    let brAnchorEffort = calcEffortFromRule;
                                     let brAnchorRemarque = "-";
                                     let brAnchorIsFall = false;
 
-                                    if (isBranchFall) {
+                                    if (isThisFallBranch && (sIdx === fallSubSpanIdx || (sIdx === fallSubSpanIdx + 1))) {
                                         brAnchorIsFall = true;
-                                        brAnchorRemarque = isEn ? "Fall Anchor (Branch)" : "Ancrage de chute (Branche)";
+                                        brAnchorRemarque = isEn ? "Fall Anchor (Branch 100%)" : "Ancrage de chute (Branche 100%)";
+                                    } else if (!isFallOnAnyBranch && sIdx === 0) {
+                                        brAnchorRemarque = isEn ? "Transverse Branch (50% fall load)" : "Branche transversale (50% de la chute)";
+                                    } else if (isFallOnAnyBranch && !isThisFallBranch && sIdx === 0) {
+                                        brAnchorRemarque = isEn ? "Opposite Branch (50% transfer)" : "Branche opposée (transfert 50%)";
+                                    } else {
+                                        brAnchorRemarque = isEn ? `Multi-span branch (Span ${sIdx + 1})` : `Multi-portée branche (Portée ${sIdx + 1})`;
                                     }
 
                                     anchors.push({
@@ -18099,7 +18167,7 @@ function updateCalculationsUI(layout, maxSpan) {
             crossRes.branches.forEach(b => {
                 const bLabel = b.label[l] || b.label[0];
                 const activeCls = b.isFallBranch ? " active-fall" : "";
-                const tag = b.isFallBranch ? " (Chute 100%)" : " (25%)";
+                const tag = b.isFallBranch ? " (Chute 100%)" : " (50%)";
                 cHtml += `
                     <div class="readout-row anchor-point${activeCls}">
                         <span class="row-label">${bLabel}${tag} :</span>
@@ -18259,6 +18327,49 @@ function updateCalculationsUI(layout, maxSpan) {
                     </div>
                 `;
             });
+
+            // Spec 2026: Affichage des ancrages des branches transversales X-Matrix (transfert 50% et multi-portée)
+            const hasXMatInSpans = state.spans && state.spans.some(s => s && s.hasXMatrix && s.xMatrixBranches && s.xMatrixBranches.length > 0);
+            if (hasXMatInSpans) {
+                const refForce = activeSpanCalc.maxTensionKn || ext1L || 10.0;
+                const isFallBranch = Boolean(state.fallPosition?.isBranch);
+                const fallBrIdx = (state.fallPosition?.branchIndex !== undefined) ? state.fallPosition.branchIndex : -1;
+                const fallSubIdx = (state.fallPosition?.subSpanIndex !== undefined) ? state.fallPosition.subSpanIndex : 0;
+
+                const brSubTitle = (l === 1)
+                    ? "Transverse Branches Loads (50% transfer & multi-span):"
+                    : (l === 2
+                        ? "Cargas Ramas Transversales (transferencia 50% y multivano):"
+                        : "Efforts Branches Transversales (transfert 50% et multi-portée) :");
+                mHtml += `<div class="readout-subtitle margin-top-sm"><i class="fa-solid fa-diagram-project"></i> ${brSubTitle}</div>`;
+
+                let xMatCount = 0;
+                state.spans.forEach(sp => {
+                    if (sp && sp.hasXMatrix && sp.xMatrixBranches) {
+                        xMatCount++;
+                        sp.xMatrixBranches.forEach((br, bIdx) => {
+                            const bSpans = (typeof getBranchSpans === "function") ? getBranchSpans(br) : (br.spans || [{ length: br.length || 5.0 }]);
+                            const isThisFall = isFallBranch && (bIdx === fallBrIdx);
+                            const fEntry = isThisFall ? refForce : (0.50 * refForce);
+                            const loads = AnchorEffortDistributionModule.calculateBranchMultiSpanLoads(fEntry, bSpans.length, isThisFall, fallSubIdx, p0Kn);
+
+                            loads.forEach((loadVal, sIdx) => {
+                                const aId = `X${xMatCount}-B${bIdx + 1}-A${sIdx + 1}`;
+                                const isFallA = isThisFall && (sIdx === fallSubIdx || sIdx === fallSubIdx + 1);
+                                const aTag = isFallA ? " (Chute 100%)" : (sIdx === 0 ? " (50%)" : " (Atténué)");
+                                const attCls = isFallA ? " active-fall" : "";
+                                mHtml += `
+                                    <div class="readout-row anchor-point${attCls}">
+                                        <span class="row-label">${aId}${aTag} :</span>
+                                        <span class="row-val">${UnitsModule.formatForce(loadVal)}</span>
+                                    </div>
+                                `;
+                            });
+                        });
+                    }
+                });
+            }
+
             dynContainer.innerHTML = mHtml;
         }
     } else {
@@ -21010,7 +21121,7 @@ function generatePDFReport() {
                 ];
 
                 const tagFall = (l === 1 ? " - Fall 100%" : (l === 2 ? " - Caída 100%" : " - Chute 100%"));
-                const tagOther = " - 25%";
+                const tagOther = " - 50%";
                 const uEffort = Calculator.effortLonge(state.product, realSpanMax, 1, state.norm, fallFactorVal, support, false);
                 const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, 1, state.norm, false);
                 const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, 1, state.norm, uEffort, uDefl, fallFactorVal, support, false);
