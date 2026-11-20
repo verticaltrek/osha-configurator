@@ -9222,11 +9222,17 @@ const TRANSLATIONS = {
             "⚠️ INVALID CONFIGURATION ALERT:\nThe A.FIX component is only used with the XTREME system.",
             "⚠️ ALERTA DE CONFIGURACIÓN INVÁLIDA:\nLa pieza A.FIX solo se utiliza con la gama XTREME."
         ],
-        longRangeLengthRange: [
-            "⚠️ LONGUEUR DE LIGNE NON CONFORME :\nPour le système XTREME, vous devez choisir une longueur de ligne entre 10 et 56 m.",
-            "⚠️ NON-COMPLIANT LINE LENGTH:\nFor the XTREME system, line length must be between 32.8 and 180 ft.",
-            "⚠️ LONGITUD DE LÍNEA NO CONFORME:\nPara el sistema XTREME, la longitud de la línea debe estar entre 10 y 56 m."
-        ],
+        get longRangeLengthRange() {
+            const isUS = (typeof state !== "undefined" && (state.unitSystem === "imperial" || state.unitSystem === "us"));
+            const limFr = isUS ? "entre 32.8 et 180 ft (10 et 56 m)" : "entre 10 et 56 m (32.8 et 180 ft)";
+            const limEn = isUS ? "between 32.8 and 180 ft (10 and 56 m)" : "between 10 and 56 m (32.8 and 180 ft)";
+            const limEs = isUS ? "entre 32.8 y 180 ft (10 y 56 m)" : "entre 10 y 56 m (32.8 y 180 ft)";
+            return [
+                `⚠️ LONGUEUR DE LIGNE NON CONFORME :\nPour le système XTREME, vous devez choisir une longueur de ligne ${limFr}.`,
+                `⚠️ NON-COMPLIANT LINE LENGTH:\nFor the XTREME system, line length must be ${limEn}.`,
+                `⚠️ LONGITUD DE LÍNEA NO CONFORME:\nPara el sistema XTREME, la longitud de la línea debe estar ${limEs}.`
+            ];
+        },
         pdfLoading: [
             "Chargement du générateur PDF en cours... Veuillez réessayer dans un instant.",
             "PDF generator is loading... Please try again in a moment.",
@@ -18192,7 +18198,14 @@ function updateCalculationsUI(layout, maxSpan) {
     }
 
     if (isLongRangeInvalid) {
-        if (warningTextElem) warningTextElem.textContent = ["Vous devez choisir une longueur de ligne entre 10 et 56 m", "You must choose a line length between 32.8 and 180 ft", "Debe elegir una longitud de línea entre 10 y 56 m"][l];
+        if (warningTextElem) {
+            const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+            warningTextElem.textContent = [
+                `Vous devez choisir une longueur de ligne entre ${isUS ? "32.8 et 180 ft (10 et 56 m)" : "10 et 56 m (32.8 et 180 ft)"}`,
+                `You must choose a line length between ${isUS ? "32.8 and 180 ft (10 and 56 m)" : "10 and 56 m (32.8 and 180 ft)"}`,
+                `Debe elegir una longitud de línea entre ${isUS ? "32.8 y 180 ft (10 y 56 m)" : "10 y 56 m (32.8 y 180 ft)"}`
+            ][l];
+        }
         if (warningElem) warningElem.classList.remove("hidden");
 
         const lblAnchor = document.getElementById("lbl-anchor-count");
@@ -21365,9 +21378,24 @@ function generatePDFReport() {
             return;
         }
 
-        if (isXtreme(state.product) && (state.lineLength < 10.0 || state.lineLength > 56.0)) {
-            alert(TRANSLATIONS.alerts.longRangeLengthRange[l]);
-            return;
+        if (isXtreme(state.product)) {
+            let isInvalidXtreme = false;
+            if (state.layoutType === "grid_system") {
+                const gs = state.gridSystem || { nx: 3, ny: 3, xSpacings: [5.0, 5.0], zSpacings: [5.0, 5.0] };
+                const sumX = (gs.xSpacings || []).reduce((a, b) => a + b, 0);
+                const sumZ = (gs.zSpacings || []).reduce((a, b) => a + b, 0);
+                const maxXSpan = (gs.xSpacings && gs.xSpacings.length > 0) ? Math.max(...gs.xSpacings) : 0;
+                const maxZSpan = (gs.zSpacings && gs.zSpacings.length > 0) ? Math.max(...gs.zSpacings) : 0;
+                const maxGridSpan = Math.max(maxXSpan, maxZSpan);
+                isInvalidXtreme = (maxGridSpan > 56.0 || sumX > 56.0 || sumZ > 56.0);
+            } else {
+                isInvalidXtreme = (state.lineLength < 10.0 || state.lineLength > 56.0);
+            }
+
+            if (isInvalidXtreme) {
+                alert(TRANSLATIONS.alerts.longRangeLengthRange[l]);
+                return;
+            }
         }
 
         if (!window.jspdf || !window.jspdf.jsPDF) {
@@ -21436,11 +21464,12 @@ function generatePDFReport() {
         const support = getActiveSupportType();
 
         const postName = getActivePostName();
+        const effectiveSpanOrLen = (state.layoutType === "grid_system") ? realSpanMax : state.lineLength;
         const displayProductPdf = isXtreme(state.product)
-            ? ("XTREME - " + getLongRangeSubRange(state.lineLength))
+            ? ("XTREME - " + getLongRangeSubRange(effectiveSpanOrLen))
             : normalizeProduct(state.product || "CORE");
         const displayAbsorberPdf = isXtreme(state.product)
-            ? ("XTREME (" + getLongRangeSubRange(state.lineLength) + ")")
+            ? ("XTREME (" + getLongRangeSubRange(effectiveSpanOrLen) + ")")
             : normalizeProduct(state.product || "CORE");
 
         const pInfo = state.projectInfo || {};
