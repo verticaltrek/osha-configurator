@@ -4348,7 +4348,7 @@ const LayoutEditorModule = (function () {
                                 <div class="warning-alert-box" style="background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; display: flex; gap: 8px; align-items: center;">
                                     <i class="fa-solid fa-triangle-exclamation" style="color: #dc2626;"></i>
                                     <div>
-                                        <strong>${isEn ? "Warning:" : "Attention :"}</strong> ${isEn ? "The entered elevation exceeds the maximum allowed for" : "L'élévation saisie dépasse le maximum autorisé pour"} ${normalizeProduct(state.product)} (${isEn ? "0 to" : "0 à"} ${UnitsModule.formatLength(maxElevM)} / ${isRange ? "20 ft" : "7 ft"}). ${isEn ? "Value limited to" : "Valeur limitée à"} ${UnitsModule.formatLength(maxElevM)}.
+                                        <strong>${isEn ? "Warning:" : "Attention :"}</strong> ${isEn ? "The entered elevation exceeds the maximum allowed for" : "L'élévation saisie dépasse le maximum autorisé pour"} ${normalizeProduct(state.product)} (${isEn ? "0 to" : "0 à"} ${UnitsModule.formatLength(maxElevM)}${isUS ? ` [${maxElevM.toFixed(2)} m]` : ` [${(maxElevM * UnitsModule.M_TO_FT).toFixed(1)} ft]`}). ${isEn ? "Value limited to" : "Valeur limitée à"} ${UnitsModule.formatLength(maxElevM)}.
                                     </div>
                                 </div>
                             `;
@@ -4814,6 +4814,10 @@ function setUnitSystem(nextSys, skipRender = false) {
     if (typeof renderDynamicLayoutForm === "function") {
         renderDynamicLayoutForm();
     }
+    if (typeof updateRetractedLengthEquivalentUI === "function") updateRetractedLengthEquivalentUI();
+    if (typeof updateMadEquivalentUI === "function") updateMadEquivalentUI();
+    if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
+    if (typeof selectSrlModel === "function" && state.selectedSrlId) selectSrlModel(state.selectedSrlId);
 
     if (!skipRender) {
         if (typeof updateCalculationsUI === "function" && state.product) {
@@ -5167,7 +5171,7 @@ function updateRetractedLengthEquivalentUI() {
     const rawVal = parseFloat(lenInp.value);
 
     if (isNaN(rawVal) || rawVal <= 0) {
-        if (eqDisplay) eqDisplay.textContent = unit === "m" ? "(-- ft)" : "(-- m)";
+        if (eqDisplay) eqDisplay.textContent = "";
         if (warnBox) warnBox.style.display = "none";
         state.retractedLengthM = 0;
         state.customDeviceLengthM = 0;
@@ -5198,39 +5202,44 @@ function updateRetractedLengthEquivalentUI() {
     if (warnBox) {
         const isLanyard = (state.connectingDevice === "lanyard" || state.connectingDevice === "custom_lanyard");
         const l = parseInt(state.lang) || 0;
+        const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
         let isWarn = false;
         let warnMsg = "";
 
         if (state.selectedSrlId === "falcon_leading_edge") {
-            // Falcon+ max rated length is 50 ft (15.24 m)
+            // Falcon+ max rated length is 15.24 m (50 ft)
             if (valM > 15.25) {
                 isWarn = true;
+                const limStr = isUS ? "50 ft (15.24 m)" : "15.24 m (50 ft)";
                 warnMsg = isEn
-                    ? "Warning: Length exceeds the maximum of 50 ft (15.24 m) for Falcon+."
-                    : (l === 2 ? "Advertencia: La longitud supera el máximo de 50 ft (15,24 m) para Falcon+." : "Avertissement : La longueur dépasse la valeur maximale de 50 ft (15,24 m) pour le Falcon+.");
+                    ? `Warning: Length exceeds the maximum of ${limStr} for Falcon+.`
+                    : (l === 2 ? `Advertencia: La longitud supera el máximo de ${limStr} para Falcon+.` : `Avertissement : La longueur dépasse la valeur maximale de ${limStr} pour le Falcon+.`);
             }
         } else if (state.selectedSrlId === "turbo_light_9ft") {
-            // TurboLite+ rated length is 6 ft to 11 ft (max 11 ft / 3.35 m)
+            // TurboLite+ rated length is 3.35 m (11 ft)
             if (valM > 3.355) { // strictly exceeds 11 ft (3.35 m)
                 isWarn = true;
+                const limStr = isUS ? "11 ft (3.35 m)" : "3.35 m (11 ft)";
                 warnMsg = isEn
-                    ? "Warning: Length exceeds the maximum of 11 ft (3.35 m) for TurboLite+."
-                    : (l === 2 ? "Advertencia: La longitud supera el máximo de 11 ft (3,35 m) para TurboLite+." : "Avertissement : La longueur dépasse la valeur maximale de 11 ft (3,35 m) pour le TurboLite+.");
+                    ? `Warning: Length exceeds the maximum of ${limStr} for TurboLite+.`
+                    : (l === 2 ? `Advertencia: La longitud supera el máximo de ${limStr} para TurboLite+.` : `Avertissement : La longueur dépasse la valeur maximale de ${limStr} pour le TurboLite+.`);
             }
         } else if (isLanyard) {
             if (valM > 2.05) { // standard lanyard max 2.0 m (6.6 ft)
                 isWarn = true;
+                const limStr = isUS ? "6.6 ft (2.0 m)" : "2.0 m (6.6 ft)";
                 warnMsg = isEn
-                    ? "Warning: Lanyard length exceeds the maximum of 2.0 m (6.6 ft)."
-                    : (l === 2 ? "Advertencia: La longitud de eslinga supera el máximo de 2,0 m (6,6 ft)." : "Avertissement : La longueur de la longe dépasse le maximum de 2,0 m (6,6 ft).");
+                    ? `Warning: Lanyard length exceeds the maximum of ${limStr}.`
+                    : (l === 2 ? `Advertencia: La longitud de eslinga supera el máximo de ${limStr}.` : `Avertissement : La longueur de la longe dépasse le maximum de ${limStr}.`);
             }
         } else {
             // Generic / Fallback SRL
             if (valM > (typeof RETRACTED_WARN_M !== "undefined" ? RETRACTED_WARN_M : 3.0)) {
                 isWarn = true;
+                const limStr = isUS ? "9.8 ft (3.0 m)" : "3.0 m (9.8 ft)";
                 warnMsg = isEn
-                    ? `Warning: Retracted length exceeds 3.0 m (9.8 ft).`
-                    : (l === 2 ? "Advertencia: Longitud retraída superior a 3,0 m (9.8 ft)." : "Avertissement : Longueur rétractée supérieure à 3,0 m (9.8 ft).");
+                    ? `Warning: Retracted length exceeds ${limStr}.`
+                    : (l === 2 ? `Advertencia: Longitud retraída superior a ${limStr}.` : `Avertissement : Longueur rétractée supérieure à ${limStr}.`);
             }
         }
 
@@ -5347,7 +5356,7 @@ function updateMadEquivalentUI() {
     const rawVal = parseFloat(madInp.value);
 
     if (isNaN(rawVal) || rawVal <= 0) {
-        if (eqDisplay) eqDisplay.textContent = unit === "in" ? "(-- m)" : "(-- in)";
+        if (eqDisplay) eqDisplay.textContent = "";
         if (warnBox) warnBox.style.display = "none";
         state.madM = 0;
         state.customMad = 0;
@@ -5383,32 +5392,36 @@ function updateMadEquivalentUI() {
         const warnTxt = document.getElementById("mad-warning-text");
         const isEn = (parseInt(state.lang) === 1);
         const l = parseInt(state.lang) || 0;
+        const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
         let isWarn = false;
         let warnMsg = "";
 
         if (state.selectedSrlId === "falcon_leading_edge") {
-            // Falcon+ max certified MAD is 165 in (4.19 m)
+            // Falcon+ max certified MAD is 4.19 m (165 in)
             if (valM > 4.20) { // strictly exceeds 165 in (4.191 m)
                 isWarn = true;
+                const limStr = isUS ? "165 in (4.19 m)" : "4.19 m (165 in)";
                 warnMsg = isEn
-                    ? "Warning: MAD exceeds the maximum of 165 in (4.19 m) for Falcon+."
-                    : (l === 2 ? "Advertencia: La distancia de parada (MAD) supera el máximo de 165 in (4,19 m) para Falcon+." : "Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de 165 in (4,19 m) pour le Falcon+.");
+                    ? `Warning: MAD exceeds the maximum of ${limStr} for Falcon+.`
+                    : (l === 2 ? `Advertencia: La distancia de parada (MAD) supera el máximo de ${limStr} para Falcon+.` : `Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de ${limStr} pour le Falcon+.`);
             }
         } else if (state.selectedSrlId === "turbo_light_9ft") {
-            // TurboLite+ max certified MAD is 42 in (1.07 m)
+            // TurboLite+ max certified MAD is 1.07 m (42 in)
             if (valM > 1.075) { // strictly exceeds 42 in (1.067 m)
                 isWarn = true;
+                const limStr = isUS ? "42 in (1.07 m)" : "1.07 m (42 in)";
                 warnMsg = isEn
-                    ? "Warning: MAD exceeds the maximum of 42 in (1.07 m) for TurboLite+."
-                    : (l === 2 ? "Advertencia: La distancia de parada (MAD) supera el máximo de 42 in (1,07 m) para TurboLite+." : "Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de 42 in (1,07 m) pour le TurboLite+.");
+                    ? `Warning: MAD exceeds the maximum of ${limStr} for TurboLite+.`
+                    : (l === 2 ? `Advertencia: La distancia de parada (MAD) supera el máximo de ${limStr} para TurboLite+.` : `Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de ${limStr} pour le TurboLite+.`);
             }
         } else {
             // Generic / Fallback SRL
             if (valM > (typeof MAD_WARN_M !== "undefined" ? MAD_WARN_M : 2.0)) {
                 isWarn = true;
+                const limStr = isUS ? "6.6 ft (2.0 m)" : "2.0 m (6.6 ft)";
                 warnMsg = isEn
-                    ? "Warning: MAD exceeds the maximum of 2.00 m (6.6 ft)."
-                    : (l === 2 ? "Advertencia: La distancia de parada (MAD) supera el máximo de 2,00 m (6,6 ft)." : "Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de 2,00 m (6,6 ft).");
+                    ? `Warning: MAD exceeds the maximum of ${limStr}.`
+                    : (l === 2 ? `Advertencia: La distancia de parada (MAD) supera el máximo de ${limStr}.` : `Avertissement : La distance d'arrêt (MAD) dépasse la valeur maximale de ${limStr}.`);
             }
         }
 
@@ -5462,14 +5475,17 @@ function updateArrestForceEquivalentUI() {
     }
 
     // Validation: 1 to 5000 lbf
+    const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
     const isExceeded = (lbfVal > 5000.0);
     if (errBox) {
         errBox.style.display = isExceeded ? "block" : "none";
         const errTxt = document.getElementById("arrest-force-error-text");
         if (errTxt && isExceeded) {
+            const valStr = isUS ? `${Math.round(lbfVal)} lbf (${knVal.toFixed(2)} kN)` : `${knVal.toFixed(2)} kN (${Math.round(lbfVal)} lbf)`;
+            const limStr = isUS ? "5,000 lbf (22.24 kN)" : "22.24 kN (5 000 lbf)";
             errTxt.textContent = isEn
-                ? `Error: Arrest force (${Math.round(lbfVal)} lbf) exceeds the 5,000 lbf (22.24 kN) limit.`
-                : `Erreur : Force d'arrêt (${Math.round(lbfVal)} lbf) supérieure à 5 000 lbf (22,24 kN).`;
+                ? `Error: Arrest force (${valStr}) exceeds the ${limStr} limit.`
+                : `Erreur : Force d'arrêt (${valStr}) supérieure à ${limStr}.`;
         }
     }
 
@@ -5488,9 +5504,15 @@ function updateArrestForceEquivalentUI() {
     }
 
     if (loadStr) {
-        loadStr.textContent = isEn
-            ? `Global Arrest Load: ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`
-            : `Charge globale : ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`;
+        if (isUS) {
+            loadStr.textContent = isEn
+                ? `Global Arrest Load: ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`
+                : `Charge globale : ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`;
+        } else {
+            loadStr.textContent = isEn
+                ? `Global Arrest Load: ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${knVal.toFixed(2)} kN)`
+                : `Charge globale : ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${knVal.toFixed(2)} kN)`;
+        }
     }
 }
 
@@ -5699,15 +5721,19 @@ function validateSrlSelection() {
     }
 
     const afLbf = state.arrestForceLbf || (state.arrestForceKn * 224.808943);
+    const afKn = state.arrestForceKn || (afLbf * 0.0044482216);
     if (afLbf > 5000.0) {
+        const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+        const valStr = isUS ? `${Math.round(afLbf)} lbf` : `${afKn.toFixed(2)} kN`;
+        const limStr = isUS ? "5,000 lbf (22.24 kN)" : "22.24 kN (5 000 lbf)";
         if (warnBox && warnTxt) {
             warnTxt.innerHTML = isEn
-                ? `<strong>⚠️ Arrest Force Rejected:</strong> ${Math.round(afLbf)} lbf exceeds 5,000 lbf (22.24 kN) limit.`
-                : `<strong>⚠️ Force d'arrêt rejetée :</strong> ${Math.round(afLbf)} lbf dépasse la limite de 5 000 lbf (22,24 kN).`;
+                ? `<strong>⚠️ Arrest Force Rejected:</strong> ${valStr} exceeds ${limStr} limit.`
+                : `<strong>⚠️ Force d'arrêt rejetée :</strong> ${valStr} dépasse la limite de ${limStr}.`;
             warnBox.style.display = "flex";
         }
         if (badge) {
-            badge.textContent = isEn ? "ARREST FORCE > 5000 LBF" : "FORCE D'ARRÊT > 5000 LBF";
+            badge.textContent = isUS ? "ARREST FORCE > 5000 LBF" : "FORCE D'ARRÊT > 22.24 KN";
             badge.className = "badge-role badge-role-suspended";
         }
         return false;
@@ -5828,14 +5854,17 @@ function selectSrlModel(srlId) {
     // Update placeholders to guide the user on maximum specifications
     const l = parseInt(state.lang) || 0;
     const isEn = (l === 1);
+    const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
     const lenInp = document.getElementById("input-srl-retracted-length");
     const madInp = document.getElementById("input-srl-mad");
 
     if (lenInp) {
         if (srlId === "turbo_light_9ft") {
-            lenInp.placeholder = isEn ? "Max: 11 ft (3.35 m)" : (l === 2 ? "Máx: 11 ft (3.35 m)" : "Max : 11 ft (3,35 m)");
+            const limStr = isUS ? "11 ft (3.35 m)" : "3.35 m (11 ft)";
+            lenInp.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else if (srlId === "falcon_leading_edge") {
-            lenInp.placeholder = isEn ? "Max: 50 ft (15.24 m)" : (l === 2 ? "Máx: 50 ft (15.24 m)" : "Max : 50 ft (15,24 m)");
+            const limStr = isUS ? "50 ft (15.24 m)" : "15.24 m (50 ft)";
+            lenInp.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else {
             lenInp.placeholder = isEn ? "Enter length..." : (l === 2 ? "Introducir longitud..." : "Saisir la longueur...");
         }
@@ -5844,9 +5873,11 @@ function selectSrlModel(srlId) {
 
     if (madInp) {
         if (srlId === "turbo_light_9ft") {
-            madInp.placeholder = isEn ? "Max: 42 in (1.07 m)" : (l === 2 ? "Máx: 42 in (1.07 m)" : "Max : 42 in (1,07 m)");
+            const limStr = isUS ? "42 in (1.07 m)" : "1.07 m (42 in)";
+            madInp.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else if (srlId === "falcon_leading_edge") {
-            madInp.placeholder = isEn ? "Max: 165 in (4.19 m)" : (l === 2 ? "Máx: 165 in (4.19 m)" : "Max : 165 in (4,19 m)");
+            const limStr = isUS ? "165 in (4.19 m)" : "4.19 m (165 in)";
+            madInp.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else {
             madInp.placeholder = isEn ? "Enter MAD..." : (l === 2 ? "Introducir MAD..." : "Saisir la MAD...");
         }
@@ -9685,12 +9716,15 @@ function applyLanguage(langIndex) {
             ? ["Longueur de la longe :", "Lanyard Length:", "Longitud de la eslinga:"][l]
             : ["Longueur rétractée :", "Retracted Length:", "Longitud retraída:"][l];
     }
+    const isUSUnits = (state.unitSystem === "imperial" || state.unitSystem === "us");
     const inSrlRetracted = document.getElementById("input-srl-retracted-length");
     if (inSrlRetracted) {
         if (state.selectedSrlId === "turbo_light_9ft") {
-            inSrlRetracted.placeholder = isEn ? "Max: 11 ft (3.35 m)" : (l === 2 ? "Máx: 11 ft (3.35 m)" : "Max : 11 ft (3,35 m)");
+            const limStr = isUSUnits ? "11 ft (3.35 m)" : "3.35 m (11 ft)";
+            inSrlRetracted.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else if (state.selectedSrlId === "falcon_leading_edge") {
-            inSrlRetracted.placeholder = isEn ? "Max: 50 ft (15.24 m)" : (l === 2 ? "Máx: 50 ft (15.24 m)" : "Max : 50 ft (15,24 m)");
+            const limStr = isUSUnits ? "50 ft (15.24 m)" : "15.24 m (50 ft)";
+            inSrlRetracted.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else {
             inSrlRetracted.placeholder = isEn ? "Enter length..." : (l === 2 ? "Introducir longitud..." : "Saisir la longueur...");
         }
@@ -9709,9 +9743,11 @@ function applyLanguage(langIndex) {
     const inSrlMad = document.getElementById("input-srl-mad");
     if (inSrlMad) {
         if (state.selectedSrlId === "turbo_light_9ft") {
-            inSrlMad.placeholder = isEn ? "Max: 42 in (1.07 m)" : (l === 2 ? "Máx: 42 in (1.07 m)" : "Max : 42 in (1,07 m)");
+            const limStr = isUSUnits ? "42 in (1.07 m)" : "1.07 m (42 in)";
+            inSrlMad.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else if (state.selectedSrlId === "falcon_leading_edge") {
-            inSrlMad.placeholder = isEn ? "Max: 165 in (4.19 m)" : (l === 2 ? "Máx: 165 in (4.19 m)" : "Max : 165 in (4,19 m)");
+            const limStr = isUSUnits ? "165 in (4.19 m)" : "4.19 m (165 in)";
+            inSrlMad.placeholder = isEn ? `Max: ${limStr}` : (l === 2 ? `Máx: ${limStr}` : `Max : ${limStr}`);
         } else {
             inSrlMad.placeholder = isEn ? "Enter MAD..." : (l === 2 ? "Introducir MAD..." : "Saisir la MAD...");
         }
@@ -21297,9 +21333,12 @@ function generatePDFReport() {
         }
         const fLbf = fKn * UnitsModule.KN_TO_LBF;
         if (fLbf > 5000.0) {
+            const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+            const valStr = isUS ? `${Math.round(fLbf)} lbf (${fKn.toFixed(2)} kN)` : `${fKn.toFixed(2)} kN (${Math.round(fLbf)} lbf)`;
+            const limStr = isUS ? "5,000 lbf (22.24 kN)" : "22.24 kN (5 000 lbf)";
             alert(isEn
-                ? ("⚠️ Arrest Force Out of Range: " + Math.round(fLbf) + " lbf exceeds the 5,000 lbf maximum threshold.")
-                : ("⚠️ Force d'arrêt hors limites : " + Math.round(fLbf) + " lbf dépasse le maximum autorisé de 5 000 lbf."));
+                ? ("⚠️ Arrest Force Out of Range: " + valStr + " exceeds the " + limStr + " maximum threshold.")
+                : ("⚠️ Force d'arrêt hors limites : " + valStr + " dépasse le maximum autorisé de " + limStr + "."));
             return;
         }
 
