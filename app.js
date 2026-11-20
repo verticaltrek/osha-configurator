@@ -16826,6 +16826,16 @@ function update3DScene() {
         if (orthographicCam && state.viewMode === "2d") {
             orthographicCam.position.set(centerX, 40, centerZ);
             orthographicCam.lookAt(centerX, 0, centerZ);
+            const container = document.getElementById("canvas3d");
+            const w = container ? container.clientWidth : 800;
+            const h = container ? container.clientHeight : 600;
+            const aspect = (w > 0 && h > 0) ? (w / h) : 1.5;
+            const d = Math.max((L / 2) / aspect, l / 2, 10) + 4.0;
+            orthographicCam.left = -d * aspect;
+            orthographicCam.right = d * aspect;
+            orthographicCam.top = d;
+            orthographicCam.bottom = -d;
+            orthographicCam.updateProjectionMatrix();
         }
         if (typeof Dimensions3DModule !== "undefined") {
             Dimensions3DModule.renderDimensions();
@@ -16843,6 +16853,16 @@ function update3DScene() {
         if (orthographicCam && state.viewMode === "2d") {
             orthographicCam.position.set(centerX, 40, centerZ);
             orthographicCam.lookAt(centerX, 0, centerZ);
+            const container = document.getElementById("canvas3d");
+            const w = container ? container.clientWidth : 800;
+            const h = container ? container.clientHeight : 600;
+            const aspect = (w > 0 && h > 0) ? (w / h) : 1.5;
+            const d = Math.max((L / 2) / aspect, l / 2, 10) + 4.0;
+            orthographicCam.left = -d * aspect;
+            orthographicCam.right = d * aspect;
+            orthographicCam.top = d;
+            orthographicCam.bottom = -d;
+            orthographicCam.updateProjectionMatrix();
         }
         if (typeof Dimensions3DModule !== "undefined") {
             Dimensions3DModule.renderDimensions();
@@ -19489,6 +19509,16 @@ function setupUIEventListeners() {
         orthographicCam.up.set(0, 0, -1);
         orthographicCam.position.set(centerX, 40, centerZ);
         orthographicCam.lookAt(centerX, 0, centerZ);
+        const container = document.getElementById("canvas3d");
+        const w = container ? container.clientWidth : 800;
+        const h = container ? container.clientHeight : 600;
+        const aspect = (w > 0 && h > 0) ? (w / h) : 1.5;
+        const d = Math.max((state.L / 2) / aspect, state.l / 2, 10) + 4.0;
+        orthographicCam.left = -d * aspect;
+        orthographicCam.right = d * aspect;
+        orthographicCam.top = d;
+        orthographicCam.bottom = -d;
+        orthographicCam.updateProjectionMatrix();
 
         if (controls) {
             controls.object = orthographicCam;
@@ -19525,6 +19555,15 @@ function setupUIEventListeners() {
             orthographicCam.up.set(0, 0, -1);
             orthographicCam.position.set(centerX, 40, centerZ);
             orthographicCam.lookAt(centerX, 0, centerZ);
+            const container = document.getElementById("canvas3d");
+            const w = container ? container.clientWidth : 800;
+            const h = container ? container.clientHeight : 600;
+            const aspect = (w > 0 && h > 0) ? (w / h) : 1.5;
+            const d = Math.max((state.L / 2) / aspect, state.l / 2, 10) + 4.0;
+            orthographicCam.left = -d * aspect;
+            orthographicCam.right = d * aspect;
+            orthographicCam.top = d;
+            orthographicCam.bottom = -d;
             orthographicCam.updateProjectionMatrix();
             if (controls) {
                 controls.target.set(centerX, 0, centerZ);
