@@ -3645,6 +3645,15 @@ class LayoutHistoryManager {
     }
 }
 
+function isGridOverheadValid(st = (typeof state !== "undefined" ? state : null)) {
+    if (!st || st.layoutType !== "grid_system") return true;
+    const preset = st.hllElevationPreset;
+    if (preset === "knee" || preset === "d_ring") return false;
+    if (preset === "overhead") return true;
+    const elev = (typeof st.hllElevation === "number" && !isNaN(st.hllElevation)) ? st.hllElevation : 0.45;
+    return (elev >= 1.80 || st.mountingType === "overhead" || st.roofShape === "flat_overhead");
+}
+
 const LayoutEditorModule = (function () {
     const history = new LayoutHistoryManager(100);
 
@@ -3929,6 +3938,7 @@ const LayoutEditorModule = (function () {
         if (typeof validateSrlSelection === "function") validateSrlSelection();
         if (typeof update3DScene === "function") update3DScene();
         if (typeof updateCalculationsUI === "function") updateCalculationsUI();
+        if (state.layoutType === "grid_system" && typeof renderDynamicLayoutForm === "function") renderDynamicLayoutForm();
     }
 
     function setEngineerCoefficient(val) {
@@ -3954,6 +3964,21 @@ const LayoutEditorModule = (function () {
         const isEn = (parseInt(state.lang) === 1);
         const isRange = isXtreme(state.product);
         const overheadMinM = isRange ? 3.00 : 1.80;
+
+        if (state.layoutType === "grid_system") {
+            const isGridOverhead = isGridOverheadValid(state);
+            if (!isGridOverhead) {
+                if (warnEl && warnTxt) {
+                    warnTxt.innerHTML = isEn
+                        ? `⚠️ <strong>Overhead Required:</strong> Grid Systems (Config 12) strictly requires Overhead installation.`
+                        : `⚠️ <strong>Overhead Requis :</strong> Le système en Grille (Config 12) s'applique exclusivement en configuration Overhead.`;
+                    warnEl.classList.remove("hidden");
+                    warnEl.style.display = "flex";
+                }
+                return;
+            }
+        }
+
         const visualCat = (state.hllElevationPreset === "knee") ? "knee"
             : (state.hllElevationPreset === "d_ring" ? "d_ring"
                 : (state.hllElevationPreset === "overhead" ? "overhead"
@@ -3973,7 +3998,7 @@ const LayoutEditorModule = (function () {
                 warnEl.classList.remove("hidden");
             }
         } else {
-            if (warnTxt && (warnTxt.textContent.includes("Élévation") || warnTxt.textContent.includes("Lifeline Elevation") || warnTxt.textContent.includes("extension") || warnTxt.textContent.includes("Modèle de potelet"))) {
+            if (warnTxt && (warnTxt.textContent.includes("Élévation") || warnTxt.textContent.includes("Lifeline Elevation") || warnTxt.textContent.includes("extension") || warnTxt.textContent.includes("Modèle de potelet") || warnTxt.textContent.includes("Overhead"))) {
                 if (warnEl) warnEl.classList.add("hidden");
             }
         }
@@ -4128,6 +4153,24 @@ const LayoutEditorModule = (function () {
         }
 
         checkPostExtensionWarning();
+
+        const warnContainer = document.getElementById("hll-elevation-warning");
+        if (warnContainer && state.layoutType === "grid_system") {
+            const isGridOverhead = isGridOverheadValid(state);
+            if (!isGridOverhead) {
+                warnContainer.innerHTML = `
+                    <div class="warning-alert-box" style="background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; display: flex; gap: 8px; align-items: center; margin-top: 6px;">
+                        <i class="fa-solid fa-triangle-exclamation" style="color: #d97706; font-size: 1.1rem; flex-shrink: 0;"></i>
+                        <div>
+                            <strong>${isEn ? "Overhead Required:" : "Pose Overhead Obligatoire :"}</strong> ${isEn ? "Grid systems (Config 12) apply exclusively to Overhead installations. Please set elevation to Overhead." : "Cette configuration de grille s'applique uniquement en pose Overhead. Veuillez basculer l'élévation sur Overhead."}
+                        </div>
+                    </div>
+                `;
+            } else if (!warnContainer.innerHTML.includes("exceeds the maximum") && !warnContainer.innerHTML.includes("dépasse le maximum") && !warnContainer.innerHTML.includes("negative")) {
+                warnContainer.innerHTML = "";
+            }
+        }
+
         if (typeof renderComponentsChecklist === "function") renderComponentsChecklist();
         if (typeof validateSrlSelection === "function") validateSrlSelection();
     }
@@ -4432,12 +4475,14 @@ const LayoutEditorModule = (function () {
         undo,
         redo,
         refreshUI,
-        initKeyboardAndToolbar
+        initKeyboardAndToolbar,
+        isGridOverheadValid
     };
 })();
 if (typeof window !== "undefined") {
     window.LayoutEditorModule = LayoutEditorModule;
     window.syncElevationInputsUI = LayoutEditorModule.syncElevationInputsUI;
+    window.isGridOverheadValid = isGridOverheadValid;
     window.state = state;
 }
 
@@ -7772,6 +7817,7 @@ function renderDynamicLayoutForm() {
         });
 
         const isSegmentExceeding = maxSegVal > maxSpanLR;
+        const isGridOverhead = isGridOverheadValid(state);
 
         html = `
             <div class="info-readout-box margin-bottom-sm" style="background: rgba(241,245,249,0.9); border-left: 4px solid #3b82f6;">
@@ -7780,6 +7826,23 @@ function renderDynamicLayoutForm() {
                     <span><i class="fa-solid fa-cubes" style="color:#3b82f6;"></i> <strong>${nbXMatrix}</strong> X-Matrix | <strong>${nbPosts}</strong> ${isEn ? "Posts" : "Poteaux"} | <strong>${nbSegments}</strong> Segments</span>
                 </div>
             </div>
+
+            ${!isGridOverhead ? `
+                <div class="warning-alert-box margin-bottom-sm" style="background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <i class="fa-solid fa-triangle-exclamation" style="font-size: 1.25rem; color: #d97706; flex-shrink: 0;"></i>
+                        <div>
+                            <strong>${isEn ? "Warning — Overhead Installation Mandatory:" : "Attention — Pose Overhead Obligatoire :"}</strong>
+                            ${isEn ? "Grid Systems (Config 12) strictly applies to Overhead installations. Current elevation is not set to Overhead." : "La configuration Grille (Config 12) s'applique exclusivement en pose Overhead. Votre réglage actuel n'est pas en Overhead."}
+                        </div>
+                    </div>
+                    <div style="margin-left: 28px;">
+                        <button type="button" id="btn-grid-fix-overhead" style="background: #d97706; color: #ffffff; border: none; padding: 5px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+                            <i class="fa-solid fa-arrows-up-to-line"></i> ${isEn ? "Switch to Overhead (3.00 m)" : "Basculer en Overhead (3,00 m)"}
+                        </button>
+                    </div>
+                </div>
+            ` : ''}
 
             <div class="form-grid">
                 <div class="form-group">
@@ -8429,6 +8492,33 @@ function attachDynamicFormListeners() {
     });
 
     // Grid system inputs
+    const btnGridFixOverhead = document.getElementById("btn-grid-fix-overhead");
+    if (btnGridFixOverhead) {
+        btnGridFixOverhead.addEventListener("click", () => {
+            if (typeof LayoutEditorModule !== "undefined" && LayoutEditorModule.setHllElevation) {
+                LayoutEditorModule.setHllElevation("overhead");
+            } else if (typeof setHllElevation === "function") {
+                setHllElevation("overhead");
+            } else {
+                state.hllElevationPreset = "overhead";
+                state.hllElevation = 3.00;
+                state.mountingType = "overhead";
+                state.roofShape = "flat_overhead";
+            }
+            if (state.gridSystem) {
+                state.gridSystem.cable_height = 3.00;
+            }
+            renderDynamicLayoutForm();
+            if (typeof syncElevationInputsUI === "function") syncElevationInputsUI();
+            if (typeof update3DScene === "function") update3DScene();
+            if (typeof updateCalculationsUI === "function") {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
+        });
+    }
+
     const gridNx = document.getElementById("input-grid-nx");
     const gridNy = document.getElementById("input-grid-ny");
     const gridEndMargin = document.getElementById("input-grid-end-margin");
@@ -8451,8 +8541,15 @@ function attachDynamicFormListeners() {
     if (gridCableHeight) {
         gridCableHeight.addEventListener("input", (e) => {
             const raw = parseFloat(e.target.value) || 3.5;
-            state.gridSystem.cable_height = isUS ? (raw / METERS_TO_FEET) : raw;
+            const hM = isUS ? (raw / METERS_TO_FEET) : raw;
+            state.gridSystem.cable_height = hM;
+            state.hllElevation = hM;
+            if (hM >= 2.0 && state.hllElevationPreset !== "custom") {
+                state.hllElevationPreset = "overhead";
+            }
             if (typeof update3DScene === "function") update3DScene();
+            if (typeof syncElevationInputsUI === "function") syncElevationInputsUI();
+            if (typeof checkPostExtensionWarning === "function") checkPostExtensionWarning();
         });
     }
 
@@ -18391,8 +18488,21 @@ function updateCalculationsUI(layout, maxSpan) {
             : { anchors: [], xMatrixPieces: [], spans: [] };
 
         if (dynContainer) {
+            const isGridOverhead = isGridOverheadValid(state);
             const subTitle = TRANSLATIONS.lblGridDistribution[l] || "Répartition Grille Overhead (Précharge P0 + Poids W) :";
-            let gHtml = `
+            let gHtml = "";
+            if (!isGridOverhead) {
+                gHtml += `
+                    <div class="warning-alert-box margin-bottom-sm" style="background: #fffbeb; border: 1px solid #f59e0b; color: #92400e; padding: 8px 12px; border-radius: 6px; font-size: 0.82rem; display: flex; align-items: center; gap: 8px;">
+                        <i class="fa-solid fa-triangle-exclamation" style="color: #d97706; font-size: 1.1rem; flex-shrink: 0;"></i>
+                        <div>
+                            <strong>${l === 1 ? "Overhead Warning:" : (l === 2 ? "Advertencia Overhead:" : "Avertissement Overhead :")}</strong>
+                            ${l === 1 ? "This grid system is designed exclusively for overhead mounting. Displayed loads assume overhead elevation." : (l === 2 ? "Este sistema en rejilla está diseñado exclusivamente para instalación suspendida (overhead)." : "Cette configuration s'applique uniquement en overhead. Les efforts affichés sont calculés pour une pose suspendue.")}
+                        </div>
+                    </div>
+                `;
+            }
+            gHtml += `
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
                     <span><strong>P0 :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
@@ -19057,7 +19167,12 @@ function setupUIEventListeners() {
                 state.product = "XTREME";
                 state.roofShape = "flat_overhead";
                 state.mountingType = "overhead";
+                state.hllElevationPreset = "overhead";
+                state.hllElevation = 3.00;
                 state.bufferLength = 0.30;
+                if (state.gridSystem) {
+                    state.gridSystem.cable_height = 3.00;
+                }
                 const prodSel = document.getElementById("select-product");
                 if (prodSel) prodSel.value = "XTREME";
                 const uInp = document.getElementById("input-users");
@@ -19068,6 +19183,9 @@ function setupUIEventListeners() {
                 const bufferInfo = document.getElementById("lbl-buffer-len-info");
                 if (bufferInfo) {
                     bufferInfo.innerHTML = `Buffer d'extrémité fixe : <strong>${formatDistance(0.30, 2, state.lang)}</strong> (non modifiable par l'utilisateur)`;
+                }
+                if (typeof syncElevationInputsUI === "function") {
+                    syncElevationInputsUI();
                 }
             } else if (state.layoutType === "cross_spans") {
                 state.product = "PRO";
