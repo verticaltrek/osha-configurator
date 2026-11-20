@@ -13300,7 +13300,7 @@ const Dimensions3DModule = {
             const sumZ = zSpacings.reduce((acc, v) => acc + (parseFloat(v) || 5.0), 0);
             const endMargin = Math.max(0.5, (typeof gs.end_margin === "number" && !isNaN(gs.end_margin)) ? gs.end_margin : (parseFloat(gs.end_margin) || 2.0));
             const gridWidthZ = sumZ + 2 * endMargin;
-            actualEdgeDist = Math.max(lineToEdge, (l - gridWidthZ) / 2);
+            actualEdgeDist = Math.max(0, (l - gridWidthZ) / 2);
         }
         const lEdgeText = `d: ${UnitsModule.formatLength(actualEdgeDist)}`;
         const dimX = Math.min(L * 0.5, actualEdgeDist + 3.0);
@@ -16827,6 +16827,9 @@ function update3DScene() {
             orthographicCam.position.set(centerX, 40, centerZ);
             orthographicCam.lookAt(centerX, 0, centerZ);
         }
+        if (typeof Dimensions3DModule !== "undefined") {
+            Dimensions3DModule.renderDimensions();
+        }
         updateCalculationsUI(layout, maxSpan);
         return;
     } else if (state.layoutType === "grid_system") {
@@ -16840,6 +16843,9 @@ function update3DScene() {
         if (orthographicCam && state.viewMode === "2d") {
             orthographicCam.position.set(centerX, 40, centerZ);
             orthographicCam.lookAt(centerX, 0, centerZ);
+        }
+        if (typeof Dimensions3DModule !== "undefined") {
+            Dimensions3DModule.renderDimensions();
         }
         updateCalculationsUI(layout, maxSpan);
         return;
@@ -16861,6 +16867,9 @@ function update3DScene() {
                 orthographicCam.position.set(slopeRes.center.x, slopeRes.bounds.maxY + 30, slopeRes.center.z);
                 orthographicCam.lookAt(slopeRes.center.x, slopeRes.center.y, slopeRes.center.z);
             }
+        }
+        if (typeof Dimensions3DModule !== "undefined") {
+            Dimensions3DModule.renderDimensions();
         }
         updateCalculationsUI(layout, maxSpan);
         return;
@@ -18903,11 +18912,13 @@ function setupUIEventListeners() {
                 const rawL = parseFloat(String(rLenInp.value).replace(/,/g, '.')) || 25.0;
                 state.roof_length = UnitsModule.parseLengthToMeters(rawL);
                 state.L = state.roof_length;
+                state.userRoofLength = state.roof_length;
             }
             if (rWidInp) {
                 const rawW = parseFloat(String(rWidInp.value).replace(/,/g, '.')) || 15.0;
                 state.roof_width = UnitsModule.parseLengthToMeters(rawW);
                 state.l = state.roof_width;
+                state.userRoofWidth = state.roof_width;
             }
             if (rEdgeInp) {
                 const valTrim = String(rEdgeInp.value || "").trim().replace(/,/g, ".");
