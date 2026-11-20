@@ -7888,7 +7888,7 @@ function renderDynamicLayoutForm() {
                     </div>
                 </div>
                 <div class="form-group">
-                    <label><i class="fa-solid fa-crosshairs"></i> ${isEn ? "Cross Junction of Fall (Level 0):" : "Croix où a lieu la chute (Niveau 0) :"}</label>
+                    <label><i class="fa-solid fa-crosshairs"></i> ${isEn ? "Cross Junction of Fall:" : "Croix où a lieu la chute :"}</label>
                     <select id="select-grid-fall-cross" class="select-custom">
                         ${Array.from({ length: nx }, (_, ix) =>
             Array.from({ length: ny }, (_, iz) => {
@@ -11582,7 +11582,8 @@ const SystemLabelingModule = {
                         isFallAnchor: isFall,
                         effortKn: effortVal,
                         effortStr: UnitsModule.formatForce(effortVal),
-                        remarque: isFall ? (isEn ? "Fall Cross (Level 0)" : "Croix de chute (Niveau 0)") : (distManhattan <= 3 ? `Niveau ${distManhattan} (${(factor * 100).toFixed(1)}%)` : "Atténué (<1%)"),
+                        remarque: isFall ? (isEn ? "Fall Cross" : "Croix de chute") : "-",
+                        remark: isFall ? (isEn ? "Fall Cross" : "Croix de chute") : "-",
                         position: pos
                     });
                 }
@@ -18534,7 +18535,7 @@ function updateCalculationsUI(layout, maxSpan) {
             sysLabels.xMatrixPieces.forEach(xm => {
                 const isFallX = xm.isFallAnchor;
                 const actCls = isFallX ? " active-fall" : "";
-                const lvlTag = isFallX ? ` (${l === 1 ? 'Fall Cross' : 'Croix Chute'})` : ` (Niv. ${xm.level})`;
+                const lvlTag = isFallX ? ` (${l === 1 ? 'Fall Cross' : (l === 2 ? 'Cruz Caída' : 'Croix Chute')})` : "";
                 gHtml += `
                     <div class="readout-row anchor-point${actCls}">
                         <span class="row-label">${xm.id}${lvlTag} :</span>
@@ -21473,7 +21474,7 @@ function generatePDFReport() {
 
                 const gridRows = [];
                 gridRows.push([
-                    ["Croix Chute - Niv. 0", "Fall Cross - Level 0", "Cruz Caída - Nivel 0"][l],
+                    ["Croix Chute", "Fall Cross", "Cruz Caída"][l],
                     "100%",
                     `${formatLocalizedNumber(gridRes.level0.totalFall, 2, l)} kN - P0+W: ${formatLocalizedNumber(gridRes.prechargeFall, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynFall, 2, l)}`,
                     `${formatLocalizedNumber(gridRes.level0.totalOther, 2, l)} kN - P0+W/3: ${formatLocalizedNumber(gridRes.prechargeOther, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynOther, 2, l)}`,
