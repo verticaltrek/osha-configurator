@@ -3347,7 +3347,7 @@ const state = {
     customMad: undefined,          // Spec V2 — 08: MAD modifiable
     hasConvertedDeprecatedConfig: isDeprecatedInitial,
     unitSystem: "metric",      // "metric" | "imperial"
-    norm: "OSHA",              // "OSHA" | "EN 795" (Norme réglementaire)
+    norm: "EN 795",            // "EN 795" | "OSHA" (Norme réglementaire)
     appMode: "fall_arrest",    // "fall_arrest" | "restraint"
     projectInfo: {
         name: "",
@@ -4991,7 +4991,9 @@ function updateLumpSumHint() {
     const isEn = (l === 1);
     const isEs = (l === 2);
     const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
-    const isOSHA = (state.norm === "OSHA");
+    const rNormSel = document.getElementById("select-roof-norm");
+    const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : (state.norm || "EN 795");
+    const isOSHA = (activeNorm === "OSHA");
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
     const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
     const baseFKn = getSrlBaseArrestForceKn();
@@ -5024,7 +5026,9 @@ if (typeof window !== "undefined") {
 }
 
 function recalculateLumpSumArrestLoad() {
-    const isOSHA = (state.norm === "OSHA");
+    const rNormSel = document.getElementById("select-roof-norm");
+    const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : (state.norm || "EN 795");
+    const isOSHA = (activeNorm === "OSHA");
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
     const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
     let baseFKn = getSrlBaseArrestForceKn();
@@ -6809,6 +6813,12 @@ function populateConfigModalInputs() {
     // Application mode
     const appSel = document.getElementById("select-app-mode");
     if (appSel) appSel.value = state.appMode || "fall_arrest";
+
+    // Regulatory Standard dropdown
+    const rNormSelInit = document.getElementById("select-roof-norm");
+    if (rNormSelInit) {
+        rNormSelInit.value = (state.norm === "EN 795" || state.norm === "EN") ? "EN 795" : "OSHA";
+    }
 
     // Arrest load mode & value (1 user base force)
     const arrestModeSel = document.getElementById("select-arrest-load-mode");
@@ -11185,9 +11195,8 @@ const Calculator = {
 
     getEffectiveArrestLoad: function (nbUsers) {
         const isOSHA = (typeof state !== "undefined" && state.norm === "OSHA");
-        const isCustom = (typeof state !== "undefined" && state.arrestLoadMode === "custom");
         const u = Math.max(1, Math.min(5, parseInt(nbUsers) || 1));
-        const m = (isOSHA || isCustom)
+        const m = isOSHA
             ? 1.00
             : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u])
                 ? LUMP_FACTOR_BY_USERS[u]
@@ -11198,11 +11207,11 @@ const Calculator = {
                 baseKn = state.arrestForceKn;
             } else if (typeof state.arrestLoadKn === "number" && !isNaN(state.arrestLoadKn) && state.arrestLoadKn > 0) {
                 const curU = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-                const curM = (isOSHA || isCustom) ? 1.0 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0);
+                const curM = isOSHA ? 1.0 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0);
                 baseKn = state.arrestLoadKn / curM;
             } else if (typeof state.arrestLoadValue === "number" && !isNaN(state.arrestLoadValue) && state.arrestLoadValue > 0) {
                 const curU = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-                const curM = (isOSHA || isCustom) ? 1.0 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0);
+                const curM = isOSHA ? 1.0 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[curU]) ? LUMP_FACTOR_BY_USERS[curU] : 1.0);
                 baseKn = state.arrestLoadValue / curM;
             }
         }
@@ -19537,6 +19546,27 @@ function setupUIEventListeners() {
         });
     }
 
+    // Regulatory standard dropdown change in modal
+    const roofNormSelect = document.getElementById("select-roof-norm");
+    if (roofNormSelect) {
+        const onRoofNormChange = (e) => {
+            const nextNorm = e.target.value;
+            setNorm(nextNorm);
+            const isOSHA = (nextNorm === "OSHA");
+            const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
+            const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
+            const baseKn = getSrlBaseArrestForceKn();
+            const totalKn = parseFloat((m * baseKn).toFixed(3));
+            state.arrestLoadValue = totalKn;
+            state.arrestLoadKn = totalKn;
+            updateLumpSumHint();
+            if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
+            updateCalculationsUI();
+        };
+        roofNormSelect.addEventListener("change", onRoofNormChange);
+        roofNormSelect.addEventListener("input", onRoofNormChange);
+    }
+
     // Arrest load mode & value change
     const arrestModeSelect = document.getElementById("select-arrest-load-mode");
     const arrestValInput = document.getElementById("input-arrest-load-val");
@@ -19554,6 +19584,7 @@ function setupUIEventListeners() {
             } else if (state.arrestLoadMode === "custom") {
                 updateLumpSumHint();
             }
+            if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
             updateCalculationsUI();
         });
 
@@ -19569,7 +19600,9 @@ function setupUIEventListeners() {
                 if (arrestModeSelect) arrestModeSelect.value = "custom";
 
                 // Compute total arrest load based on active users (M=1 in OSHA, M factor applied in EN 795)
-                const isOSHA = (state.norm === "OSHA");
+                const rNormSel = document.getElementById("select-roof-norm");
+                const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : state.norm;
+                const isOSHA = (activeNorm === "OSHA");
                 const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
                 const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
                 const totalKn = parseFloat((m * baseKn).toFixed(3));
@@ -19577,6 +19610,7 @@ function setupUIEventListeners() {
                 state.arrestLoadKn = totalKn;
 
                 updateLumpSumHint();
+                if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
                 updateCalculationsUI();
             }
         };
@@ -19592,13 +19626,16 @@ function setupUIEventListeners() {
             const maxU = isPro(state.product) ? 5 : 3;
             u = Math.max(1, Math.min(maxU, u));
             state.nbUsers = u;
-            const isOSHA = (state.norm === "OSHA");
+            const rNormSel = document.getElementById("select-roof-norm");
+            const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : state.norm;
+            const isOSHA = (activeNorm === "OSHA");
             const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
             const baseKn = getSrlBaseArrestForceKn();
             const totalKn = parseFloat((m * baseKn).toFixed(3));
             state.arrestLoadValue = totalKn;
             state.arrestLoadKn = totalKn;
             updateLumpSumHint();
+            if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
             updateCalculationsUI();
         };
         usersInput.addEventListener("input", onUsersChange);
@@ -20021,8 +20058,9 @@ function setupUIEventListeners() {
             state.arrestForceLbf = loadLbf;
 
             // Recalculate total arrest load for active users using Lump Sum (M * F_user)
+            const isOSHA = (state.norm === "OSHA");
             const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-            const m = LUMP_FACTOR_BY_USERS[u] || 1.00;
+            const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
             const totalKn = parseFloat((m * baseFKn).toFixed(3));
             state.arrestLoadValue = totalKn;
             state.arrestLoadKn = totalKn;
@@ -22857,6 +22895,7 @@ function initApp() {
     setupUIEventListeners();
     applyLanguage(state.lang || 0);
     setUnitSystem(state.unitSystem || "metric", true);
+    setNorm(state.norm || "EN 795", true);
 }
 
 if (document.readyState === "loading") {
