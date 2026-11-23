@@ -18,7 +18,7 @@ const SLOPE_MAX_DEG = 75;
 const END_BUFFER_LENGTH = 0.20;
 const FALL_TEST_REFERENCE_FACTOR = 2.0;
 const MAD_WARN_M = 2.0; // Spec V2 — 08: Seuil d'avertissement MAD > 2.0m
-const DEPRECATED_CONFIGS = ["3", "4", "5", "7", "8", "9", "10", "multi_bend_90", "multi_bend_var", "multi_bend_multi90", "multi_bend_multivar", "slope_single", "slope_multi", "slope_horizontal_comb"];
+const DEPRECATED_CONFIGS = ["3", "4", "5", "7", "8", "9", "10", "11", "cross_spans", "multi_bend_90", "multi_bend_var", "multi_bend_multi90", "multi_bend_multivar", "slope_single", "slope_multi", "slope_horizontal_comb"];
 if (typeof window !== "undefined") {
     window.ELEVATION_TO_FALL_FACTOR = ELEVATION_TO_FALL_FACTOR;
     window.FALL_FACTOR_TOLERANCE_M = FALL_FACTOR_TOLERANCE_M;
@@ -3332,7 +3332,7 @@ const urlConfigMap = {
     "8": "multi_straight",
     "9": "slope_multi",
     "10": "slope_horizontal_comb",
-    "11": "cross_spans",
+    "11": "multi_straight",
     "12": "grid_system"
 };
 const rawInitialLayout = (urlParams && (urlParams.get("layout") || urlConfigMap[urlParams.get("config")])) || "single_span";
@@ -7128,24 +7128,19 @@ function filterLayoutDropdownOptions() {
     if (!layoutSel) return;
     const prod = (state.product || "CORE").toUpperCase();
 
-    const opt11 = layoutSel.querySelector("option[value='cross_spans']");
     const opt12 = layoutSel.querySelector("option[value='grid_system']");
 
     const isNewPro = isPro(prod);
     const isLongRange = isXtreme(prod);
 
-    if (opt11) {
-        opt11.disabled = false;
-        opt11.style.display = "block";
-    }
     if (opt12) {
         opt12.disabled = false;
         opt12.style.display = "block";
     }
 
-    if (state.layoutType === "cross_spans" && !isNewPro && !isLongRange) {
-        state.layoutType = "single_span";
-        layoutSel.value = "single_span";
+    if (state.layoutType === "cross_spans") {
+        state.layoutType = "multi_straight";
+        layoutSel.value = "multi_straight";
     }
     if (state.layoutType === "grid_system" && !isLongRange && !isNewPro) {
         state.layoutType = "single_span";
@@ -7827,108 +7822,6 @@ function renderDynamicLayoutForm() {
                 <button type="button" class="btn-table-action" id="btn-add-span"><i class="fa-solid fa-plus"></i> ${isEn ? "Add Span" : "Ajouter une portée"}</button>
                 <button type="button" class="btn-table-action" id="btn-remove-span"><i class="fa-solid fa-minus"></i> ${isEn ? "Delete Span" : "Supprimer une portée"}</button>
             </div>
-        `;
-    }
-    // 11. Cross-spans (NewPRO Only)
-    else if (layout === "cross_spans") {
-        const cs = state.crossSpans || { north: 10.0, east: 10.0, south: 10.0, west: 10.0, angles: [270, 0, 90, 180], showAngles: false };
-        const nV = isUS ? (cs.north * METERS_TO_FEET).toFixed(2) : (typeof cs.north === "number" ? cs.north.toFixed(2) : cs.north);
-        const eV = isUS ? (cs.east * METERS_TO_FEET).toFixed(2) : (typeof cs.east === "number" ? cs.east.toFixed(2) : cs.east);
-        const sV = isUS ? (cs.south * METERS_TO_FEET).toFixed(2) : (typeof cs.south === "number" ? cs.south.toFixed(2) : cs.south);
-        const wV = isUS ? (cs.west * METERS_TO_FEET).toFixed(2) : (typeof cs.west === "number" ? cs.west.toFixed(2) : cs.west);
-        const angles = cs.angles || [270, 0, 90, 180];
-        const maxNewProSpan = 15.0;
-
-        const maxSpanBranch = Math.max(cs.north, cs.east, cs.south, cs.west);
-        const isExceeding = maxSpanBranch > maxNewProSpan;
-
-        html = `
-            <div class="info-readout-box margin-bottom-sm" style="background: rgba(241,245,249,0.9); border-left: 4px solid #3b82f6;">
-                <div style="display:flex; justify-content: space-between; flex-wrap: wrap; width:100%; gap: 10px;">
-                    <span><i class="fa-solid fa-crosshairs" style="color:#3b82f6;"></i> <strong>Config 11 — Cross-spans</strong> (NewPRO)</span>
-                    <span><i class="fa-solid fa-layer-group" style="color:#3b82f6;"></i> ${isEn ? "1 X-Matrix component at center | 4 End anchors" : "1 Pièce X-Matrix au centre | 4 Poteaux d'extrémité"}</span>
-                </div>
-            </div>
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>${isEn ? "Branch 1 — North / Span 1" : "Branche 1 — Nord / Span 1"} (${distUnit}) :</label>
-                    <div class="input-with-unit">
-                        <input type="number" id="input-cross-north" value="${nV}" min="0.1" max="15.0" step="any">
-                        <span class="unit">${distUnit}</span>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>${isEn ? "Branch 2 — East / Span 2" : "Branche 2 — Est / Span 2"} (${distUnit}) :</label>
-                    <div class="input-with-unit">
-                        <input type="number" id="input-cross-east" value="${eV}" min="0.1" max="15.0" step="any">
-                        <span class="unit">${distUnit}</span>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>${isEn ? "Branch 3 — South / Span 3" : "Branche 3 — Sud / Span 3"} (${distUnit}) :</label>
-                    <div class="input-with-unit">
-                        <input type="number" id="input-cross-south" value="${sV}" min="0.1" max="15.0" step="any">
-                        <span class="unit">${distUnit}</span>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>${isEn ? "Branch 4 — West / Span 4" : "Branche 4 — Ouest / Span 4"} (${distUnit}) :</label>
-                    <div class="input-with-unit">
-                        <input type="number" id="input-cross-west" value="${wV}" min="0.1" max="15.0" step="any">
-                        <span class="unit">${distUnit}</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Block Angles Replié par défaut -->
-            <div class="form-group full-width margin-top-sm" style="background: rgba(241, 245, 249, 0.6); padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1;">
-                <button type="button" id="btn-toggle-cross-angles" style="background: none; border: none; color: #1e293b; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%;">
-                    <i class="fa-solid ${cs.showAngles ? 'fa-chevron-down' : 'fa-chevron-right'}" style="color: #3b82f6;"></i>
-                    <span><i class="fa-solid fa-compass"></i> ${isEn ? "Advanced Branch Angles (Default: 270°, 0°, 90°, 180°)" : "Saisie Avancée des Angles des Branches (par défaut: 270°, 0°, 90°, 180°)"}</span>
-                </button>
-                ${cs.showAngles ? `
-                    <div class="form-grid margin-top-sm" style="grid-template-columns: repeat(4, 1fr); gap: 8px;">
-                        <div class="form-group">
-                            <label style="font-size:0.75rem;">Angle B1 (°)</label>
-                            <input type="number" class="cross-angle-input" data-idx="0" value="${angles[0]}" step="any">
-                        </div>
-                        <div class="form-group">
-                            <label style="font-size:0.75rem;">Angle B2 (°)</label>
-                            <input type="number" class="cross-angle-input" data-idx="1" value="${angles[1]}" step="any">
-                        </div>
-                        <div class="form-group">
-                            <label style="font-size:0.75rem;">Angle B3 (°)</label>
-                            <input type="number" class="cross-angle-input" data-idx="2" value="${angles[2]}" step="any">
-                        </div>
-                        <div class="form-group">
-                            <label style="font-size:0.75rem;">Angle B4 (°)</label>
-                            <input type="number" class="cross-angle-input" data-idx="3" value="${angles[3]}" step="any">
-                        </div>
-                    </div>
-                ` : ''}
-            </div>
-
-            <!-- Sélection de la branche où a lieu la chute -->
-            <div class="form-group full-width margin-top-sm" style="background: rgba(241, 245, 249, 0.6); padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1;">
-                <label for="select-cross-fall-branch" style="font-weight: 600; color: #1e293b;">
-                    <i class="fa-solid fa-crosshairs" style="color: #3b82f6;"></i> ${isEn ? "Branch where fall occurs (100% load, 50% on other 3 branches):" : "Branche où a lieu la chute (100% de l'effort, 50% sur les 3 autres) :"}
-                </label>
-                <select id="select-cross-fall-branch" class="select-custom" style="margin-top: 4px;">
-                    <option value="north" ${(state.fallPosition?.branch || "north") === "north" ? 'selected' : ''}>${isEn ? "Branch 1 — North (Span 1)" : "Branche 1 — Nord (Span 1)"}</option>
-                    <option value="east"  ${(state.fallPosition?.branch) === "east" ? 'selected' : ''}>${isEn ? "Branch 2 — East (Span 2)" : "Branche 2 — Est (Span 2)"}</option>
-                    <option value="south" ${(state.fallPosition?.branch) === "south" ? 'selected' : ''}>${isEn ? "Branch 3 — South (Span 3)" : "Branche 3 — Sud (Span 3)"}</option>
-                    <option value="west"  ${(state.fallPosition?.branch) === "west" ? 'selected' : ''}>${isEn ? "Branch 4 — West (Span 4)" : "Branche 4 — Ouest (Span 4)"}</option>
-                </select>
-            </div>
-
-            ${isExceeding ? `
-                <div class="warning-alert-box margin-top-sm" style="background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 10px; border-radius: 6px; font-size: 0.85rem; display: flex; gap: 10px; align-items: center;">
-                    <i class="fa-solid fa-triangle-exclamation" style="font-size: 1.2rem; color: #dc2626;"></i>
-                    <div>
-                        <strong>${isEn ? "Warning:" : "Attention :"}</strong> ${isEn ? "Maximum span entered" : "La portée maximale saisie"} (${formatDistance(maxSpanBranch, 2)}) ${isEn ? "exceeds NewPRO admissible limit" : "dépasse la limite admissible NewPRO"} (${formatDistance(maxNewProSpan, 2)}).
-                    </div>
-                </div>
-            ` : ''}
         `;
     }
     // 12. Grid Systems (XTREME Only - Overhead)
@@ -9088,7 +8981,6 @@ const TRANSLATIONS = {
         single_span: ["Portée Unique (Single Span)", "Single Span", "Luz Única (Single Span)"],
         multi_straight: ["Multi-portée standard", "Multi-span standard", "Multi-tramo estándar"],
         multi_bend_circle: ["Multi-portée avec coudes", "Multi-span with bends", "Multi-tramo con curvas"],
-        cross_spans: ["Système en croix (Cross-spans)", "Cross-spans", "Sistema en cruz (Cross-spans)"],
         grid_system: ["Système en grille (Grid Systems)", "Grid Systems", "Sistema en rejilla (Grid Systems)"]
     },
 
