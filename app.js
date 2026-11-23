@@ -3515,7 +3515,7 @@ const state = {
     viewMode: "3d",
     roofTexture: "concrete",
     showObstacles: false,
-    gridVisible: true,
+    gridVisible: false,
     showAnchorLabels: true,
     showSpanLabels: true,
     lang: 0,
