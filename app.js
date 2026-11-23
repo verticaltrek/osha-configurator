@@ -21860,47 +21860,27 @@ function generatePDFReport() {
                 const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, state.nbUsers, state.norm, uEffort, uDefl, fallFactorVal, support, true);
                 const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(uExt1, nx, ny, state.userMassKg || 141, state.gridPretensionKg || 600, fallCross, fallBranch);
 
-                const gridHeaders = [
-                    ["Niveau Grille / Emplacement", "Facteur", "Pt Chute - Total", "3 Autres Branches - Total", "Statut"],
-                    ["Grid Level / Location", "Factor", "Fall Point - Total", "3 Other Branches - Total", "Status"],
-                    ["Nivel Cuadrícula / Ubicación", "Factor", "Pto Caída - Total", "3 Otras Ramas - Total", "Estado"]
-                ][l];
+                const table2HeaderRow = [
+                    pdfTrans.table2Headers[l][0],
+                    pdfTrans.table2Headers[l][1]
+                ];
 
-                const gridRows = [];
-                gridRows.push([
-                    ["Croix Chute", "Fall Cross", "Cruz Caída"][l],
-                    "100%",
-                    `${formatLocalizedNumber(gridRes.level0.totalFall, 2, l)} kN - P0+W: ${formatLocalizedNumber(gridRes.prechargeFall, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynFall, 2, l)}`,
-                    `${formatLocalizedNumber(gridRes.level0.totalOther, 2, l)} kN - P0+W/3: ${formatLocalizedNumber(gridRes.prechargeOther, 2, l)} + Dyn: ${formatLocalizedNumber(gridRes.dynOther, 2, l)}`,
-                    ["Actif", "Active", "Activo"][l]
-                ]);
-
-                const maxLevels = Math.min(5, (nx - 1) + (ny - 1));
-                for (let lvl = 1; lvl <= maxLevels; lvl++) {
-                    const factor = Math.pow(ANCHOR_EFFORT_CONFIG.GRID_LEVEL_FACTOR, lvl);
-                    let pChute = factor * (gridRes.prechargeFall + gridRes.dynFall);
-                    let pOther = factor * (gridRes.prechargeOther + gridRes.dynOther);
-                    let isResidual = false;
-                    const minResidual = 0.10;
-                    if (pChute < minResidual) { pChute = minResidual; isResidual = true; }
-                    if (pOther < minResidual) { pOther = minResidual; isResidual = true; }
-                    const statusStr = isResidual
-                        ? ["Résiduel", "Residual", "Residual"][l]
-                        : ["Actif", "Active", "Activo"][l];
-
-                    gridRows.push([
-                        `${["Croix Niveau", "Cross Level", "Cruz Nivel"][l]} ${lvl}`,
-                        `${(factor * 100).toFixed(factor < 0.01 ? 2 : 1)}%`,
-                        `${formatLocalizedNumber(pChute, 2, l)} kN`,
-                        `${formatLocalizedNumber(pOther, 2, l)} kN`,
-                        statusStr
-                    ]);
-                }
+                const rowMaxSpan = [pdfTrans.rowMaxSpan[l], formatDistance(realSpanMax, 2, l)];
+                const rowForceL = [pdfTrans.rowForceL[l], `${formatLocalizedNumber(uEffort, 2, l)} kN`];
+                const rowDefl = [pdfTrans.rowDefl[l], formatDeflection(uDefl, l)];
+                const rowExt1 = [
+                    ["Effort max poteaux périphériques", "Max Perimeter Post Load", "Carga máx postes perimetrales"][l],
+                    `${formatLocalizedNumber(gridRes.level0.totalOther || uExt1, 2, l)} kN`
+                ];
+                const rowExt2 = [
+                    ["Effort max point de chute", "Max Fall Point Load", "Carga máx punto de caída"][l],
+                    `${formatLocalizedNumber(gridRes.level0.totalFall || uEffort, 2, l)} kN`
+                ];
 
                 doc.autoTable({
                     startY: sec2StartY + 3,
-                    head: [gridHeaders],
-                    body: gridRows,
+                    head: [table2HeaderRow],
+                    body: [rowMaxSpan, rowForceL, rowDefl, rowExt1, rowExt2],
                     theme: 'grid',
                     headStyles: { fillColor: C_HOOKT_BLACK, textColor: C_HOOKT_WHITE, fontStyle: 'bold' },
                     styles: { fontSize: 7.2, cellPadding: 1.8, lineColor: C_HOOKT_LINE, lineWidth: 0.25 }
