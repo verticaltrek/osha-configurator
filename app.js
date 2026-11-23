@@ -9209,7 +9209,7 @@ const TRANSLATIONS = {
     lblExt3LRow: ["Force Ancrage 3 :", "Anchor Force 3:", "Fuerza Anclaje 3:"],
     lblExt4LRow: ["Force Ancrage 4 :", "Anchor Force 4:", "Fuerza Anclaje 4:"],
     lblMultiSpanDistribution: ["Répartition des efforts aux ancrages :", "Anchor Load Distribution:", "Distribución de Cargas a los Anclajes:"],
-    lblCrossDistribution: ["Répartition en Croix (4 branches) :", "Cross Distribution (4 branches):", "Distribución en Cruz (4 ramas):"],
+    lblCrossDistribution: ["Répartition en Croix :", "Cross Distribution:", "Distribución en Cruz:"],
     lblGridDistribution: ["Répartition Grille (Précharge + Dynamique) :", "Grid Distribution (Preload + Dynamic):", "Distribución en Cuadrícula (Precarga + Dinámica):"],
     lblAnchorA0: ["Force Ancrage A0 (Ext. Gauche)", "Anchor Force A0 (Left Ext.)", "Fuerza Anclaje A0 (Ext. Izq.)"],
     lblAnchorA1: ["Force Ancrage A1", "Anchor Force A1", "Fuerza Anclaje A1"],
@@ -18749,15 +18749,14 @@ function updateCalculationsUI(layout, maxSpan) {
         const fallBr = state.fallPosition?.branch || "north";
         const crossRes = AnchorEffortDistributionModule.calculateRule3_Cross(ext1L, fallBr);
         if (dynContainer) {
-            const subTitle = TRANSLATIONS.lblCrossDistribution[l] || "Répartition en Croix (4 branches) :";
+            const subTitle = TRANSLATIONS.lblCrossDistribution[l] || "Répartition en Croix :";
             let cHtml = `<div class="readout-subtitle"><i class="fa-solid fa-plus"></i> ${subTitle}</div>`;
             crossRes.branches.forEach(b => {
                 const bLabel = b.label[l] || b.label[0];
                 const activeCls = b.isFallBranch ? " active-fall" : "";
-                const tag = b.isFallBranch ? (l === 1 ? " (Fall 100%)" : (l === 2 ? " (Caída 100%)" : " (Chute 100%)")) : " (50%)";
                 cHtml += `
                     <div class="readout-row anchor-point${activeCls}">
-                        <span class="row-label">${bLabel}${tag} :</span>
+                        <span class="row-label">${bLabel} :</span>
                         <span class="row-val">${UnitsModule.formatForce(b.forceKn)}</span>
                     </div>
                 `;
@@ -18920,10 +18919,10 @@ function updateCalculationsUI(layout, maxSpan) {
                 const fallSubIdx = (state.fallPosition?.subSpanIndex !== undefined) ? state.fallPosition.subSpanIndex : 0;
 
                 const brSubTitle = (l === 1)
-                    ? "Transverse Branches Loads (50% transfer & multi-span):"
+                    ? "Transverse Branches Loads:"
                     : (l === 2
-                        ? "Cargas Ramas Transversales (transferencia 50% y multivano):"
-                        : "Efforts Branches Transversales (transfert 50% et multi-portée) :");
+                        ? "Cargas Ramas Transversales:"
+                        : "Efforts Branches Transversales :");
                 mHtml += `<div class="readout-subtitle margin-top-sm"><i class="fa-solid fa-diagram-project"></i> ${brSubTitle}</div>`;
 
                 let xMatCount = 0;
@@ -18939,11 +18938,10 @@ function updateCalculationsUI(layout, maxSpan) {
                             loads.forEach((loadVal, sIdx) => {
                                 const aId = `X${xMatCount}-B${bIdx + 1}-A${sIdx + 1}`;
                                 const isFallA = isThisFall && (sIdx === fallSubIdx || sIdx === fallSubIdx + 1);
-                                const aTag = isFallA ? (l === 1 ? " (Fall 100%)" : (l === 2 ? " (Caída 100%)" : " (Chute 100%)")) : (sIdx === 0 ? " (50%)" : (l === 1 ? " (Attenuated)" : (l === 2 ? " (Atenuado)" : " (Atténué)")));
                                 const attCls = isFallA ? " active-fall" : "";
                                 mHtml += `
                                     <div class="readout-row anchor-point${attCls}">
-                                        <span class="row-label">${aId}${aTag} :</span>
+                                        <span class="row-label">${aId} :</span>
                                         <span class="row-val">${UnitsModule.formatForce(loadVal)}</span>
                                     </div>
                                 `;
