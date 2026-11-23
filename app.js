@@ -1779,7 +1779,7 @@ const AnchorEffortDistributionModule = {
         return loads;
     },
 
-    // RÈGLE 4 — Grid (Config 12, Long/Super/Ultra Range, overhead)
+    // RÈGLE 4 — Grid (Config 12, XTREME, overhead)
     // Précharge à chaque croix (P0 + W sur branche chute, P0 + W/3 sur les 3 autres)
     // + Effort dynamique (F_chute sur branche chute, 25% sur 3 autres)
     // + Propagation de croix en croix (facteur 0.25 par niveau Manhattan, coupure < 1% à 0)
@@ -3358,7 +3358,7 @@ const state = {
     },
     arrestLoadMode: "lump_sum",  // "lump_sum" | "custom" | "turbolite" | "falcon"
     arrestLoadValue: 6.0,      // in kN
-    bufferLength: 0.20,        // Fixed buffer length 0.20m (or 0.30m for Long Range)
+    bufferLength: 0.20,        // Fixed buffer length 0.20m (or 0.30m for XTREME)
 
     // Anchor Effort Distribution state (Spec prompt_antigravity_calcul_efforts_ancrages)
     userMassKg: 141,
@@ -7931,7 +7931,7 @@ function renderDynamicLayoutForm() {
             ` : ''}
         `;
     }
-    // 12. Grid Systems (Long Range Only - Overhead)
+    // 12. Grid Systems (XTREME Only - Overhead)
     else if (layout === "grid_system") {
         const gs = state.gridSystem || { nx: 3, ny: 3, xSpacings: [5.0, 5.0], zSpacings: [5.0, 5.0], end_margin: 2.0, cable_height: 3.5 };
         const nx = Math.max(2, gs.nx || 3);
@@ -9431,10 +9431,7 @@ function verifyTranslationsCompleteness(dictFr, dictEn) {
 window.verifyTranslationsCompleteness = verifyTranslationsCompleteness;
 
 function getLongRangeSubRange(lineLen) {
-    const len = lineLen !== undefined ? lineLen : (state.lineLength || 15);
-    if (len < 20.0) return "LONG RANGE";
-    if (len < 34.0) return "SUPER RANGE";
-    return "ULTRA RANGE";
+    return "XTREME";
 }
 
 function getComponentName(c) {
@@ -14690,7 +14687,7 @@ function prepareOBJModel(rawObj, rotY, modelFile = null) {
 
     // Rotate CAD model: X and Z axis orientation adjustments for specific models
     if (modelFile && (modelFile.includes("LongRange") || modelFile.includes("long_range") || modelFile.includes("Long_Range"))) {
-        clone.rotation.x = Math.PI / 2; // Rotate 90° around X-axis strictly for Long Range models
+        clone.rotation.x = Math.PI / 2; // Rotate 90° around X-axis strictly for XTREME models
         clone.rotation.z = 0;
     } else {
         clone.rotation.x = -Math.PI / 2; // Default vertical orientation for all other system models (NEW PRO, LIGHT PRO, etc.)
@@ -16313,7 +16310,7 @@ function renderConfig11CrossSpans3D() {
 }
 
 
-// 3D Renderer for Config 12: Grid Systems (Long Range Only, Overhead grid with X-Matrix at each intersection)
+// 3D Renderer for Config 12: Grid Systems (XTREME Only, Overhead grid with X-Matrix at each intersection)
 function renderConfig12GridSystem3D() {
     const gs = state.gridSystem || { nx: 3, ny: 3, xSpacings: [5.0, 5.0], zSpacings: [5.0, 5.0], end_margin: 2.0, cable_height: 3.5 };
     const nx = Math.max(2, gs.nx || 3);
@@ -17828,9 +17825,7 @@ function getLocalizedRoofShapeName() {
 }
 
 function getLongRangeSubRange(span) {
-    if (span <= 20.0) return "Long Range (10-20m)";
-    if (span <= 34.0) return "Super Range (20-34m)";
-    return "Ultra Range (34-56m)";
+    return "XTREME";
 }
 
 function formatLineMargin(marginCm) {
@@ -18312,7 +18307,7 @@ function updateCalculationsUI(layout, maxSpan) {
         const strL1 = formatDistance(state.lineLength, 2, l);
         const strL2 = formatDistance(state.line2Length, 2, l);
         document.getElementById("header-dims-display").innerHTML = `<i class="fa-solid fa-ruler-combined"></i> ${shapeName} | L1: ${strL1} ${state.hasLine2 ? `+ L2: ${strL2}` : ""}`;
-        const activeSysName = isXtreme(state.product) ? getLongRangeSubRange(realSpanMax) : (state.product || ["Choisissez un système", "Choose a system", "Elija un sistema"][l]);
+        const activeSysName = state.product || ["Choisissez un système", "Choose a system", "Elija un sistema"][l];
         document.getElementById("header-system-display").textContent = activeSysName;
 
         return;
@@ -21617,10 +21612,10 @@ function generatePDFReport() {
         const postName = getActivePostName();
         const effectiveSpanOrLen = (state.layoutType === "grid_system") ? realSpanMax : state.lineLength;
         const displayProductPdf = isXtreme(state.product)
-            ? ("XTREME - " + getLongRangeSubRange(effectiveSpanOrLen))
+            ? "XTREME"
             : normalizeProduct(state.product || "CORE");
         const displayAbsorberPdf = isXtreme(state.product)
-            ? ("XTREME (" + getLongRangeSubRange(effectiveSpanOrLen) + ")")
+            ? "XTREME"
             : normalizeProduct(state.product || "CORE");
 
         const pInfo = state.projectInfo || {};
@@ -21670,7 +21665,7 @@ function generatePDFReport() {
         const arrestForceStr = (isEn ? (currentArrestKn.toFixed(2) + " kN") : (formatLocalizedNumber(currentArrestKn, 2, l) + " kN")) + lumpDetail;
 
         const prodUpper = (state.product || "").toUpperCase();
-        const maxSysUsers = (prodUpper.includes("LIGHT") || prodUpper.includes("LONG")) ? 3 : 5;
+        const maxSysUsers = isPro(state.product) ? 5 : 3;
         const fallFactorVal = (typeof state.fallFactor === "number" && !isNaN(state.fallFactor)) ? state.fallFactor : 1.00;
 
         const hasPostUsed = hasActivePostInConfig();
@@ -22068,12 +22063,7 @@ function generatePDFReport() {
         });
 
         const tableRows = [];
-        const pdfSubRange = getLongRangeSubRange(state.lineLength);
-        const matriceXtremeText = pdfSubRange === "LONG RANGE"
-            ? (isEn ? "Xtreme Matrix - Long Range" : "Matrice Xtreme - Long Range")
-            : (pdfSubRange === "SUPER RANGE"
-                ? (isEn ? "Xtreme Matrix - Super Range" : "Matrice Xtreme - Super Range")
-                : (isEn ? "Xtreme Matrix - Ultra Range" : "Matrice Xtreme - Ultra Range"));
+        const matriceXtremeText = (pdfTrans.matriceXtreme || pdfTrans.matriceLongRange)[l] || (isEn ? "XTREME Matrix Absorber" : "Matrice XTREME Absorbeur");
         const matriceName = isPro(state.product) ? (pdfTrans.matricePro || pdfTrans.matriceNewPro)[l] : (isCore(state.product) ? (pdfTrans.matriceCore || pdfTrans.matriceLightPro)[l] : matriceXtremeText);
         const lvl1 = getFixationInfo(state.product, "matrice_platine", state.roofTexture, state.product);
         const countLvl1 = typeof lvl1.nombre === 'number' ? `${lvl1.nombre * totalAnchors} - ${lvl1.nombre}/matrice` : lvl1.nombre;
