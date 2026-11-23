@@ -20480,11 +20480,14 @@ function setupUIEventListeners() {
         }
     });
 
-    document.getElementById("btn-toggle-grid").addEventListener("click", (e) => {
-        state.gridVisible = !state.gridVisible;
-        e.currentTarget.classList.toggle("active", state.gridVisible);
-        update3DScene();
-    });
+    const btnToggleGrid = document.getElementById("btn-toggle-grid");
+    if (btnToggleGrid) {
+        btnToggleGrid.addEventListener("click", (e) => {
+            state.gridVisible = !state.gridVisible;
+            e.currentTarget.classList.toggle("active", state.gridVisible);
+            update3DScene();
+        });
+    }
 
     const btnToggleAnchorLabels = document.getElementById("btn-toggle-anchor-labels");
     if (btnToggleAnchorLabels) {
