@@ -19673,12 +19673,10 @@ function setupUIEventListeners() {
                 return;
             }
 
-            // Spec V2 — 04 / Prompt 13: Arrest load validation (1 lbf to 5000 lbf for direct entry)
-            const currentKn = state.arrestLoadValue || state.arrestLoadKn || 6.0;
-            const arrestCheck = validateArrestLoad(currentKn, state.arrestLoadMode === "custom");
-            if (!arrestCheck.valid && state.arrestLoadMode === "custom") {
-                alert(arrestCheck.message);
-                return;
+            // Save Regulatory Standard
+            const rNormSel = document.getElementById("select-roof-norm");
+            if (rNormSel) {
+                setNorm(rNormSel.value, true);
             }
 
             // Save Project Info
@@ -19700,12 +19698,6 @@ function setupUIEventListeners() {
             setUnitSystem(nextSys, true);
             const appSel = document.getElementById("select-app-mode");
             state.appMode = appSel ? appSel.value : "fall_arrest";
-
-            // Save Regulatory Standard
-            const rNormSel = document.getElementById("select-roof-norm");
-            if (rNormSel) {
-                setNorm(rNormSel.value, true);
-            }
 
             // Spec V2 — 03: Save & Validate Roof Surface Parameters (Flat Volumetric Roof L, l, H)
             const rLenInp = document.getElementById("input-roof-length");
