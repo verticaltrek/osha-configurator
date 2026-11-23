@@ -5505,31 +5505,44 @@ function updateArrestForceEquivalentUI() {
     }
 
     // Global arrest load M * F
-    const isOSHA = (state.norm === "OSHA");
+    const rNormSel = document.getElementById("select-roof-norm");
+    const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : state.norm;
+    const isOSHA = (activeNorm === "OSHA" || state.norm === "OSHA");
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
     const m = isOSHA ? 1.00 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u]) ? LUMP_FACTOR_BY_USERS[u] : 1.00);
-    const globalKn = parseFloat((m * knVal).toFixed(3));
-    const globalLbf = (typeof UnitsModule !== "undefined") ? (globalKn * UnitsModule.KN_TO_LBF) : (m * lbfVal);
 
-    state.globalArrestLoadLbf = globalLbf;
+    let baseKn = knVal;
+    let baseLbf = lbfVal;
+    if (state.arrestLoadMode === "custom" && typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) {
+        baseKn = state.arrestForceKn;
+        baseLbf = (typeof UnitsModule !== "undefined") ? Math.round(baseKn * UnitsModule.KN_TO_LBF) : Math.round(baseKn * 224.808943);
+        if (afInp && document.activeElement !== afInp) {
+            afInp.value = (unit === "lbf") ? baseLbf : baseKn.toFixed(2);
+        }
+    }
+
+    const globalKn = parseFloat((m * baseKn).toFixed(3));
+    const globalLbf = (typeof UnitsModule !== "undefined") ? (globalKn * UnitsModule.KN_TO_LBF) : (m * baseLbf);
+
+    state.globalArrestLoadLbf = isOSHA ? baseLbf : globalLbf;
     state.globalArrestLoadKn = globalKn;
     state.arrestLoadValue = globalKn;
     state.arrestLoadKn = globalKn;
 
     if (loadStr) {
         if (isOSHA) {
-            const valStr = isUS ? `${Math.round(lbfVal)} lbf (${knVal.toFixed(2)} kN)` : `${knVal.toFixed(2)} kN (${Math.round(lbfVal)} lbf)`;
+            const valStr = isUS ? `${Math.round(baseLbf)} lbf (${baseKn.toFixed(2)} kN)` : `${baseKn.toFixed(2)} kN (${Math.round(baseLbf)} lbf)`;
             loadStr.textContent = isEn
                 ? `Arrest Load (1 user, OSHA): ${valStr}`
                 : `Charge d'arrêt (1 util., OSHA) : ${valStr}`;
         } else if (isUS) {
             loadStr.textContent = isEn
-                ? `Global Arrest Load: ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`
-                : `Charge globale : ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(lbfVal)} lbf)`;
+                ? `Global Arrest Load: ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(baseLbf)} lbf)`
+                : `Charge globale : ${globalLbf.toFixed(1)} lbf (M=${m.toFixed(2)} × ${Math.round(baseLbf)} lbf)`;
         } else {
             loadStr.textContent = isEn
-                ? `Global Arrest Load: ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${knVal.toFixed(2)} kN)`
-                : `Charge globale : ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${knVal.toFixed(2)} kN)`;
+                ? `Global Arrest Load: ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${baseKn.toFixed(2)} kN)`
+                : `Charge globale : ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${baseKn.toFixed(2)} kN)`;
         }
     }
 }
@@ -11194,8 +11207,10 @@ const Calculator = {
     },
 
     getEffectiveArrestLoad: function (nbUsers) {
-        const isOSHA = (typeof state !== "undefined" && state.norm === "OSHA");
-        const u = Math.max(1, Math.min(5, parseInt(nbUsers) || 1));
+        const rNormSel = (typeof document !== "undefined") ? document.getElementById("select-roof-norm") : null;
+        const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : (typeof state !== "undefined" ? state.norm : "EN 795");
+        const isOSHA = (activeNorm === "OSHA" || (typeof state !== "undefined" && state.norm === "OSHA"));
+        const u = Math.max(1, Math.min(5, parseInt(nbUsers) || (typeof state !== "undefined" ? parseInt(state.nbUsers) : 1) || 1));
         const m = isOSHA
             ? 1.00
             : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u])
@@ -18141,7 +18156,9 @@ function updateCalculationsUI(layout, maxSpan) {
 
     const l = state.lang || 0;
 
-    const isOSHA = (state.norm === "OSHA");
+    const rNormSel = document.getElementById("select-roof-norm");
+    const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : state.norm;
+    const isOSHA = (activeNorm === "OSHA" || state.norm === "OSHA");
     const isMultiSpanAllowed = isOSHA && (isPro(state.product) || isCore(state.product));
 
     const tabEN = document.getElementById("tab-en795");
@@ -18282,7 +18299,15 @@ function updateCalculationsUI(layout, maxSpan) {
 
     const support = getActiveSupportType();
     const activeSpans = (state.spans && state.spans.length > 0) ? state.spans : [{ length: realSpanMax }];
-    const arrestKn = state.arrestLoadValue || 6.0;
+    const uUsers = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
+    const mFactor = isOSHA ? 1.00 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[uUsers]) ? LUMP_FACTOR_BY_USERS[uUsers] : 1.00);
+    const baseForceKn = (typeof state.arrestForceKn === "number" && state.arrestForceKn > 0)
+        ? state.arrestForceKn
+        : getSrlBaseArrestForceKn();
+    const effectiveArrestKn = parseFloat((mFactor * baseForceKn).toFixed(3));
+    state.arrestLoadValue = effectiveArrestKn;
+    state.arrestLoadKn = effectiveArrestKn;
+    const arrestKn = effectiveArrestKn;
     const isRangeProd = isXtreme(state.product);
     const p0Kn = isRangeProd ? 5.886 : 0.981;
     const isSlopedRoof = (state.roofShape === "sloped");
@@ -20109,9 +20134,18 @@ function setupUIEventListeners() {
                 update3DScene();
                 onWindowResize();
                 updateUnitLabelsInDOM();
-    if (typeof renderDynamicLayoutForm === "function") {
-        renderDynamicLayoutForm();
-    }
+                if (typeof renderDynamicLayoutForm === "function") {
+                    renderDynamicLayoutForm();
+                }
+            }
+
+            if (typeof updateCalculationsUI === "function" && state.product) {
+                const maxSpan = Calculator.getMaxSpan(state.product);
+                const layout = Calculator.calculateAnchorPositions(state.L, state.l, maxSpan);
+                updateCalculationsUI(layout, maxSpan);
+            }
+            if (typeof updateArrestForceEquivalentUI === "function") {
+                updateArrestForceEquivalentUI();
             }
         } catch (err) {
             console.error("Erreur lors de la validation du formulaire :", err);
