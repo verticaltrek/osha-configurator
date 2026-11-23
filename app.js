@@ -9187,7 +9187,7 @@ const TRANSLATIONS = {
     lblExt4LRow: ["Force Ancrage 4 :", "Anchor Force 4:", "Fuerza Anclaje 4:"],
     lblMultiSpanDistribution: ["Répartition des efforts aux ancrages :", "Anchor Load Distribution:", "Distribución de Cargas a los Anclajes:"],
     lblCrossDistribution: ["Répartition en Croix (4 branches) :", "Cross Distribution (4 branches):", "Distribución en Cruz (4 ramas):"],
-    lblGridDistribution: ["Répartition Grille (Précharge + Dynamique) :", "Grid Distribution (Preload + Dynamic):", "Distribución en Cuadrícula (Precarga + Dinámica):"],
+    lblGridDistribution: ["Répartition Grille :", "Grid Distribution:", "Distribución en Cuadrícula:"],
     lblAnchorA0: ["Force Ancrage A0 (Ext. Gauche)", "Anchor Force A0 (Left Ext.)", "Fuerza Anclaje A0 (Ext. Izq.)"],
     lblAnchorA1: ["Force Ancrage A1", "Anchor Force A1", "Fuerza Anclaje A1"],
     lblAnchorA2: ["Force Ancrage A2", "Anchor Force A2", "Fuerza Anclaje A2"],
@@ -18758,7 +18758,7 @@ function updateCalculationsUI(layout, maxSpan) {
 
         if (dynContainer) {
             const isGridOverhead = isGridOverheadValid(state);
-            const subTitle = TRANSLATIONS.lblGridDistribution[l] || "Répartition Grille Overhead (Précharge P0 + Poids W) :";
+            const subTitle = TRANSLATIONS.lblGridDistribution[l] || "Répartition Grille :";
             let gHtml = "";
             if (!isGridOverhead) {
                 const prodName = normalizeProduct(state.product || "XTREME");
@@ -18775,11 +18775,11 @@ function updateCalculationsUI(layout, maxSpan) {
             gHtml += `
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
-                    <span><strong>P0 :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
-                    <span><strong>W :</strong> ${UnitsModule.formatForce(gridRes.W, 3)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
+                    <span><strong>P0 :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)}</span>
+                    <span><strong>W :</strong> ${UnitsModule.formatForce(gridRes.W, 3)}</span>
                 </div>
                 <div class="readout-row anchor-point active-fall">
-                    <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")} (${activeFallSpanId}) :</span>
+                    <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")} :</span>
                     <span class="row-val">${UnitsModule.formatForce(gridRes.level0.totalFall)}</span>
                 </div>
                 <div class="readout-subtitle margin-top-sm"><i class="fa-solid fa-monument"></i> ${l === 1 ? "Perimeter End Posts:" : (l === 2 ? "Postes de Extremo (Perímetro):" : "Poteaux d'Extrémité (Pourtour) :")}</div>
