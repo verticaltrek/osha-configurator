@@ -11777,7 +11777,7 @@ const SystemLabelingModule = {
                     isXMatrix: false,
                     effortKn: effortVal,
                     effortStr: UnitsModule.formatForce(effortVal),
-                    remarque: isFall ? (isEn ? "Fall Anchor (100%)" : "Ancrage de chute (100%)") : (isEn ? "Secondary (50%)" : "Secondaire (50%)"),
+                    remarque: isFall ? (isEn ? "Fall Anchor" : "Ancrage de chute") : (isEn ? "Secondary" : "Secondaire"),
                     position: ancPos
                 });
 
@@ -12890,13 +12890,13 @@ const SystemLabelingModule = {
                                     let brAnchorRemarque = "-";
                                     let brAnchorIsFall = false;
 
-                                    if (isThisFallBranch && (sIdx === fallSubSpanIdx || (sIdx === fallSubSpanIdx + 1))) {
+                                    if (isThisFallBranch && sIdx === fallSubSpanIdx) {
                                         brAnchorIsFall = true;
-                                        brAnchorRemarque = isEn ? "Fall Anchor (Branch 100%)" : "Ancrage de chute (Branche 100%)";
+                                        brAnchorRemarque = isEn ? `Fall Anchor (${brSpanId})` : `Ancrage de chute (${brSpanId})`;
                                     } else if (!isFallOnAnyBranch && sIdx === 0) {
-                                        brAnchorRemarque = isEn ? "Transverse Branch (50% fall load)" : "Branche transversale (50% de la chute)";
+                                        brAnchorRemarque = isEn ? "Transverse Branch" : "Branche transversale";
                                     } else if (isFallOnAnyBranch && !isThisFallBranch && sIdx === 0) {
-                                        brAnchorRemarque = isEn ? "Opposite Branch (50% transfer)" : "Branche opposée (transfert 50%)";
+                                        brAnchorRemarque = isEn ? "Opposite Branch" : "Branche opposée";
                                     } else {
                                         brAnchorRemarque = isEn ? `Multi-span branch (Span ${sIdx + 1})` : `Multi-portée branche (Portée ${sIdx + 1})`;
                                     }
