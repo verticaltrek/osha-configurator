@@ -9187,7 +9187,7 @@ const TRANSLATIONS = {
     lblExt4LRow: ["Force Ancrage 4 :", "Anchor Force 4:", "Fuerza Anclaje 4:"],
     lblMultiSpanDistribution: ["Répartition des efforts aux ancrages :", "Anchor Load Distribution:", "Distribución de Cargas a los Anclajes:"],
     lblCrossDistribution: ["Répartition en Croix (4 branches) :", "Cross Distribution (4 branches):", "Distribución en Cruz (4 ramas):"],
-    lblGridDistribution: ["Répartition Grille :", "Grid Distribution:", "Distribución en Cuadrícula:"],
+    lblGridDistribution: ["Répartition Grille (Précharge + Dynamique) :", "Grid Distribution (Preload + Dynamic):", "Distribución en Cuadrícula (Precarga + Dinámica):"],
     lblAnchorA0: ["Force Ancrage A0 (Ext. Gauche)", "Anchor Force A0 (Left Ext.)", "Fuerza Anclaje A0 (Ext. Izq.)"],
     lblAnchorA1: ["Force Ancrage A1", "Anchor Force A1", "Fuerza Anclaje A1"],
     lblAnchorA2: ["Force Ancrage A2", "Anchor Force A2", "Fuerza Anclaje A2"],
@@ -11787,7 +11787,9 @@ const SystemLabelingModule = {
 
             const fallCross = { x: state.fallPosition?.gridCrossX || 0, z: state.fallPosition?.gridCrossZ || 0 };
             const fallBranch = state.fallPosition?.gridBranch || "X+";
-            const activeFallSpanId = state.selectedFallSpanId || (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
+            const activeFallSpanId = (state.selectedFallSpanId && !state.selectedFallSpanId.startsWith("spn_"))
+                ? state.selectedFallSpanId
+                : (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
 
             const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(
                 ext1L || 0,
@@ -16399,7 +16401,9 @@ function renderConfig12GridSystem3D() {
     const rowLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const fallCross = { x: state.fallPosition?.gridCrossX || 0, z: state.fallPosition?.gridCrossZ || 0 };
     const fallBranch = state.fallPosition?.gridBranch || "X+";
-    const activeFallSpanId = state.selectedFallSpanId || (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
+    const activeFallSpanId = (state.selectedFallSpanId && !state.selectedFallSpanId.startsWith("spn_"))
+        ? state.selectedFallSpanId
+        : (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
 
     const fallCableMat = new THREE.MeshStandardMaterial({
         color: new THREE.Color("#ea580c"),
@@ -18748,7 +18752,9 @@ function updateCalculationsUI(layout, maxSpan) {
         const ny = Math.max(2, gs.ny || 3);
         const fallCross = { x: state.fallPosition?.gridCrossX || 0, z: state.fallPosition?.gridCrossZ || 0 };
         const fallBranch = state.fallPosition?.gridBranch || "X+";
-        const activeFallSpanId = state.selectedFallSpanId || (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
+        const activeFallSpanId = (state.selectedFallSpanId && !state.selectedFallSpanId.startsWith("spn_"))
+        ? state.selectedFallSpanId
+        : (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
         const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(ext1L, nx, ny, state.userMassKg || 141, state.gridPretensionKg || 600, fallCross, fallBranch);
 
         // Generate full labeled elements
@@ -18758,7 +18764,7 @@ function updateCalculationsUI(layout, maxSpan) {
 
         if (dynContainer) {
             const isGridOverhead = isGridOverheadValid(state);
-            const subTitle = TRANSLATIONS.lblGridDistribution[l] || "Répartition Grille :";
+            const subTitle = TRANSLATIONS.lblGridDistribution[l] || (l === 1 ? "Grid Distribution (Preload + Dynamic):" : (l === 2 ? "Distribución en Cuadrícula (Precarga + Dinámica):" : "Répartition Grille (Précharge + Dynamique) :"));
             let gHtml = "";
             if (!isGridOverhead) {
                 const prodName = normalizeProduct(state.product || "XTREME");
@@ -18772,14 +18778,16 @@ function updateCalculationsUI(layout, maxSpan) {
                     </div>
                 `;
             }
+            const isInternalSpn = !activeFallSpanId || String(activeFallSpanId).startsWith("spn_");
+            const spanTagDisplay = isInternalSpn ? "" : ` (${activeFallSpanId})`;
             gHtml += `
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
-                    <span><strong>P0 :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)}</span>
-                    <span><strong>W :</strong> ${UnitsModule.formatForce(gridRes.W, 3)}</span>
+                    <span><strong>P0 :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
+                    <span><strong>W :</strong> ${UnitsModule.formatForce(gridRes.W, 3)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
                 </div>
                 <div class="readout-row anchor-point active-fall">
-                    <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")} :</span>
+                    <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")}${spanTagDisplay} :</span>
                     <span class="row-val">${UnitsModule.formatForce(gridRes.level0.totalFall)}</span>
                 </div>
                 <div class="readout-subtitle margin-top-sm"><i class="fa-solid fa-monument"></i> ${l === 1 ? "Perimeter End Posts:" : (l === 2 ? "Postes de Extremo (Perímetro):" : "Poteaux d'Extrémité (Pourtour) :")}</div>
