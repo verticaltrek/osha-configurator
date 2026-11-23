@@ -4673,6 +4673,9 @@ function updateUnitLabelsInDOM() {
     const uArrestVal = document.getElementById("unit-arrest-load");
     if (uArrestVal) uArrestVal.textContent = forceUnit;
 
+    const uUserMass = document.getElementById("unit-user-mass");
+    if (uUserMass) uUserMass.textContent = isUS ? "lb" : "kg";
+
     const lblArrestVal = document.getElementById("lbl-arrest-load-val");
     if (lblArrestVal) {
         lblArrestVal.textContent = isEn ? `Arrest Load Value (${forceUnit}) :` : `Valeur Charge d'arrêt (${forceUnit}) :`;
@@ -6872,6 +6875,25 @@ function populateConfigModalInputs() {
         usersElem.max = maxU;
         const curU = Math.max(1, parseInt(state.nbUsers) || 1);
         usersElem.value = Math.min(curU, maxU);
+    }
+
+    const massElem = document.getElementById("input-user-mass");
+    const unitMass = document.getElementById("unit-user-mass");
+    if (massElem) {
+        const massKg = (typeof state.userMassKg === "number" && !isNaN(state.userMassKg) && state.userMassKg > 0) ? state.userMassKg : 141;
+        if (isUS) {
+            massElem.value = Math.round(massKg * KG_TO_LB);
+            massElem.min = "110";
+            massElem.max = "660";
+            massElem.step = "1";
+            if (unitMass) unitMass.textContent = "lb";
+        } else {
+            massElem.value = Math.round(massKg);
+            massElem.min = "50";
+            massElem.max = "300";
+            massElem.step = "1";
+            if (unitMass) unitMass.textContent = "kg";
+        }
     }
 
     // HLL Elevation preset & value
@@ -9087,6 +9109,7 @@ const TRANSLATIONS = {
     lblCustomSpan: ["Portée personnalisée :", "Custom Span:", "Luz Personalizada:"],
     lblLineLen: ["Longueur Ligne de Vie :", "Lifeline Length:", "Longitud Línea de Vida:"],
     lblUsers: ["Nombre d'utilisateurs max :", "Max Active Users:", "Número máx. de usuarios:"],
+    lblUserMass: ["Masse de l'utilisateur :", "User Mass:", "Masa del usuario:"],
     lblEngineerCoefficient: ["Facteur de chute :", "Fall Factor:", "Factor de caída:"],
     lblHasLine2: ["Activer une seconde direction (Ligne 2)", "Enable a second direction (Line 2)", "Activar una segunda dirección (Línea 2)"],
     lblLine2Len: ["Longueur Ligne 2 :", "Line 2 Length:", "Longitud Línea 2:"],
@@ -9556,6 +9579,8 @@ function applyLanguage(langIndex) {
     if (lblLineLen) lblLineLen.textContent = TRANSLATIONS.lblLineLen[l];
     const lblUsers = document.getElementById("lbl-users");
     if (lblUsers) lblUsers.textContent = TRANSLATIONS.lblUsers[l];
+    const lblUserMass = document.getElementById("lbl-user-mass");
+    if (lblUserMass) lblUserMass.innerHTML = `<i class="fa-solid fa-weight-scale"></i> ${TRANSLATIONS.lblUserMass[l] || (isEn ? "User Mass:" : "Masse de l'utilisateur :")}`;
     const lblEngCoef = document.getElementById("lbl-engineer-coefficient");
     if (lblEngCoef) lblEngCoef.textContent = TRANSLATIONS.lblEngineerCoefficient ? TRANSLATIONS.lblEngineerCoefficient[l] : (isEn ? "Fall Factor:" : "Facteur de chute :");
     const hintEngCoef = document.getElementById("hint-engineer-coefficient");
@@ -19675,6 +19700,26 @@ function setupUIEventListeners() {
         usersInput.addEventListener("change", onUsersChange);
     }
 
+    // Dynamic listener on input-user-mass
+    const massInput = document.getElementById("input-user-mass");
+    if (massInput) {
+        const onMassChange = (e) => {
+            const raw = parseFloat(String(e.target.value).replace(/,/g, '.'));
+            if (!isNaN(raw) && raw > 0) {
+                const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+                state.userMassKg = isUS ? parseFloat((raw / KG_TO_LB).toFixed(1)) : raw;
+                if (Array.isArray(state.users) && state.users.length > 0) {
+                    state.users.forEach(u => { u.massKg = state.userMassKg; });
+                }
+                const gridMass = document.getElementById("input-grid-user-mass");
+                if (gridMass) gridMass.value = Math.round(state.userMassKg);
+                updateCalculationsUI();
+            }
+        };
+        massInput.addEventListener("input", onMassChange);
+        massInput.addEventListener("change", onMassChange);
+    }
+
     function handleConfigFormSubmit(e) {
         if (e && typeof e.preventDefault === "function") e.preventDefault();
 
@@ -20033,6 +20078,24 @@ function setupUIEventListeners() {
                 document.getElementById("input-users").value = maxAllowedUsers;
             }
             state.nbUsers = Math.max(1, requestedUsers);
+
+            // Validate & Save User Mass
+            const massInp = document.getElementById("input-user-mass");
+            if (massInp) {
+                const rawMass = parseFloat(String(massInp.value).replace(/,/g, '.'));
+                if (!isNaN(rawMass) && rawMass > 0) {
+                    if (state.unitSystem === "imperial" || state.unitSystem === "us") {
+                        state.userMassKg = parseFloat((rawMass / KG_TO_LB).toFixed(1));
+                    } else {
+                        state.userMassKg = rawMass;
+                    }
+                    if (Array.isArray(state.users) && state.users.length > 0) {
+                        state.users.forEach(u => { u.massKg = state.userMassKg; });
+                    }
+                    const gridMass = document.getElementById("input-grid-user-mass");
+                    if (gridMass) gridMass.value = Math.round(state.userMassKg);
+                }
+            }
 
             // Elevation preset & manual height (0 to 7 ft for CORE/PRO, 0 to 20 ft for XTREME)
             const elevSelModal = document.getElementById("select-hll-elevation-preset");
