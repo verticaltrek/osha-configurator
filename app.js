@@ -4820,7 +4820,9 @@ function setUnitSystem(nextSys, skipRender = false) {
     if (typeof updateRetractedLengthEquivalentUI === "function") updateRetractedLengthEquivalentUI();
     if (typeof updateMadEquivalentUI === "function") updateMadEquivalentUI();
     if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
-    if (typeof selectSrlModel === "function" && state.selectedSrlId) selectSrlModel(state.selectedSrlId);
+    if (typeof selectSrlModel === "function" && state.selectedSrlId && !state.isArrestForceModified && !state.isMadModified) {
+        selectSrlModel(state.selectedSrlId);
+    }
 
     if (!skipRender) {
         if (typeof updateCalculationsUI === "function" && state.product) {
@@ -4956,11 +4958,10 @@ if (typeof window !== "undefined") {
 
 function getSrlBaseArrestForceKn() {
     if (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn) && state.arrestForceKn > 0) {
-        if (Math.abs(state.arrestForceKn - 6.0) < 0.02) return 6.0;
         return state.arrestForceKn;
     }
     if (state.selectedSrlId && typeof SRL_CATALOG !== "undefined" && SRL_CATALOG[state.selectedSrlId]) {
-        return SRL_CATALOG[state.selectedSrlId].preset_force_kn || SRL_CATALOG[state.selectedSrlId].arrest_load_preset_kn || 6.0;
+        return SRL_CATALOG[state.selectedSrlId].preset_force_kn || SRL_CATALOG[state.selectedSrlId].arrest_load_preset_kn || SRL_CATALOG[state.selectedSrlId].default_arrest_force_kn || 6.0;
     }
     if (state.arrestLoadMode === "turbolite") return 4.5;
     return 6.0;
@@ -5033,21 +5034,26 @@ function recalculateLumpSumArrestLoad() {
     const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : (state.norm || "EN 795");
     const isOSHA = (activeNorm === "OSHA");
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-    const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
+    const m = (isOSHA || state.arrestLoadMode === "custom") ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
     let baseFKn = getSrlBaseArrestForceKn();
-    if (Math.abs(baseFKn - 6.0) < 0.02) baseFKn = 6.0;
     let totalKn = parseFloat((m * baseFKn).toFixed(3));
-    if (Math.abs(totalKn - (m * 6.0)) < 0.02) totalKn = parseFloat((m * 6.0).toFixed(2));
     state.arrestLoadValue = totalKn;
     state.arrestLoadKn = totalKn;
 
     const arrestValInp = document.getElementById("input-arrest-load-val");
     const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
     const knToLbf = (typeof UnitsModule !== "undefined") ? UnitsModule.KN_TO_LBF : 224.8089;
-    if (arrestValInp && state.arrestLoadMode !== "custom") {
+    if (arrestValInp && document.activeElement !== arrestValInp) {
         arrestValInp.value = isUS
             ? Math.round(baseFKn * knToLbf)
             : baseFKn.toFixed(2);
+    }
+
+    const afInp = document.getElementById("input-arrest-force");
+    const afUnitSel = document.getElementById("select-arrest-force-unit");
+    if (afInp && document.activeElement !== afInp) {
+        const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || (isUS ? "lbf" : "kN"));
+        afInp.value = (unit === "lbf") ? Math.round(baseFKn * knToLbf) : baseFKn.toFixed(2);
     }
 
     const totalLbf = totalKn * knToLbf;
@@ -5459,47 +5465,52 @@ function updateArrestForceEquivalentUI() {
     const isEn = (parseInt(state.lang) === 1);
     if (!afInp) return;
 
-    const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || "lbf");
+    const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
+    const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || (isUS ? "lbf" : "kN"));
     state.arrestForceUnit = unit;
-    const rawVal = parseFloat(afInp.value);
 
-    if (isNaN(rawVal) || rawVal <= 0) {
-        if (eqDisplay) eqDisplay.textContent = unit === "lbf" ? "(-- kN)" : "(-- lbf)";
-        if (errBox) errBox.style.display = "none";
-        state.arrestForceKn = null;
-        state.arrestForceLbf = null;
-        return;
-    }
-
-    let lbfVal = 0;
-    let knVal = 0;
-    if (unit === "lbf") {
-        lbfVal = rawVal;
-        knVal = Math.abs(rawVal - 1350) < 1.0 ? 6.00 : parseFloat((rawVal * 0.0044482216).toFixed(2));
-        if (eqDisplay) eqDisplay.textContent = `(${knVal.toFixed(2)} kN)`;
+    if (document.activeElement === afInp) {
+        const rawVal = parseFloat(String(afInp.value).replace(/,/g, '.'));
+        if (!isNaN(rawVal) && rawVal > 0) {
+            let knVal = (unit === "lbf") ? (rawVal * UnitsModule.LBF_TO_KN) : rawVal;
+            let lbfVal = (unit === "lbf") ? rawVal : (rawVal * UnitsModule.KN_TO_LBF);
+            state.arrestForceKn = knVal;
+            state.arrestForceLbf = lbfVal;
+            state.isArrestForceModified = true;
+        }
     } else {
-        knVal = rawVal;
-        lbfVal = Math.abs(rawVal - 6.00) < 0.01 ? 1350 : Math.round(rawVal * 224.808943);
-        if (eqDisplay) eqDisplay.textContent = `(${Math.round(lbfVal)} lbf)`;
+        if (typeof state.arrestForceKn === "number" && !isNaN(state.arrestForceKn) && state.arrestForceKn > 0) {
+            const lbfVal = state.arrestForceLbf || (state.arrestForceKn * UnitsModule.KN_TO_LBF);
+            afInp.value = (unit === "lbf") ? Math.round(lbfVal) : state.arrestForceKn.toFixed(2);
+        } else {
+            state.arrestForceKn = 6.0;
+            state.arrestForceLbf = 1349;
+            afInp.value = (unit === "lbf") ? "1349" : "6.00";
+        }
     }
 
-    state.arrestForceKn = knVal;
-    state.arrestForceLbf = lbfVal;
+    const baseKn = (typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) ? state.arrestForceKn : 6.0;
+    const baseLbf = state.arrestForceLbf || (baseKn * UnitsModule.KN_TO_LBF);
+
+    if (eqDisplay) {
+        eqDisplay.textContent = (unit === "lbf")
+            ? `(${baseKn.toFixed(2)} kN)`
+            : `(${Math.round(baseLbf)} lbf)`;
+    }
 
     // Check if user modified compared to selected SRL default
     if (state.connectingDevice === "srd" && state.selectedSrlId && SRL_CATALOG[state.selectedSrlId]) {
-        const srlDef = SRL_CATALOG[state.selectedSrlId].default_arrest_force_kn;
-        state.isArrestForceModified = (Math.abs(knVal - srlDef) > 0.05);
+        const srlDef = SRL_CATALOG[state.selectedSrlId].default_arrest_force_kn || 6.0;
+        state.isArrestForceModified = (Math.abs(baseKn - srlDef) > 0.05);
     }
 
     // Validation: 1 to 5000 lbf
-    const isUS = (state.unitSystem === "imperial" || state.unitSystem === "us");
-    const isExceeded = (lbfVal > 5000.0);
+    const isExceeded = (baseLbf > 5000.0);
     if (errBox) {
         errBox.style.display = isExceeded ? "block" : "none";
         const errTxt = document.getElementById("arrest-force-error-text");
         if (errTxt && isExceeded) {
-            const valStr = isUS ? `${Math.round(lbfVal)} lbf (${knVal.toFixed(2)} kN)` : `${knVal.toFixed(2)} kN (${Math.round(lbfVal)} lbf)`;
+            const valStr = isUS ? `${Math.round(baseLbf)} lbf (${baseKn.toFixed(2)} kN)` : `${baseKn.toFixed(2)} kN (${Math.round(baseLbf)} lbf)`;
             const limStr = isUS ? "5,000 lbf (22.24 kN)" : "22.24 kN (5 000 lbf)";
             errTxt.textContent = isEn
                 ? `Error: Arrest force (${valStr}) exceeds the ${limStr} limit.`
@@ -5512,17 +5523,7 @@ function updateArrestForceEquivalentUI() {
     const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : state.norm;
     const isOSHA = (activeNorm === "OSHA" || state.norm === "OSHA");
     const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-    const m = isOSHA ? 1.00 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u]) ? LUMP_FACTOR_BY_USERS[u] : 1.00);
-
-    let baseKn = knVal;
-    let baseLbf = lbfVal;
-    if (state.arrestLoadMode === "custom" && typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) {
-        baseKn = state.arrestForceKn;
-        baseLbf = (typeof UnitsModule !== "undefined") ? Math.round(baseKn * UnitsModule.KN_TO_LBF) : Math.round(baseKn * 224.808943);
-        if (afInp && document.activeElement !== afInp) {
-            afInp.value = (unit === "lbf") ? baseLbf : baseKn.toFixed(2);
-        }
-    }
+    const m = (isOSHA || state.arrestLoadMode === "custom") ? 1.00 : ((typeof LUMP_FACTOR_BY_USERS !== "undefined" && LUMP_FACTOR_BY_USERS[u]) ? LUMP_FACTOR_BY_USERS[u] : 1.00);
 
     const globalKn = parseFloat((m * baseKn).toFixed(3));
     const globalLbf = (typeof UnitsModule !== "undefined") ? (globalKn * UnitsModule.KN_TO_LBF) : (m * baseLbf);
@@ -5547,6 +5548,12 @@ function updateArrestForceEquivalentUI() {
                 ? `Global Arrest Load: ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${baseKn.toFixed(2)} kN)`
                 : `Charge globale : ${globalKn.toFixed(2)} kN (M=${m.toFixed(2)} × ${baseKn.toFixed(2)} kN)`;
         }
+    }
+
+    // Synchronize modal input if not activeElement
+    const modalArrestInp = document.getElementById("input-arrest-load-val");
+    if (modalArrestInp && document.activeElement !== modalArrestInp) {
+        modalArrestInp.value = isUS ? Math.round(baseLbf) : baseKn.toFixed(2);
     }
 }
 
@@ -5646,6 +5653,10 @@ function updateConnectingDeviceUI() {
     }
     if (catalogCards) {
         catalogCards.style.display = (dev === "srd" || dev === "custom_srd") ? "grid" : "none";
+    }
+    const srlArrestContainer = document.getElementById("srl-arrest-force-container");
+    if (srlArrestContainer) {
+        srlArrestContainer.style.display = "block";
     }
 
     if (customNameInp && state.customDeviceName !== undefined) {
@@ -19518,13 +19529,20 @@ function setupUIEventListeners() {
             state.arrestLoadMode = e.target.value;
             if (state.arrestLoadMode === "turbolite") {
                 state.selectedSrlId = "turbo_light_9ft";
+                state.arrestForceKn = 4.5;
+                state.arrestForceLbf = 1012;
+                state.isArrestForceModified = false;
                 recalculateLumpSumArrestLoad();
             } else if (state.arrestLoadMode === "falcon") {
                 state.selectedSrlId = "falcon_leading_edge";
+                state.arrestForceKn = 6.0;
+                state.arrestForceLbf = 1349;
+                state.isArrestForceModified = false;
                 recalculateLumpSumArrestLoad();
             } else if (state.arrestLoadMode === "lump_sum") {
                 recalculateLumpSumArrestLoad();
             } else if (state.arrestLoadMode === "custom") {
+                recalculateLumpSumArrestLoad();
                 updateLumpSumHint();
             }
             if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
@@ -19539,15 +19557,22 @@ function setupUIEventListeners() {
                 const baseKn = isUS ? (raw * UnitsModule.LBF_TO_KN) : raw;
                 state.arrestForceKn = baseKn;
                 state.arrestForceLbf = isUS ? raw : (baseKn * knToLbf);
-                state.arrestLoadMode = "custom";
-                if (arrestModeSelect) arrestModeSelect.value = "custom";
+                state.isArrestForceModified = true;
+
+                // Sync sidebar input
+                const afInp = document.getElementById("input-arrest-force");
+                const afUnitSel = document.getElementById("select-arrest-force-unit");
+                if (afInp) {
+                    const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || (isUS ? "lbf" : "kN"));
+                    afInp.value = (unit === "lbf") ? Math.round(state.arrestForceLbf) : baseKn.toFixed(2);
+                }
 
                 // Compute total arrest load based on active users (M=1 in OSHA, M factor applied in EN 795)
                 const rNormSel = document.getElementById("select-roof-norm");
                 const activeNorm = (rNormSel && rNormSel.value) ? rNormSel.value : state.norm;
                 const isOSHA = (activeNorm === "OSHA");
                 const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-                const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
+                const m = (isOSHA || state.arrestLoadMode === "custom") ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
                 const totalKn = parseFloat((m * baseKn).toFixed(3));
                 state.arrestLoadValue = totalKn;
                 state.arrestLoadKn = totalKn;
@@ -20029,11 +20054,20 @@ function setupUIEventListeners() {
 
             state.arrestForceKn = baseFKn;
             state.arrestForceLbf = loadLbf;
+            state.isArrestForceModified = true;
+
+            // Sync sidebar afInp
+            const afInp = document.getElementById("input-arrest-force");
+            const afUnitSel = document.getElementById("select-arrest-force-unit");
+            if (afInp) {
+                const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || ((state.unitSystem === "imperial" || state.unitSystem === "us") ? "lbf" : "kN"));
+                afInp.value = (unit === "lbf") ? Math.round(loadLbf) : baseFKn.toFixed(2);
+            }
 
             // Recalculate total arrest load for active users using Lump Sum (M * F_user)
             const isOSHA = (state.norm === "OSHA");
             const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
-            const m = isOSHA ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
+            const m = (isOSHA || state.arrestLoadMode === "custom") ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
             const totalKn = parseFloat((m * baseFKn).toFixed(3));
             state.arrestLoadValue = totalKn;
             state.arrestLoadKn = totalKn;
