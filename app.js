@@ -1794,9 +1794,16 @@ const AnchorEffortDistributionModule = {
         const prechargeFall = P0 + W;
         const prechargeOther = P0 + W / 3;
 
-        // Configuration overhead : pas de force de chute dynamique
-        const dynFall = 0.0;
-        const dynOther = 0.0;
+        // Force de chute dynamique (6.0 kN nominale par défaut, ou fChute si spécifié)
+        let F_dyn = 6.0;
+        if (typeof fChute === "number" && !isNaN(fChute)) {
+            F_dyn = fChute;
+        } else if (typeof state !== "undefined" && typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) {
+            F_dyn = state.arrestForceKn;
+        }
+
+        const dynFall = F_dyn;
+        const dynOther = F_dyn * (this.config.GRID_OTHER_FACTOR !== undefined ? this.config.GRID_OTHER_FACTOR : 0.25);
 
         const totalFall0 = prechargeFall + dynFall;
         const totalOther0 = prechargeOther + dynOther;
@@ -1966,6 +1973,15 @@ const AnchorEffortDistributionModule = {
             gotL4.every((v, i) => v === expL4[i]);
 
         tests.push({ name: "Règle 4 (Grid Overhead)", pass: pass6, got: { L0: gotL0, L1: gotL1, L2: gotL2, L3: gotL3, L4: gotL4 }, exp: { L0: expL0, L1: expL1, L2: expL2, L3: expL3, L4: expL4 } });
+
+        // Test 6b: Grid Overhead avec 6 kN dynamique (P0=5.89 kN, W=1.38 kN, F_dyn=6.0 kN)
+        // Level 0: Total Fall = 5.886 + 1.383 + 6.00 = 13.27 kN
+        // Level 0: Total Other = 5.886 + (1.383/3) + 1.50 = 7.85 kN
+        const r4_dyn = this.calculateRule4_Grid(6.0, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
+        const expDynL0 = ["13.27", "7.85", "7.85", "7.85"];
+        const gotDynL0 = r4_dyn.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
+        const pass6b = gotDynL0.every((v, i) => v === expDynL0[i]);
+        tests.push({ name: "Règle 4b (Grid avec 6 kN dynamique)", pass: pass6b, got: gotDynL0, exp: expDynL0 });
 
         // Test 7: Adaptation 4 ancrages -> 4 points [10, 20, 18, 9]
         const adapt4 = this.getAdaptedMultiSpanResults(exp1, 4, 0);
@@ -11717,8 +11733,9 @@ const SystemLabelingModule = {
                 ? state.selectedFallSpanId
                 : (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
 
+            const fChuteGrid = (typeof state !== "undefined" && typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) ? state.arrestForceKn : 6.0;
             const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(
-                ext1L || 0,
+                fChuteGrid,
                 nx,
                 ny,
                 state.userMassKg || 141,
@@ -18678,11 +18695,12 @@ function updateCalculationsUI(layout, maxSpan) {
         const activeFallSpanId = (state.selectedFallSpanId && !state.selectedFallSpanId.startsWith("spn_"))
         ? state.selectedFallSpanId
         : (typeof getGridSpanFromCrossBranch === "function" ? getGridSpanFromCrossBranch(fallCross.x, fallCross.z, fallBranch, nx, ny) : "SA-1");
-        const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(ext1L, nx, ny, state.userMassKg || 141, state.gridPretensionKg || 600, fallCross, fallBranch);
+        const fChuteGrid = (typeof state !== "undefined" && typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) ? state.arrestForceKn : 6.0;
+        const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(fChuteGrid, nx, ny, state.userMassKg || 141, state.gridPretensionKg || 600, fallCross, fallBranch);
 
         // Generate full labeled elements
         const sysLabels = (typeof SystemLabelingModule !== "undefined" && SystemLabelingModule.generateSystemLabels)
-            ? SystemLabelingModule.generateSystemLabels(state, { ext1L })
+            ? SystemLabelingModule.generateSystemLabels(state, { ext1L: fChuteGrid })
             : { anchors: [], xMatrixPieces: [], spans: [] };
 
         if (dynContainer) {
@@ -18708,6 +18726,7 @@ function updateCalculationsUI(layout, maxSpan) {
                 <div class="grid-info-badge">
                     <span><strong>P0 :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
                     <span><strong>W :</strong> ${UnitsModule.formatForce(gridRes.W, 3)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
+                    <span><strong>F_chute :</strong> ${UnitsModule.formatForce(gridRes.dynFall, 2)}</span>
                 </div>
                 <div class="readout-row anchor-point active-fall">
                     <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")}${spanTagDisplay} :</span>
@@ -21852,7 +21871,8 @@ function generatePDFReport() {
                 const uEffort = Calculator.effortLonge(state.product, realSpanMax, state.nbUsers, state.norm, fallFactorVal, support, true);
                 const uDefl = Calculator.deflection(state.product, realSpanMax, fallFactorVal, support, state.nbUsers, state.norm, true);
                 const uExt1 = Calculator.extremiteForce1(state.product, realSpanMax, state.nbUsers, state.norm, uEffort, uDefl, fallFactorVal, support, true);
-                const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(uExt1, nx, ny, state.userMassKg || 141, state.gridPretensionKg || 600, fallCross, fallBranch);
+                const fChuteGrid = (typeof state !== "undefined" && typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) ? state.arrestForceKn : 6.0;
+                const gridRes = AnchorEffortDistributionModule.calculateRule4_Grid(fChuteGrid, nx, ny, state.userMassKg || 141, state.gridPretensionKg || 600, fallCross, fallBranch);
 
                 const table2HeaderRow = [
                     pdfTrans.table2Headers[l][0],
