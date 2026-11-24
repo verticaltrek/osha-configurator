@@ -11738,10 +11738,8 @@ const SystemLabelingModule = {
                     const id = `X-${rowL}${colN}`;
                     const isFall = (fallCross.x === c && fallCross.z === r);
                     const distManhattan = Math.abs(c - fallCross.x) + Math.abs(r - fallCross.z);
-                    const factor = Math.pow(ANCHOR_EFFORT_CONFIG.GRID_LEVEL_FACTOR || 0.25, distManhattan);
-                    let effortVal = isFall ? gridRes.level0.totalFall : (gridRes.level0.totalOther * factor);
-                    const minResidualKn = 0.10;
-                    if (effortVal < minResidualKn) effortVal = minResidualKn;
+                    const cr = gridRes.crosses ? gridRes.crosses.find(x => x.xIdx === c && x.zIdx === r) : null;
+                    let effortVal = cr ? cr.maxTotal : (isFall ? gridRes.level0.totalFall : gridRes.level0.totalOther);
                     const pos = geomContext?.xMatrixGrid ? geomContext.xMatrixGrid[r]?.[c] : null;
 
                     xMatrixPieces.push({
