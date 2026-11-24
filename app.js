@@ -5934,12 +5934,12 @@ function selectSrlModel(srlId) {
     const afUnitSel = document.getElementById("select-arrest-force-unit");
     if (afInp) {
         const unit = afUnitSel ? afUnitSel.value : (state.arrestForceUnit || "lbf");
-        if (unit === "lbf") {
-            afInp.value = srl.default_arrest_force_lbf || 1349;
-        } else {
-            afInp.value = (srl.default_arrest_force_kn || 6.0).toFixed(1);
-        }
+        const defKn = srl.default_arrest_force_kn || 6.0;
+        const defLbf = srl.default_arrest_force_lbf || 1349;
+        state.arrestForceKn = defKn;
+        state.arrestForceLbf = defLbf;
         state.isArrestForceModified = false;
+        afInp.value = (unit === "lbf") ? defLbf : defKn.toFixed(2);
         updateArrestForceEquivalentUI();
     }
 
@@ -11210,8 +11210,9 @@ const Calculator = {
             } else fancre_ref = 5.10;
         }
 
+        const eff = this.getEffectiveArrestLoad(nbUsers);
         let k_fc = fallFactor >= 2.0 ? 1.0 : (fallFactor === 1.0 ? Math.sqrt(0.5) : (fallFactor > 0.0 ? 0.25 + fallFactor * (Math.sqrt(0.5) - 0.25) : 0.25));
-        return fancre_ref * k_fc;
+        return fancre_ref * k_fc * (eff && eff.scaleRatio ? eff.scaleRatio : 1.0);
     },
 
     deflection: function (product, span, fallFactor = 1, support = "omega_mini", nbUsers = 1, norm = "EN 795", isMultiSpan = false) {
