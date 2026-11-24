@@ -15487,8 +15487,9 @@ function createConfig10Structures3D() {
         const sideDir = new THREE.Vector3(-stairDir.z, 0, stairDir.x).normalize();
 
         const absStepH = Math.abs(stepH);
+        const numTreads = (dY >= 0) ? numSteps : (numSteps - 1);
         // Render Tread Steps (Marches d'escalier sans garde-corps, ajustées pile au bord)
-        for (let s = 0; s < numSteps; s++) {
+        for (let s = 0; s < numTreads; s++) {
             const treadW = stepD * 0.98;
             const treadH = 0.04;
             const treadD = CONFIG10_STAIRS.stairWidth;
@@ -15503,8 +15504,8 @@ function createConfig10Structures3D() {
                 // Ascending: s=0 is 1 riser above ground floor, s=numSteps-1 is flush with top platform
                 sY = pA.y + stepH * (s + 1.0) - treadH / 2;
             } else {
-                // Descending: s=0 is flush with top platform departure, s=numSteps-1 is 1 riser above ground floor
-                sY = pA.y - absStepH * s - treadH / 2;
+                // Descending: s=0 is 1 riser below top platform, s=numTreads-1 is 1 riser above ground floor
+                sY = pA.y - absStepH * (s + 1.0) - treadH / 2;
             }
             const sZ = pA.z + dZ * sProgress + sideDir.z * CONFIG10_STAIRS.sideOffset;
 
@@ -15627,9 +15628,33 @@ function createConfig10Structures3D() {
                     }
                 }
 
-                const stairArrivalX = (nodes[topNodeIdx] ? nodes[topNodeIdx].x : 0) - marginX;
-                minX = Math.min(minX - marginX, stairArrivalX);
-                maxX = Math.max(maxX + marginX, (nodes[endNodeIdx] ? nodes[endNodeIdx].x : 0) + (hasPlatformBranches ? CONFIG10_STAIRS.platformMargin : marginX));
+                // Check if span arriving at topNodeIdx is an ascending staircase
+                const spArriving = (topNodeIdx > 0 && spans[topNodeIdx - 1]) ? spans[topNodeIdx - 1] : null;
+                const isPrevSpanAscending = spArriving && (
+                    spArriving.isSloped ||
+                    Math.abs((spArriving.slope_deg !== undefined ? spArriving.slope_deg : spArriving.slopeDeg) || 0) >= 15 ||
+                    (nodes[topNodeIdx - 1] && (nodes[topNodeIdx - 1].y < nodes[topNodeIdx].y - 0.05))
+                );
+
+                if (isPrevSpanAscending) {
+                    minX = (nodes[topNodeIdx] ? nodes[topNodeIdx].x : 0) - marginX;
+                } else {
+                    minX = Math.min(minX - marginX, (nodes[topNodeIdx] ? nodes[topNodeIdx].x : 0) - (hasPlatformBranches ? CONFIG10_STAIRS.platformMargin : marginX));
+                }
+
+                // Check if span departing from endNodeIdx is a descending staircase
+                const spDeparting = (endNodeIdx < spans.length) ? spans[endNodeIdx] : null;
+                const isNextSpanDescending = spDeparting && (
+                    spDeparting.isSloped ||
+                    Math.abs((spDeparting.slope_deg !== undefined ? spDeparting.slope_deg : spDeparting.slopeDeg) || 0) >= 15 ||
+                    (nodes[endNodeIdx + 1] && (nodes[endNodeIdx + 1].y < nodes[endNodeIdx].y - 0.05))
+                );
+
+                if (isNextSpanDescending) {
+                    maxX = (nodes[endNodeIdx] ? nodes[endNodeIdx].x : 0) + marginX;
+                } else {
+                    maxX = Math.max(maxX + marginX, (nodes[endNodeIdx] ? nodes[endNodeIdx].x : 0) + (hasPlatformBranches ? CONFIG10_STAIRS.platformMargin : marginX));
+                }
                 const platLen = Math.max(1.0, maxX - minX);
                 const platHeight = topY;
                 const platThickness = platHeight;
