@@ -1788,14 +1788,14 @@ const AnchorEffortDistributionModule = {
         const pKg = (pretensionKg !== undefined && pretensionKg !== null) ? pretensionKg : this.config.GRID_PRETENSION_KG;
         const g = this.config.G_ACCEL;
 
-        const P0 = (pKg * g) / 1000; // kN
-        const W = (uMass * g) / 1000; // kN
+        const P0 = (pKg * g) / 1000; // kN (5.886 kN pour 600 kg)
+        const W = (uMass * g) / 1000; // kN (1.383 kN pour 141 kg)
 
-        const prechargeFall = P0 + W;
-        const prechargeOther = P0 + W / 3;
+        // Règle Grille : on ajoute 2 fois la prétension du câble (2 * P0)
+        const prechargeFall = 2 * P0 + W;
+        const prechargeOther = 2 * P0 + W / 3;
 
-        // Configuration Overhead : la tension permanente de base est la prétension P0 du câble (600 kg = 5.89 kN)
-        // plus le poids de l'utilisateur W (141 kg = 1.38 kN). Il n'y a pas de force de chute dynamique.
+        // Configuration Overhead : pas de force dynamique supplémentaire fictive
         const dynFall = 0.0;
         const dynOther = 0.0;
 
@@ -1817,12 +1817,11 @@ const AnchorEffortDistributionModule = {
                     const isFallPt = (distManhattan === 0 && bName === fallBranch);
                     const isFallBranch = (bName === fallBranch);
                     
-                    // Surcharges de chute (poids W de l'utilisateur)
-                    const wBranch = isFallBranch ? W : (W / 3);
+                    // Surcharges par rapport à la prétension permanente P0 du câble
+                    // À la croix de chute (factor = 1) : F = P0 + (P0 + W) = 2*P0 + W
+                    const surcharge0 = isFallBranch ? (P0 + W) : (P0 + W / 3);
 
-                    // Tous les câbles sont pré-tendus à P0 (600 kg = 5.89 kN).
-                    // Seul le surcroît de poids de l'utilisateur s'atténue de croix en croix.
-                    let pVal = P0 + (factor * wBranch);
+                    let pVal = P0 + (factor * surcharge0);
                     let dVal = 0.0;
                     let tVal = pVal;
 
@@ -1948,12 +1947,13 @@ const AnchorEffortDistributionModule = {
         tests.push({ name: "Règle 3b (Multi-portée branche)", pass: pass5b, got: r3b.map(v => v.toFixed(2)), exp: exp5b });
 
         // Test 6: Grid Overhead sans chute dynamique (P0=5.89 kN permanent, W=1.38 kN)
+        // Test 6: Grid Overhead (2 * P0 + W à la chute, prétension permanente P0=5.89 kN)
         const r4 = this.calculateRule4_Grid(0, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
-        const expL0 = ["7.27", "6.35", "6.35", "6.35"];
-        const expL1 = ["6.23", "6.00", "6.00", "6.00"];
-        const expL2 = ["5.97", "5.91", "5.91", "5.91"];
-        const expL3 = ["5.91", "5.89", "5.89", "5.89"];
-        const expL4 = ["5.89", "5.89", "5.89", "5.89"];
+        const expL0 = ["13.16", "12.23", "12.23", "12.23"];
+        const expL1 = ["7.70", "7.47", "7.47", "7.47"];
+        const expL2 = ["6.34", "6.28", "6.28", "6.28"];
+        const expL3 = ["6.00", "5.99", "5.99", "5.99"];
+        const expL4 = ["5.91", "5.91", "5.91", "5.91"];
 
         const gotL0 = r4.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
         const gotL1 = r4.levelsSummary[1].sampleTotals.map(v => v.toFixed(2));
@@ -18710,8 +18710,9 @@ function updateCalculationsUI(layout, maxSpan) {
             gHtml += `
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
-                    <span><strong>P0 (Prétension) :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
-                    <span><strong>W (Poids) :</strong> ${UnitsModule.formatForce(gridRes.W, 3)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
+                    <span><strong>P0 (Prétension) :</strong> ${UnitsModule.formatForce(gridRes.P0, 2)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
+                    <span><strong>2 × P0 :</strong> ${UnitsModule.formatForce(2 * gridRes.P0, 2)}</span>
+                    <span><strong>W (Poids) :</strong> ${UnitsModule.formatForce(gridRes.W, 2)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
                 </div>
                 <div class="readout-row anchor-point active-fall">
                     <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")}${spanTagDisplay} :</span>
