@@ -1803,7 +1803,7 @@ const AnchorEffortDistributionModule = {
         }
 
         const dynFall = F_dyn;
-        const dynOther = F_dyn * (this.config.GRID_OTHER_FACTOR !== undefined ? this.config.GRID_OTHER_FACTOR : 0.25);
+        const dynOther = F_dyn; // Non atténué : 6.0 kN ajoutés directement aux formules sans facteur 25%
 
         const totalFall0 = prechargeFall + dynFall;
         const totalOther0 = prechargeOther + dynOther;
@@ -1974,14 +1974,14 @@ const AnchorEffortDistributionModule = {
 
         tests.push({ name: "Règle 4 (Grid Overhead)", pass: pass6, got: { L0: gotL0, L1: gotL1, L2: gotL2, L3: gotL3, L4: gotL4 }, exp: { L0: expL0, L1: expL1, L2: expL2, L3: expL3, L4: expL4 } });
 
-        // Test 6b: Grid Overhead avec 6 kN dynamique (P0=5.89 kN, W=1.38 kN, F_dyn=6.0 kN)
+        // Test 6b: Grid Overhead avec 6 kN dynamique non atténué (P0=5.89 kN, W=1.38 kN, F_dyn=6.0 kN)
         // Level 0: Total Fall = 5.886 + 1.383 + 6.00 = 13.27 kN
-        // Level 0: Total Other = 5.886 + (1.383/3) + 1.50 = 7.85 kN
+        // Level 0: Total Other = 5.886 + (1.383/3) + 6.00 = 12.35 kN
         const r4_dyn = this.calculateRule4_Grid(6.0, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
-        const expDynL0 = ["13.27", "7.85", "7.85", "7.85"];
+        const expDynL0 = ["13.27", "12.35", "12.35", "12.35"];
         const gotDynL0 = r4_dyn.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
         const pass6b = gotDynL0.every((v, i) => v === expDynL0[i]);
-        tests.push({ name: "Règle 4b (Grid avec 6 kN dynamique)", pass: pass6b, got: gotDynL0, exp: expDynL0 });
+        tests.push({ name: "Règle 4b (Grid avec 6 kN dynamique non atténué)", pass: pass6b, got: gotDynL0, exp: expDynL0 });
 
         // Test 7: Adaptation 4 ancrages -> 4 points [10, 20, 18, 9]
         const adapt4 = this.getAdaptedMultiSpanResults(exp1, 4, 0);
