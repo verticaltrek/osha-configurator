@@ -10845,12 +10845,24 @@ const Calculator = {
                 const slopeRad = ((sp.slopeDeg || 15) * Math.PI) / 180;
                 accX += len * Math.cos(slopeRad);
                 accY += len * Math.sin(slopeRad);
-                const type = (i === spans.length - 1) ? "extremite" : "intermediaire";
+                const isLast = (i === spans.length - 1);
+                let type = isLast ? "extremite" : "intermediaire";
+                const hasX = !isLast && !!sp.hasXMatrix;
+                if (hasX) {
+                    type = "x_matrix";
+                }
                 line1Nodes.push({
                     x: parseFloat(accX.toFixed(2)),
                     y: parseFloat(accY.toFixed(2)),
                     z: currZ,
                     type: type,
+                    hasXMatrix: hasX,
+                    noPost: hasX,
+                    xMatrixBranches: hasX ? (sp.xMatrixBranches || []) : [],
+                    rotY: 0,
+                    slopeDeg: sp.isSloped ? (sp.slopeDeg || 15) : 0,
+                    spanIdBefore: sp.id,
+                    spanIdAfter: isLast ? null : (spans[i + 1] ? spans[i + 1].id : null),
                     line: 1
                 });
             }
@@ -10866,12 +10878,24 @@ const Calculator = {
                 const dirSign = (sp.isSloped && sp.direction === 'down') ? -1 : 1;
                 accX += len * Math.cos(slopeRad);
                 accY += dirSign * len * Math.sin(slopeRad);
-                const type = (i === spans.length - 1) ? "extremite" : "intermediaire";
+                const isLast = (i === spans.length - 1);
+                let type = isLast ? "extremite" : "intermediaire";
+                const hasX = !isLast && !!sp.hasXMatrix;
+                if (hasX) {
+                    type = "x_matrix";
+                }
                 line1Nodes.push({
                     x: parseFloat(accX.toFixed(2)),
                     y: parseFloat(accY.toFixed(2)),
                     z: currZ,
                     type: type,
+                    hasXMatrix: hasX,
+                    noPost: hasX,
+                    xMatrixBranches: hasX ? (sp.xMatrixBranches || []) : [],
+                    rotY: 0,
+                    slopeDeg: sp.isSloped ? (sp.slopeDeg || 15) : 0,
+                    spanIdBefore: sp.id,
+                    spanIdAfter: isLast ? null : (spans[i + 1] ? spans[i + 1].id : null),
                     line: 1
                 });
             }
@@ -15541,14 +15565,58 @@ function createConfig10Structures3D() {
                     }
                 }
 
-                minX -= marginX;
-                maxX += marginX;
+                // Check for X-Matrix branches on any node or span covered by this elevated platform
+                let hasPlatformBranches = false;
+                for (let n = topNodeIdx; n <= endNodeIdx; n++) {
+                    const node = nodes[n];
+                    const spBefore = (n > 0 && spans[n - 1]) ? spans[n - 1] : null;
+                    const spAfter = (n < spans.length && spans[n]) ? spans[n] : null;
+                    const brList = (node && node.xMatrixBranches && node.xMatrixBranches.length > 0)
+                        ? node.xMatrixBranches
+                        : ((spBefore && spBefore.hasXMatrix && spBefore.xMatrixBranches && spBefore.xMatrixBranches.length > 0)
+                            ? spBefore.xMatrixBranches
+                            : ((spAfter && spAfter.hasXMatrix && spAfter.xMatrixBranches && spAfter.xMatrixBranches.length > 0)
+                                ? spAfter.xMatrixBranches
+                                : []));
+
+                    if (brList && brList.length > 0) {
+                        const baseRotY = (node && node.rotY !== undefined) ? node.rotY : 0;
+                        const origX = node ? node.x : (nodes[topNodeIdx] ? nodes[topNodeIdx].x : 0);
+                        const origZ = node ? node.z : (nodes[topNodeIdx] ? nodes[topNodeIdx].z : 0);
+
+                        brList.forEach((br, bIdx) => {
+                            const rawAng = (br.angleDeg !== undefined) ? parseFloat(br.angleDeg) : (bIdx === 0 ? 90 : -90);
+                            const normAng = ((rawAng % 360) + 360) % 360;
+                            if (normAng < 15 || normAng > 345 || Math.abs(normAng - 180) < 15) return;
+                            const brAngleRad = baseRotY + (rawAng * Math.PI / 180);
+                            const bSpans = (typeof getBranchSpans === "function") ? getBranchSpans(br) : (br.spans || [{ length: br.length || 5.0 }]);
+                            let cumulativeDist = 0;
+                            bSpans.forEach(subSp => {
+                                const subLen = Math.max(0.5, parseFloat(subSp.length) || 5.0);
+                                cumulativeDist += subLen;
+                                const bx = origX + cumulativeDist * Math.cos(brAngleRad);
+                                const bz = origZ + cumulativeDist * Math.sin(brAngleRad);
+                                minX = Math.min(minX, bx);
+                                maxX = Math.max(maxX, bx);
+                                minZ = Math.min(minZ, bz);
+                                maxZ = Math.max(maxZ, bz);
+                                hasPlatformBranches = true;
+                            });
+                        });
+                    }
+                }
+
+                const stairArrivalX = (nodes[topNodeIdx] ? nodes[topNodeIdx].x : 0) - marginX;
+                minX = Math.min(minX - marginX, stairArrivalX);
+                maxX = Math.max(maxX + marginX, (nodes[endNodeIdx] ? nodes[endNodeIdx].x : 0) + (hasPlatformBranches ? CONFIG10_STAIRS.platformMargin : marginX));
                 const platLen = Math.max(1.0, maxX - minX);
                 const platHeight = topY;
                 const platThickness = platHeight;
 
-                const platZCenter = (minZ + maxZ) / 2 + (CONFIG10_STAIRS.sideOffset / 2);
-                const platWidthZ = Math.max(CONFIG10_STAIRS.stairWidth + CONFIG10_STAIRS.sideOffset + 1.2, (maxZ - minZ) + 2.0);
+                const platZCenter = (minZ + maxZ) / 2 + (hasPlatformBranches ? 0 : (CONFIG10_STAIRS.sideOffset / 2));
+                const platWidthZ = hasPlatformBranches
+                    ? Math.max(CONFIG10_STAIRS.stairWidth + CONFIG10_STAIRS.sideOffset + 1.2, (maxZ - minZ) + 2.0 * CONFIG10_STAIRS.platformMargin)
+                    : Math.max(CONFIG10_STAIRS.stairWidth + CONFIG10_STAIRS.sideOffset + 1.2, (maxZ - minZ) + 2.0);
 
                 const platGeo = new THREE.BoxGeometry(platLen, platThickness, platWidthZ);
                 const platMat = new THREE.MeshStandardMaterial({
@@ -16007,8 +16075,9 @@ function renderXMatrixBranches3D(pos, cableTopY, rotX, activePostHeight) {
 
             const curX = pos.x + cumulativeDist * Math.cos(brAngleRad);
             const curZ = pos.z + cumulativeDist * Math.sin(brAngleRad);
+            const platformBaseY = (pos && pos.y !== undefined && pos.y > 0.05) ? pos.y : 0;
             const curRoofY = (typeof getRoofHeightAt === "function") ? getRoofHeightAt(curX, curZ) : 0;
-            const curPostY = curRoofY + roofLift;
+            const curPostY = platformBaseY + curRoofY + roofLift;
             const curCablePt = new THREE.Vector3(curX, curPostY + activePostHeight, curZ);
 
             const br1SubId = branches[0]?.spans ? branches[0].spans[0]?.id : (branches[0]?.id + "_s1");
