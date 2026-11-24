@@ -1822,18 +1822,22 @@ const AnchorEffortDistributionModule = {
                 const branchData = branchNames.map(bName => {
                     const isFallPt = (distManhattan === 0 && bName === fallBranch);
                     const isFallBranch = (bName === fallBranch);
-                    const basePrecharge = isFallBranch ? prechargeFall : prechargeOther;
-                    const baseDyn = isFallBranch ? dynFall : dynOther;
+                    
+                    // Surcharges de chute (poids W et force dynamique 6 kN)
+                    const wBranch = isFallBranch ? W : (W / 3);
+                    const dynBranch = isFallBranch ? dynFall : dynOther;
+                    const surchargeBranch = wBranch + dynBranch;
 
-                    let pVal = factor * basePrecharge;
-                    let dVal = factor * baseDyn;
-                    let tVal = pVal + dVal;
+                    // Tous les câbles sont pré-tendus à P0 (600 kg = 5.89 kN).
+                    // Seul le surcroît de chute s'atténue de croix en croix.
+                    let pVal = P0 + (factor * wBranch);
+                    let dVal = factor * dynBranch;
+                    let tVal = P0 + (factor * surchargeBranch);
 
-                    // Spec 2026: Pour les ancrages éloignés de la portée de chute, conserver un résidu d'effort (plancher 0.10 kN) et jamais 0.00 kN
-                    const minResidualKn = 0.10;
-                    if (tVal < minResidualKn) {
-                        tVal = minResidualKn;
-                        pVal = minResidualKn;
+                    // Plancher permanent à la prétension du câble P0 (600 kg = 5.89 kN)
+                    if (tVal < P0) {
+                        tVal = P0;
+                        pVal = P0;
                         dVal = 0.0;
                     }
 
@@ -1952,13 +1956,13 @@ const AnchorEffortDistributionModule = {
         const pass5b = r3b.map(v => v.toFixed(2)).every((v, i) => v === exp5b[i]);
         tests.push({ name: "Règle 3b (Multi-portée branche)", pass: pass5b, got: r3b.map(v => v.toFixed(2)), exp: exp5b });
 
-        // Test 6: Grid Overhead (sans force de chute, P0=5.89 kN, W=1.38 kN)
+        // Test 6: Grid Overhead sans chute dynamique (P0=5.89 kN permanent, W=1.38 kN)
         const r4 = this.calculateRule4_Grid(0, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
         const expL0 = ["7.27", "6.35", "6.35", "6.35"];
-        const expL1 = ["1.82", "1.59", "1.59", "1.59"];
-        const expL2 = ["0.45", "0.40", "0.40", "0.40"];
-        const expL3 = ["0.11", "0.10", "0.10", "0.10"];
-        const expL4 = ["0.10", "0.10", "0.10", "0.10"];
+        const expL1 = ["6.23", "6.00", "6.00", "6.00"];
+        const expL2 = ["5.97", "5.91", "5.91", "5.91"];
+        const expL3 = ["5.91", "5.89", "5.89", "5.89"];
+        const expL4 = ["5.89", "5.89", "5.89", "5.89"];
 
         const gotL0 = r4.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
         const gotL1 = r4.levelsSummary[1].sampleTotals.map(v => v.toFixed(2));
@@ -1974,14 +1978,16 @@ const AnchorEffortDistributionModule = {
 
         tests.push({ name: "Règle 4 (Grid Overhead)", pass: pass6, got: { L0: gotL0, L1: gotL1, L2: gotL2, L3: gotL3, L4: gotL4 }, exp: { L0: expL0, L1: expL1, L2: expL2, L3: expL3, L4: expL4 } });
 
-        // Test 6b: Grid Overhead avec 6 kN dynamique non atténué (P0=5.89 kN, W=1.38 kN, F_dyn=6.0 kN)
-        // Level 0: Total Fall = 5.886 + 1.383 + 6.00 = 13.27 kN
-        // Level 0: Total Other = 5.886 + (1.383/3) + 6.00 = 12.35 kN
+        // Test 6b: Grid Overhead avec 6 kN dynamique non atténué et prétension permanente P0=5.89 kN (600 kg)
+        // Level 0: Total Fall = 5.886 + 1.383 + 6.00 = 13.27 kN, Total Other = 5.886 + 0.461 + 6.00 = 12.35 kN
+        // Level 1: Fall = 5.886 + 0.25*7.383 = 7.73 kN, Other = 5.886 + 0.25*6.461 = 7.50 kN
         const r4_dyn = this.calculateRule4_Grid(6.0, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
         const expDynL0 = ["13.27", "12.35", "12.35", "12.35"];
+        const expDynL1 = ["7.73", "7.50", "7.50", "7.50"];
         const gotDynL0 = r4_dyn.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
-        const pass6b = gotDynL0.every((v, i) => v === expDynL0[i]);
-        tests.push({ name: "Règle 4b (Grid avec 6 kN dynamique non atténué)", pass: pass6b, got: gotDynL0, exp: expDynL0 });
+        const gotDynL1 = r4_dyn.levelsSummary[1].sampleTotals.map(v => v.toFixed(2));
+        const pass6b = gotDynL0.every((v, i) => v === expDynL0[i]) && gotDynL1.every((v, i) => v === expDynL1[i]);
+        tests.push({ name: "Règle 4b (Grid avec 6 kN dynamique non atténué)", pass: pass6b, got: { L0: gotDynL0, L1: gotDynL1 }, exp: { L0: expDynL0, L1: expDynL1 } });
 
         // Test 7: Adaptation 4 ancrages -> 4 points [10, 20, 18, 9]
         const adapt4 = this.getAdaptedMultiSpanResults(exp1, 4, 0);
