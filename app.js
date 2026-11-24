@@ -1794,19 +1794,13 @@ const AnchorEffortDistributionModule = {
         const prechargeFall = P0 + W;
         const prechargeOther = P0 + W / 3;
 
-        // Force de chute dynamique (6.0 kN nominale par défaut, ou fChute si spécifié)
-        let F_dyn = 6.0;
-        if (typeof fChute === "number" && !isNaN(fChute)) {
-            F_dyn = fChute;
-        } else if (typeof state !== "undefined" && typeof state.arrestForceKn === "number" && state.arrestForceKn > 0) {
-            F_dyn = state.arrestForceKn;
-        }
+        // Configuration Overhead : la tension permanente de base est la prétension P0 du câble (600 kg = 5.89 kN)
+        // plus le poids de l'utilisateur W (141 kg = 1.38 kN). Il n'y a pas de force de chute dynamique.
+        const dynFall = 0.0;
+        const dynOther = 0.0;
 
-        const dynFall = F_dyn;
-        const dynOther = F_dyn; // Non atténué : 6.0 kN ajoutés directement aux formules sans facteur 25%
-
-        const totalFall0 = prechargeFall + dynFall;
-        const totalOther0 = prechargeOther + dynOther;
+        const totalFall0 = prechargeFall;
+        const totalOther0 = prechargeOther;
         const maxTotalLevel0 = Math.max(totalFall0, totalOther0);
         const cutoff = this.config.GRID_CUTOFF_RATIO * maxTotalLevel0;
 
@@ -1823,22 +1817,19 @@ const AnchorEffortDistributionModule = {
                     const isFallPt = (distManhattan === 0 && bName === fallBranch);
                     const isFallBranch = (bName === fallBranch);
                     
-                    // Surcharges de chute (poids W et force dynamique 6 kN)
+                    // Surcharges de chute (poids W de l'utilisateur)
                     const wBranch = isFallBranch ? W : (W / 3);
-                    const dynBranch = isFallBranch ? dynFall : dynOther;
-                    const surchargeBranch = wBranch + dynBranch;
 
                     // Tous les câbles sont pré-tendus à P0 (600 kg = 5.89 kN).
-                    // Seul le surcroît de chute s'atténue de croix en croix.
+                    // Seul le surcroît de poids de l'utilisateur s'atténue de croix en croix.
                     let pVal = P0 + (factor * wBranch);
-                    let dVal = factor * dynBranch;
-                    let tVal = P0 + (factor * surchargeBranch);
+                    let dVal = 0.0;
+                    let tVal = pVal;
 
                     // Plancher permanent à la prétension du câble P0 (600 kg = 5.89 kN)
                     if (tVal < P0) {
                         tVal = P0;
                         pVal = P0;
-                        dVal = 0.0;
                     }
 
                     return {
@@ -1977,17 +1968,6 @@ const AnchorEffortDistributionModule = {
             gotL4.every((v, i) => v === expL4[i]);
 
         tests.push({ name: "Règle 4 (Grid Overhead)", pass: pass6, got: { L0: gotL0, L1: gotL1, L2: gotL2, L3: gotL3, L4: gotL4 }, exp: { L0: expL0, L1: expL1, L2: expL2, L3: expL3, L4: expL4 } });
-
-        // Test 6b: Grid Overhead avec 6 kN dynamique non atténué et prétension permanente P0=5.89 kN (600 kg)
-        // Level 0: Total Fall = 5.886 + 1.383 + 6.00 = 13.27 kN, Total Other = 5.886 + 0.461 + 6.00 = 12.35 kN
-        // Level 1: Fall = 5.886 + 0.25*7.383 = 7.73 kN, Other = 5.886 + 0.25*6.461 = 7.50 kN
-        const r4_dyn = this.calculateRule4_Grid(6.0, 5, 5, 141, 600, { x: 0, z: 0 }, "X+");
-        const expDynL0 = ["13.27", "12.35", "12.35", "12.35"];
-        const expDynL1 = ["7.73", "7.50", "7.50", "7.50"];
-        const gotDynL0 = r4_dyn.levelsSummary[0].sampleTotals.map(v => v.toFixed(2));
-        const gotDynL1 = r4_dyn.levelsSummary[1].sampleTotals.map(v => v.toFixed(2));
-        const pass6b = gotDynL0.every((v, i) => v === expDynL0[i]) && gotDynL1.every((v, i) => v === expDynL1[i]);
-        tests.push({ name: "Règle 4b (Grid avec 6 kN dynamique non atténué)", pass: pass6b, got: { L0: gotDynL0, L1: gotDynL1 }, exp: { L0: expDynL0, L1: expDynL1 } });
 
         // Test 7: Adaptation 4 ancrages -> 4 points [10, 20, 18, 9]
         const adapt4 = this.getAdaptedMultiSpanResults(exp1, 4, 0);
@@ -18730,9 +18710,8 @@ function updateCalculationsUI(layout, maxSpan) {
             gHtml += `
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
-                    <span><strong>P0 :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
-                    <span><strong>W :</strong> ${UnitsModule.formatForce(gridRes.W, 3)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
-                    <span><strong>F_chute :</strong> ${UnitsModule.formatForce(gridRes.dynFall, 2)}</span>
+                    <span><strong>P0 (Prétension) :</strong> ${UnitsModule.formatForce(gridRes.P0, 3)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
+                    <span><strong>W (Poids) :</strong> ${UnitsModule.formatForce(gridRes.W, 3)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
                 </div>
                 <div class="readout-row anchor-point active-fall">
                     <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")}${spanTagDisplay} :</span>
