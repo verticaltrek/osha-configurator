@@ -13894,7 +13894,17 @@ const Dimensions3DModule = {
         // 6. Roof Surface (WWS - Walking-Working Surface) Label
         const wwsZ = (l > lineToEdge + 1.5) ? (lineToEdge + (l - lineToEdge) * 0.5) : (l * 0.5);
         const wwsX = L * 0.5;
-        const wwsY = (typeof getRoofHeightAt === "function") ? getRoofHeightAt(wwsX, wwsZ) : 0.0;
+        let wwsY = (typeof getRoofHeightAt === "function") ? getRoofHeightAt(wwsX, wwsZ) : 0.0;
+        if (typeof config10StructuresGroup !== "undefined" && config10StructuresGroup && config10StructuresGroup.children.length > 0) {
+            config10StructuresGroup.children.forEach(ch => {
+                if (ch.isMesh && ch.geometry && ch.geometry.parameters && ch.geometry.parameters.height) {
+                    const box = new THREE.Box3().setFromObject(ch);
+                    if (wwsX >= box.min.x && wwsX <= box.max.x && wwsZ >= box.min.z && wwsZ <= box.max.z) {
+                        wwsY = Math.max(wwsY, box.max.y);
+                    }
+                }
+            });
+        }
 
         // Pin leader line from surface to badge
         const pinGeo = new THREE.BufferGeometry().setFromPoints([
@@ -15346,20 +15356,23 @@ function createStringerGeometry(horizDist, y0, y1, depth, width) {
     const sinA = Math.max(0.01, Math.sin(angle));
     const vDrop = depth / cosA;
     const hShift = depth / sinA;
+    const toeH = 0.06; // 6cm clean vertical toe cut at bottom
 
     if (dY >= 0) {
-        // Ascending stair: (0,y0) is bottom departure, (horizDist,y1) is top arrival
+        // Ascending stair: (0,y0) is bottom departure at floor, (horizDist,y1) is top arrival at platform
         shape.moveTo(0, y0);
+        shape.lineTo(0, y0 + toeH);
         shape.lineTo(horizDist, y1);
         shape.lineTo(horizDist, y1 - vDrop);
         shape.lineTo(Math.min(horizDist, hShift), y0);
         shape.closePath();
     } else {
-        // Descending stair: (0,y0) is top departure, (horizDist,y1) is bottom arrival
+        // Descending stair: (0,y0) is top departure at platform, (horizDist,y1) is bottom arrival at floor
         shape.moveTo(0, y0);
         shape.lineTo(0, y0 - vDrop);
         shape.lineTo(Math.max(0, horizDist - hShift), y1);
         shape.lineTo(horizDist, y1);
+        shape.lineTo(horizDist, y1 + toeH);
         shape.closePath();
     }
 
@@ -15473,6 +15486,7 @@ function createConfig10Structures3D() {
         const stairDir = new THREE.Vector3(dX, 0, dZ).normalize();
         const sideDir = new THREE.Vector3(-stairDir.z, 0, stairDir.x).normalize();
 
+        const absStepH = Math.abs(stepH);
         // Render Tread Steps (Marches d'escalier sans garde-corps, ajustées pile au bord)
         for (let s = 0; s < numSteps; s++) {
             const treadW = stepD * 0.98;
@@ -15484,7 +15498,14 @@ function createConfig10Structures3D() {
 
             const sProgress = (s + 0.5) / numSteps;
             const sX = startX + dX * sProgress + sideDir.x * CONFIG10_STAIRS.sideOffset;
-            const sY = pA.y + stepH * (s + 1.0) - treadH / 2;
+            let sY;
+            if (dY >= 0) {
+                // Ascending: s=0 is 1 riser above ground floor, s=numSteps-1 is flush with top platform
+                sY = pA.y + stepH * (s + 1.0) - treadH / 2;
+            } else {
+                // Descending: s=0 is flush with top platform departure, s=numSteps-1 is 1 riser above ground floor
+                sY = pA.y - absStepH * s - treadH / 2;
+            }
             const sZ = pA.z + dZ * sProgress + sideDir.z * CONFIG10_STAIRS.sideOffset;
 
             treadMesh.position.set(sX, sY, sZ);
