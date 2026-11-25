@@ -18826,11 +18826,13 @@ function updateCalculationsUI(layout, maxSpan) {
             }
             const isInternalSpn = !activeFallSpanId || String(activeFallSpanId).startsWith("spn_");
             const spanTagDisplay = isInternalSpn ? "" : ` (${activeFallSpanId})`;
+            const lblP0 = ["P0 (Prétension) :", "P0 (Pretension) :", "P0 (Pretensión) :"][l] || "P0 (Prétension) :";
+            const lblW = ["W (Poids) :", "W (Weight) :", "W (Peso) :"][l] || "W (Poids) :";
             gHtml += `
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
-                    <span><strong>P0 (Prétension) :</strong> ${UnitsModule.formatForce(gridRes.P0, 2)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
-                    <span><strong>W (Poids) :</strong> ${UnitsModule.formatForce(gridRes.W, 2)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
+                    <span><strong>${lblP0}</strong> ${UnitsModule.formatForce(gridRes.P0, 2)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
+                    <span><strong>${lblW}</strong> ${UnitsModule.formatForce(gridRes.W, 2)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
                 </div>
                 <div class="readout-row anchor-point active-fall">
                     <span class="row-label">${l === 1 ? "Active Fall Span" : (l === 2 ? "Vano caída activo" : "Portée de chute active")}${spanTagDisplay} :</span>
