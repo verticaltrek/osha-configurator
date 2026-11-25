@@ -8955,7 +8955,7 @@ const TRANSLATIONS = {
     ],
     startBtnText: ["Démarrer une Configuration", "Start Configuration", "Iniciar Configuración"],
 
-    modalTitle: ["Paramètres de la Toiture", "Roof Parameters", "Parámetros de la Cubierta"],
+    modalTitle: ["Paramètres Système", "System Parameters"],
     secProject: ["Informations Projet & Système", "Project & System Information", "Información del Proyecto y Sistema"],
     projName: ["Nom du Projet :", "Project Name:", "Nombre del Proyecto:"],
     projNamePlaceholder: ["ex: Toiture Usine HOOKT", "ex: Factory Roof HOOKT", "ej: Techo Fábrica HOOKT"],
@@ -9027,7 +9027,7 @@ const TRANSLATIONS = {
     submitBtn: ["Valider et Générer 3D", "Validate & Generate 3D", "Validar y Generar 3D"],
 
     headerSubtitle: ["Ligne de Vie Configurator 3D", "Lifeline 3D Configurator", "Configurador 3D de Línea de Vida"],
-    reconfigBtn: ["Dimensions", "Dimensions", "Dimensiones"],
+    reconfigBtn: ["Paramètres Système", "System Parameters"],
     canvasTitle: ["Visualisation 3D / 2D", "3D / 2D Visualization", "Visualización 3D / 2D"],
     btnView3d: ["3D", "3D", "3D"],
     btnView2d: ["2D Dessus", "2D Top View", "2D Vista Superior"],
@@ -9791,6 +9791,8 @@ function applyLanguage(langIndex) {
     if (appHeaderSub) appHeaderSub.textContent = TRANSLATIONS.headerSubtitle[l];
     const reconfigBtnText = document.getElementById("reconfig-btn-text");
     if (reconfigBtnText) reconfigBtnText.textContent = TRANSLATIONS.reconfigBtn[l];
+    const reconfigBtn = document.getElementById("reconfig-btn");
+    if (reconfigBtn) reconfigBtn.title = l === 1 ? "Edit system parameters" : "Modifier les paramètres système";
     const canvasTitleText = document.getElementById("canvas-title-text");
     if (canvasTitleText) canvasTitleText.textContent = TRANSLATIONS.canvasTitle[l];
     const btnView3dText = document.getElementById("btn-view-3d-text");
