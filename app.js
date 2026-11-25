@@ -9549,7 +9549,7 @@ function applyLanguage(langIndex) {
     const lblElevPreset = document.getElementById("lbl-hll-elevation-preset");
     if (lblElevPreset) lblElevPreset.innerHTML = `<i class="fa-solid fa-arrows-up-down"></i> ${isEn ? "Lifeline Elevation:" : "Élévation de la Ligne :"}`;
     const lblElevVal = document.getElementById("lbl-hll-elevation-val");
-    if (lblElevVal) lblElevVal.textContent = isEn ? "Elevation Height:" : "Hauteur Élévation :";
+    if (lblElevVal) lblElevVal.textContent = isEn ? "Custom Lifeline Elevation:" : "Élévation Personnalisée de la Ligne :";
 
     // Connecting device
     const lblConnDev = document.getElementById("lbl-connecting-device");
