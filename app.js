@@ -18830,7 +18830,6 @@ function updateCalculationsUI(layout, maxSpan) {
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
                     <span><strong>P0 (Prétension) :</strong> ${UnitsModule.formatForce(gridRes.P0, 2)} (${UnitsModule.formatMass(gridRes.pretensionKg)})</span>
-                    <span><strong>2 × P0 :</strong> ${UnitsModule.formatForce(2 * gridRes.P0, 2)}</span>
                     <span><strong>W (Poids) :</strong> ${UnitsModule.formatForce(gridRes.W, 2)} (${UnitsModule.formatMass(gridRes.userMassKg)})</span>
                 </div>
                 <div class="readout-row anchor-point active-fall">
