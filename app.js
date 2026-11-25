@@ -5045,10 +5045,10 @@ function updateLumpSumHint() {
     const totalStr = isUS ? `${calcLbf} lbf` : `${calcKn.toFixed(2)} kN`;
 
     if (isOSHA) {
-        hintEl.innerHTML = isEn
-            ? `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Custom Load (OSHA): <strong>${userBaseStr}</strong> (fixed load, M factor not applied in OSHA)`
-            : `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Saisie Libre / Custom Load (OSHA) : <strong>${userBaseStr}</strong> (charge fixe, facteur M non appliqué en OSHA)`;
+        hintEl.innerHTML = "";
+        hintEl.style.display = "none";
     } else {
+        hintEl.style.display = "block";
         const userWord = isEn ? (u > 1 ? "users" : "user") : (u > 1 ? "utilisateurs" : "utilisateur");
         hintEl.innerHTML = isEn
             ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Mass: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} ${userWord}) × ${userBaseStr} = <strong>${totalStr}</strong>`
