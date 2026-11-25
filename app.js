@@ -18826,8 +18826,8 @@ function updateCalculationsUI(layout, maxSpan) {
             }
             const isInternalSpn = !activeFallSpanId || String(activeFallSpanId).startsWith("spn_");
             const spanTagDisplay = isInternalSpn ? "" : ` (${activeFallSpanId})`;
-            const lblP0 = ["P0 (Prétension) :", "P0 (Pretension) :", "P0 (Pretensión) :"][l] || "P0 (Prétension) :";
-            const lblW = ["W (Poids) :", "W (Weight) :", "W (Peso) :"][l] || "W (Poids) :";
+            const lblP0 = l === 1 ? "P0 (Pretension) :" : "P0 (Prétension) :";
+            const lblW = l === 1 ? "W (Weight) :" : "W (Poids) :";
             gHtml += `
                 <div class="readout-subtitle"><i class="fa-solid fa-table-cells"></i> ${subTitle}</div>
                 <div class="grid-info-badge">
