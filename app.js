@@ -4805,6 +4805,7 @@ function updateUnitLabelsInDOM() {
         if (optTurbo) optTurbo.textContent = isEn ? (isUS ? "Shortcut: TurboLite+ (1012 lbf)" : "Shortcut: TurboLite+ (4.5 kN)") : (isUS ? "Shortcut : TurboLite+ (1012 lbf)" : "Shortcut : TurboLite+ (Essais 4.5 kN)");
         if (optFal) optFal.textContent = isEn ? (isUS ? "Shortcut: Falcon+ (1349 lbf)" : "Shortcut: Falcon+ (6.0 kN)") : (isUS ? "Shortcut : Falcon+ (1349 lbf)" : "Shortcut : Falcon+ (Essais 6.0 kN)");
     }
+    syncArrestLoadOptionsForNorm(state.norm);
     if (typeof updateLumpSumHint === "function") updateLumpSumHint();
 }
 
@@ -4854,10 +4855,41 @@ window.setUnitSystem = setUnitSystem;
 window.toggleUnitSystem = toggleUnitSystem;
 window.updateUnitLabelsInDOM = updateUnitLabelsInDOM;
 
+function syncArrestLoadOptionsForNorm(norm) {
+    const isOSHA = (norm === "OSHA" || (typeof state !== "undefined" && state.norm === "OSHA" && !norm));
+    const targetMode = isOSHA ? "custom" : "lump_sum";
+    if (typeof state !== "undefined") {
+        state.arrestLoadMode = targetMode;
+    }
+
+    const arrestModeSel = document.getElementById("select-arrest-load-mode");
+    if (arrestModeSel) {
+        const optLump = arrestModeSel.querySelector("option[value='lump_sum']");
+        const optCust = arrestModeSel.querySelector("option[value='custom']");
+
+        if (optLump) {
+            optLump.disabled = isOSHA;
+            optLump.hidden = isOSHA;
+            optLump.style.display = isOSHA ? "none" : "";
+        }
+        if (optCust) {
+            optCust.disabled = !isOSHA;
+            optCust.hidden = !isOSHA;
+            optCust.style.display = !isOSHA ? "none" : "";
+        }
+        arrestModeSel.value = targetMode;
+    }
+}
+if (typeof window !== "undefined") {
+    window.syncArrestLoadOptionsForNorm = syncArrestLoadOptionsForNorm;
+}
+
 function setNorm(nextNorm, skipRender = false) {
     const isEN = (nextNorm === "EN 795" || nextNorm === "EN");
     state.norm = isEN ? "EN 795" : "OSHA";
     const isOSHA = (state.norm === "OSHA");
+
+    syncArrestLoadOptionsForNorm(state.norm);
 
     if (isEN) {
         state.fallFactor = computeFallFactorFromElevation(state.hllElevationPreset, state.hllElevation, state.bodyPosition);
@@ -5014,17 +5046,13 @@ function updateLumpSumHint() {
 
     if (isOSHA) {
         hintEl.innerHTML = isEn
-            ? `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Design Arrest Load: <strong>${userBaseStr}</strong> (fixed load, M factor not applied in OSHA)`
-            : (isEs
-                ? `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Carga de dimensionamiento: <strong>${userBaseStr}</strong> (carga fija, factor M no aplicado en OSHA)`
-                : `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Charge de dimensionnement : <strong>${userBaseStr}</strong> (charge fixe, facteur M non appliqué en OSHA)`);
+            ? `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Custom Load (OSHA): <strong>${userBaseStr}</strong> (fixed load, M factor not applied in OSHA)`
+            : `<i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> Saisie Libre / Custom Load (OSHA) : <strong>${userBaseStr}</strong> (charge fixe, facteur M non appliqué en OSHA)`;
     } else {
-        const userWord = isEn ? (u > 1 ? "users" : "user") : (isEs ? (u > 1 ? "usuarios" : "usuario") : (u > 1 ? "utilisateurs" : "utilisateur"));
+        const userWord = isEn ? (u > 1 ? "users" : "user") : (u > 1 ? "utilisateurs" : "utilisateur");
         hintEl.innerHTML = isEn
-            ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Sum: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} ${userWord}) × ${userBaseStr} = <strong>${totalStr}</strong>`
-            : (isEs
-                ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Masa Global: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} ${userWord}) × ${userBaseStr} = <strong>${totalStr}</strong>`
-                : `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Masse Globale : <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} ${userWord}) × ${userBaseStr} = <strong>${totalStr}</strong>`);
+            ? `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Lump Mass: <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} ${userWord}) × ${userBaseStr} = <strong>${totalStr}</strong>`
+            : `<i class="fa-solid fa-calculator" style="color:#2563eb;"></i> Masse Globale (Lump Mass) : <strong>M = ${m.toFixed(2)}${provStr}</strong> (${u} ${userWord}) × ${userBaseStr} = <strong>${totalStr}</strong>`;
     }
 }
 if (typeof window !== "undefined") {
@@ -6850,9 +6878,9 @@ function populateConfigModalInputs() {
     }
 
     // Arrest load mode & value (1 user base force)
+    syncArrestLoadOptionsForNorm(state.norm);
     const arrestModeSel = document.getElementById("select-arrest-load-mode");
     const arrestValInp = document.getElementById("input-arrest-load-val");
-    if (arrestModeSel) arrestModeSel.value = state.arrestLoadMode || "lump_sum";
     if (arrestValInp) {
         const baseFKn = getSrlBaseArrestForceKn();
         arrestValInp.min = isUS ? "1" : "0.1";
@@ -19654,25 +19682,12 @@ function setupUIEventListeners() {
     const arrestValInput = document.getElementById("input-arrest-load-val");
     if (arrestModeSelect && arrestValInput) {
         arrestModeSelect.addEventListener("change", (e) => {
-            state.arrestLoadMode = e.target.value;
-            if (state.arrestLoadMode === "turbolite") {
-                state.selectedSrlId = "turbo_light_9ft";
-                state.arrestForceKn = 4.5;
-                state.arrestForceLbf = 1012;
-                state.isArrestForceModified = false;
-                recalculateLumpSumArrestLoad();
-            } else if (state.arrestLoadMode === "falcon") {
-                state.selectedSrlId = "falcon_leading_edge";
-                state.arrestForceKn = 6.0;
-                state.arrestForceLbf = 1349;
-                state.isArrestForceModified = false;
-                recalculateLumpSumArrestLoad();
-            } else if (state.arrestLoadMode === "lump_sum") {
-                recalculateLumpSumArrestLoad();
-            } else if (state.arrestLoadMode === "custom") {
-                recalculateLumpSumArrestLoad();
-                updateLumpSumHint();
-            }
+            const isOSHA = (state.norm === "OSHA");
+            const allowedMode = isOSHA ? "custom" : "lump_sum";
+            state.arrestLoadMode = allowedMode;
+            e.target.value = allowedMode;
+            recalculateLumpSumArrestLoad();
+            updateLumpSumHint();
             if (typeof updateArrestForceEquivalentUI === "function") updateArrestForceEquivalentUI();
             updateCalculationsUI();
         });
@@ -20161,8 +20176,10 @@ function setupUIEventListeners() {
             }
 
             // Arrest load range check (1 user base force, and calculate total lump sum)
+            const isOSHA = (state.norm === "OSHA");
+            state.arrestLoadMode = isOSHA ? "custom" : "lump_sum";
             const arrestModeSel = document.getElementById("select-arrest-load-mode");
-            state.arrestLoadMode = arrestModeSel ? arrestModeSel.value : "custom";
+            if (arrestModeSel) arrestModeSel.value = state.arrestLoadMode;
             const arrestValInp = document.getElementById("input-arrest-load-val");
             const rawArrestVal = parseFloat(arrestValInp ? String(arrestValInp.value).replace(/,/g, '.') : "6.0") || 6.0;
 
@@ -20193,7 +20210,6 @@ function setupUIEventListeners() {
             }
 
             // Recalculate total arrest load for active users using Lump Sum (M * F_user)
-            const isOSHA = (state.norm === "OSHA");
             const u = Math.max(1, Math.min(5, parseInt(state.nbUsers) || 1));
             const m = (isOSHA || state.arrestLoadMode === "custom") ? 1.00 : (LUMP_FACTOR_BY_USERS[u] || 1.00);
             const totalKn = parseFloat((m * baseFKn).toFixed(3));
