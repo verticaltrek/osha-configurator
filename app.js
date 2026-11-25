@@ -22151,7 +22151,8 @@ function generatePDFReport() {
                 } else {
                     qtyItem = 1;
                 }
-                countFix = typeof fixInfo.nombre === 'number' ? fixInfo.nombre : 8;
+                const nPerXMat = (typeof fixInfo.nombre === 'number') ? fixInfo.nombre : 8;
+                countFix = `${nPerXMat * qtyItem} - ${nPerXMat}/x-matrix`;
             } else if (cIdLower.includes("x-cone") || cIdLower.includes("xcone")) {
                 const xConeCount = calculateXConeCount(activeLayout);
                 qtyItem = xConeCount;
