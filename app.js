@@ -10554,9 +10554,13 @@ function hasActivePostInConfig() {
 function getActivePostName() {
     if (typeof state === 'undefined') return "Sans poteau (Fixation directe)";
     const l = state.lang || 0;
+    if (state.layoutType === "grid_system") {
+        return "A-FIX";
+    }
     const list = (typeof COMPONENTS_DB !== 'undefined' ? (COMPONENTS_DB[normalizeProduct(state.product)] || COMPONENTS_DB[state.product]) : []) || [];
     const postComp = list.find(c => c.id !== "Contre_Plaque" && c.id !== "X-Cone" && c.id !== "Pack_Matrix" && c.id !== "X-Matrix" && c.id !== "New_Pro" && c.id !== "LightPro" && c.id !== "LongRange" && c.checked);
     if (postComp) return getComponentName(postComp);
+    if (isXtreme(state.product)) return "A-FIX";
     return ["Sans poteau (Fixation directe)", "No post (Direct mounting)", "Sin poste (Fijación directa)"][l];
 }
 
@@ -18661,13 +18665,15 @@ function updateCalculationsUI(layout, maxSpan) {
 
     if (state.layoutType === "cross_spans") {
         displayedAnchorCount = 4;
-        displayedAbsorberCount = "1 (X-Matrix au centre)";
+        displayedAbsorberCount = 4;
     } else if (state.layoutType === "grid_system") {
         const gs = state.gridSystem || { nx: 3, ny: 3 };
         const nx = Math.max(2, gs.nx || 3);
         const ny = Math.max(2, gs.ny || 3);
-        displayedAnchorCount = `${2 * (nx + ny)} (Overhead)`;
-        displayedAbsorberCount = `${nx * ny} (X-Matrix)`;
+        const totalPerimeter = 2 * (nx + ny);
+        displayedAnchorCount = `${totalPerimeter} (Overhead)`;
+        const tagWithAFix = ["avec A-Fix", "with A-Fix", "con A-Fix"][l];
+        displayedAbsorberCount = `${totalPerimeter} (${tagWithAFix})`;
     } else if (state.layoutType === "slope_single") {
         displayedAnchorCount = "2 (Pente)";
         displayedAbsorberCount = 2;
